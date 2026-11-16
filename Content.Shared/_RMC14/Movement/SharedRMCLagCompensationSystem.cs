@@ -1,5 +1,6 @@
 using Content.Shared._RMC14.CCVar;
 using Content.Shared.Coordinates;
+using Robust.Shared;
 using Robust.Shared.Configuration;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
@@ -22,23 +23,49 @@ public abstract partial class SharedRMCLagCompensationSystem : EntitySystem
     public float MarginTiles { get; private set; }
 
     private EntityQuery<ActorComponent> _actorQuery;
+    private EntityQuery<FixturesComponent> _fixturesQuery;
+    private int _substeps;
+    private float _substepTime;
+    private bool _logPrediction = false;
 
-    private readonly Dictionary<NetUserId, GameTick> _lastRealTicks = new();
+    private readonly Dictionary<NetUserId, (GameTick Tick, int Substep)> _lastRealTicks = new(); // CMU14: substep stored with the tick
 
     public override void Initialize()
     {
         base.Initialize();
 
         _actorQuery = GetEntityQuery<ActorComponent>();
+        _fixturesQuery = GetEntityQuery<FixturesComponent>();
 
         SubscribeNetworkEvent<RMCSetLastRealTickEvent>(OnSetLastRealTick);
 
         Subs.CVar(_config, RMCCVars.RMCLagCompensationMarginTiles, v => MarginTiles = v, true);
+        Subs.CVar(_config, CVars.NetTickrate, UpdateSubsteps, true);
+        Subs.CVar(_config, CVars.TargetMinimumTickrate, UpdateSubsteps, true);
     }
 
     private void OnSetLastRealTick(RMCSetLastRealTickEvent msg, EntitySessionEventArgs args)
     {
-        SetLastRealTick(args.SenderSession.UserId, msg.Tick - 1);
+        SetLastRealTick(args.SenderSession.UserId, msg.Tick - 1, msg.Substep); // CMU14
+    }
+
+    private void UpdateSubsteps(int _)
+    {
+        var targetMinTickrate = (float)_config.GetCVar(CVars.TargetMinimumTickrate);
+        var serverTickrate = (float)_config.GetCVar(CVars.NetTickrate);
+        _substeps = (int)Math.Ceiling(targetMinTickrate / serverTickrate);
+        _substepTime = 1.0f / serverTickrate / _substeps;
+    }
+
+    private float AABBDistanceSquared(Box2 a, Box2 b)
+    {
+        var xDist = Math.Max(a.Left - b.Right, b.Left - a.Right);
+        var yDist = Math.Max(a.Bottom - b.Top, b.Bottom - a.Top);
+
+        xDist = Math.Max(0, xDist);
+        yDist = Math.Max(0, yDist);
+
+        return xDist * xDist + yDist * yDist;
     }
 
     public virtual (EntityCoordinates Coordinates, Angle Angle) GetCoordinatesAngle(EntityUid uid,
@@ -91,26 +118,38 @@ public abstract partial class SharedRMCLagCompensationSystem : EntitySystem
 
     public virtual GameTick GetLastRealTick(NetUserId? session)
     {
-        return session == null ? _timing.CurTick : _lastRealTicks.GetValueOrDefault(session.Value, _timing.CurTick);
+        if (session == null || !_lastRealTicks.TryGetValue(session.Value, out var last)) // CMU14
+            return _timing.CurTick;
+
+        return last.Tick;
     }
 
-    public void SetLastRealTick(NetUserId session, GameTick tick)
+    // CMU14 method: physics substep the client was on when it reported its last real tick
+    public int GetLastRealSubstep(NetUserId? session)
+    {
+        if (session == null || !_lastRealTicks.TryGetValue(session.Value, out var last)) // CMU14
+            return 0;
+
+        return last.Substep;
+    }
+
+    public void SetLastRealTick(NetUserId session, GameTick tick, int substep = 0) // CMU14
     {
         if (_net.IsClient)
             return;
 
-        _lastRealTicks[session] = tick;
+        _lastRealTicks[session] = (tick, substep); // CMU14
     }
 
     public void SendLastRealTick()
     {
-        if (_net.IsServer)
+        if (_net.IsServer || !_timing.IsFirstTimePredicted)
             return;
 
-        RaiseNetworkEvent(new RMCSetLastRealTickEvent(GetLastRealTick(null)));
+        RaiseNetworkEvent(new RMCSetLastRealTickEvent(GetLastRealTick(null), GetClientSubstep())); // CMU14
     }
 
-    public bool Collides(Entity<FixturesComponent?> target, Entity<PhysicsComponent?> projectile, MapCoordinates targetCoordinates)
+    public bool Collides(Entity<FixturesComponent?> target, Entity<PhysicsComponent?> projectile, ICommonSession? perspectiveSession, int substep = 0)
     {
         if (!Resolve(target, ref target.Comp, false) ||
             !Resolve(projectile, ref projectile.Comp, false))
@@ -118,10 +157,15 @@ public abstract partial class SharedRMCLagCompensationSystem : EntitySystem
             return false;
         }
 
+        substep = Math.Clamp(substep, -_substeps, _substeps);
+
         var projectileCoordinates = _transform.GetMapCoordinates(projectile);
-        var projectilePosition = projectileCoordinates.Position;
+        var projectileVelocity = _physics.GetLinearVelocity(projectile, projectile.Comp.LocalCenter);
+        var substeppedProjectilePos = projectileCoordinates.Position + (projectileVelocity / _timing.TickRate) * (substep / (float)_substeps);
+
+        var targetCoordinates = _transform.ToMapCoordinates(GetCoordinates(target, perspectiveSession));
         var transform = new Transform(targetCoordinates.Position, 0);
-        var bounds = new Box2(transform.Position, transform.Position);
+        var targetBounds = new Box2(transform.Position, transform.Position);
 
         foreach (var fixture in target.Comp.Fixtures.Values)
         {
@@ -131,28 +175,91 @@ public abstract partial class SharedRMCLagCompensationSystem : EntitySystem
             for (var i = 0; i < fixture.Shape.ChildCount; i++)
             {
                 var boundy = fixture.Shape.ComputeAABB(transform, i);
-                bounds = bounds.Union(boundy);
+                targetBounds = targetBounds.Union(boundy);
             }
         }
 
-        if (bounds.Contains(projectilePosition))
+        var projectileTransform = new Transform(substeppedProjectilePos, 0);
+        var projectileBounds = new Box2(projectileTransform.Position, projectileTransform.Position);
+
+        if (_fixturesQuery.TryComp(projectile, out var projFixtureComp))
+        {
+            foreach (var fixture in projFixtureComp.Fixtures.Values)
+            {
+                for (var i = 0; i < fixture.Shape.ChildCount; i++)
+                {
+                    var boundy = fixture.Shape.ComputeAABB(projectileTransform, i);
+                    projectileBounds = projectileBounds.Union(boundy);
+                }
+            }
+        }
+
+        if (_logPrediction)
+        {
+            Log.Debug($"""
+                Lag comp collide data:
+                  Session Name:   {perspectiveSession}
+                  Pre-Substep
+                    Proj Coords:  {projectileCoordinates}
+                  CurTick:        {_timing.CurTick}
+                  Substep:        {substep}
+                  Projectile Pos: {substeppedProjectilePos}
+                  Target Pos:     {targetCoordinates.Position}
+                  Proj AABB:      {projectileBounds.BottomLeft}
+                                  {projectileBounds.TopRight}
+                  Target AABB:    {targetBounds.BottomLeft}
+                                  {targetBounds.TopRight}
+                  AABB Intersect? {targetBounds.Intersects(projectileBounds)}
+                  AABB Distance:  {Math.Sqrt(AABBDistanceSquared(targetBounds, projectileBounds))}
+                """);
+        }
+
+        if (targetBounds.Intersects(projectileBounds))
             return true;
 
-        var projectileVelocity = _physics.GetLinearVelocity(projectile, projectile.Comp.LocalCenter);
-        projectilePosition = projectileCoordinates.Position + projectileVelocity / _timing.TickRate / 1.5f;
-        if (bounds.Contains(projectilePosition))
+        if (AABBDistanceSquared(targetBounds, projectileBounds) <= MarginTiles * MarginTiles)
             return true;
 
-        var closest = bounds.ClosestPoint(projectilePosition);
-        if ((closest - projectilePosition).LengthSquared() <= MarginTiles * MarginTiles)
-            return true;
+        if (_logPrediction)
+            Log.Warning($"Predicted hit denied for session '{perspectiveSession}'");
 
         return false;
     }
 
-    public bool Collides(Entity<FixturesComponent?> target, Entity<PhysicsComponent?> projectile, ICommonSession session)
+    // CMU14 method: single validation point for predicted-hit messages so every leaper
+    // and shooter rewinds the session identically before testing collision
+    public bool ValidatePredictedHit(Entity<FixturesComponent?> target, Entity<PhysicsComponent?> projectile, ICommonSession? session, GameTick lastRealTick, int substep)
     {
-        var coordinates = _transform.ToMapCoordinates(GetCoordinates(target, session));
-        return Collides(target, projectile, coordinates);
+        if (session != null)
+            SetLastRealTick(session.UserId, lastRealTick, substep);
+
+        return Collides(target, projectile, session, substep);
+    }
+
+    public int? GetCurrentSubstep()
+    {
+        if (_physics.EffectiveCurTime is not { } physicsTime)
+            return null;
+
+        var diff = physicsTime - _timing.CurTime;
+        return (int)Math.Round(diff.TotalSeconds / _substepTime);
+    }
+
+    public int GetSubsteps()
+    {
+        return _substeps;
+    }
+
+    // CMU14: duration of a single physics substep, for fractional tick rewinds
+    public TimeSpan SubstepPeriod => TimeSpan.FromSeconds(_substepTime);
+
+    public int GetClientSubstep()
+    {
+        var substep = GetCurrentSubstep();
+
+        if (!substep.HasValue)
+            substep = 0;
+
+        return substep.Value;
     }
 }

@@ -11,8 +11,13 @@
   name: Hivelord
   description: A builder of really big hives.
   components:
+  - type: FiremanCarriable # CMU14: Yautja can aggressively grab, carry and throw this caste, matching
+    canThrow: true           # CM-SS13's grab gate (mob_grab.dm:82-89: Yautja reach MOB_SIZE_XENO, 3).
+    carrierWhitelist:
+      components:
+      - Yautja
   - type: GhostRole
-    name: cm-job-name-xeno-hivelord
+    name: cmu-job-name-xeno-unknown
   - type: MobState
     allowedStates:
     - Alive
@@ -41,12 +46,16 @@
   - type: XenoResinWalker
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 22.5
+      types:
+        Blunt: 7.5
+        Slash: 7.5
+        Piercing: 7.5
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: Tackle
     max: 4
     chance: 0.45
@@ -86,6 +95,28 @@
     size: Big
   - type: RMCXenoDamageVisuals
     prefix: hivelord
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 200
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 200
+      - ReagentId: CMUXenoPlasmaPhero
+        Quantity: 200
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaPhero
+        Quantity: 1
   - type: TacticalMapIcon
     icon:
       sprite: /Textures/_RMC14/Interface/map_blips.rsi
@@ -93,7 +124,7 @@
   - type: XenoInhands
     prefix: hivelord
   - type: FixedIdentity
-    name: cm-job-name-xeno-hivelord
+    name: cmu-job-name-xeno-unknown
   - type: IntelRecoverCorpseObjectiveOnDeath
     value: 0.2
   - type: RMCSurgeryXenoHeart
@@ -108,7 +139,7 @@
     guides:
     - RMCGuideRoleHivelord
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Hivelord/hivelord.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Hivelord/hivelord.rsi # AU14-Edit
   - type: Xeno
     role: CMXenoHivelord
     actionIds:
@@ -129,10 +160,13 @@
     buildDelay: 1
     canBuild:
     - WallXenoResinThick
+    - WallXenoResinReflective
     - WallXenoMembraneThick
     - DoorXenoResinThick
     - XenoStickyResin
     - XenoFastResin
+    - XenoCollapseResin
+    - XenoResinSpikes
     - HiveAcidPillarXeno
     canOrderConstruction:
     - HiveCoreXenoConstructionNode
@@ -162,7 +196,7 @@
   components:
   - type: CanBuildThickFromConstructNode
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Hivelord/resin_whisperer_hivelord.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Hivelord/resin_whisperer_hivelord.rsi # AU14-Edit
   - type: Xeno
     role: CMXenoHivelord
     actionIds:
@@ -186,6 +220,8 @@
     - DoorXenoResin
     - XenoStickyResin
     - XenoFastResin
+    - XenoCollapseResin
+    - XenoResinSpikes
     - XenoWeedsSource
     canOrderConstruction:
     - HiveCoreXenoConstructionNode
@@ -203,6 +239,7 @@
     maxRemoteConstructDistance: 11
   - type: XenoStrain
     name: rmc-xeno-resin-whisperer-name
+    baseCaste: CMXenoHivelord # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-resin-whisperer-description
     popup: rmc-xeno-resin-whisperer-popup
   - type: XenoHidden
@@ -219,7 +256,7 @@
     guides:
     - RMCGuideRoleDesigner
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Hivelord/designer_hivelord.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Hivelord/designer_hivelord.rsi # AU14-Edit
   - type: Xeno
     role: CMXenoHivelord
     actionIds:
@@ -239,12 +276,6 @@
     - ActionXenoDevolve
     - ActionXenoZoom
   - type: DesignerStrain
-    greaterResinSurgePlasmaCost: 250
-    greaterResinSurgeCooldown: 30
-    greaterResinSurgeRange: 7
-    greaterResinSurgeBuildTime: 1
-    greaterResinSurgeAnimationEffect: RMCEffectWallXenoResinThick
-    greaterResinSurgeWallPrototype: WallXenoResinThickSurge
   - type: DesignerCrosshair
     optimizedWallRsi:
       sprite: _RMC14/Structures/designer_nodes.rsi
@@ -298,6 +329,7 @@
   - type: XenoZoom
   - type: XenoStrain
     name: rmc-xeno-designer-name
+    baseCaste: CMXenoHivelord # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-designer-description
     popup: rmc-xeno-designer-popup
   - type: XenoHidden

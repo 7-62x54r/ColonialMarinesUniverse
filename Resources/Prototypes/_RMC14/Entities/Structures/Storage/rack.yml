@@ -4,6 +4,8 @@
   name: rack
   description: A bunch of metal shelves stacked on top of eachother. Excellent for storage purposes, less so as cover.
   components:
+  - type: CMUReconFurniture
+    material: Shelf
   - type: VehicleSmashable
   - type: Transform
     anchored: false
@@ -31,6 +33,7 @@
         layer:
         - TableLayer
   - type: Damageable
+  - type: Injurable
     damageContainer: Inorganic
   - type: Destructible
     thresholds:
@@ -65,6 +68,14 @@
     destroy: true
   - type: XenoCrusherChargable
     instantDestroy: true
+    passOnDestroy: true
+  - type: Flamability
+    chance: 0.04
+    rate: 0.15
+    spread: 0.1
+    range: 0.5
+    burnDurationMin: 70
+    burnDurationMax: 620
 
 - type: entity
   parent: CMRack

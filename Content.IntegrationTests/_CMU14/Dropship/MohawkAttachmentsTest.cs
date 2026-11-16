@@ -1,0 +1,281 @@
+using System.Linq;
+using Content.Shared.CMU14.Dropship.DirectFire;
+using System.Numerics;
+using Content.Server.Shuttles.Systems;
+using Content.Shared._RMC14.Dropship;
+using Content.Shared._RMC14.Dropship.AttachmentPoint;
+using Content.Shared._RMC14.Dropship.Utility.Components;
+using Content.Shared._RMC14.Dropship.Utility.Systems;
+using Content.Shared._RMC14.Dropship.Weapon;
+using Content.Shared._RMC14.Marines.Skills;
+using Content.Shared._RMC14.PowerLoader.Events;
+using Content.Shared.Buckle;
+using Content.Shared.CCVar;
+using Content.Shared.CMU14.Dropship.MultiDeck;
+using Content.Shared.DoAfter;
+using Content.Shared.Interaction;
+using Content.Shared.Shuttles.Components;
+using Robust.Shared.Configuration;
+using Robust.Shared.Containers;
+using Robust.Shared.EntitySerialization.Systems;
+using Robust.Shared.GameObjects;
+using Robust.Shared.Map;
+using Robust.Shared.Utility;
+
+namespace Content.IntegrationTests._CMU14.Dropship;
+
+[TestFixture]
+public sealed class MohawkAttachmentsTest
+{
+    [Test]
+    public async Task FixedChinGunStaysMountedWhileAmmoAndWingGunsRemainServiceable()
+    {
+        await using var pair = await PoolManager.GetServerClient(new PoolSettings { Dirty = true });
+        await pair.Server.WaitAssertion(() =>
+        {
+            var entities = pair.Server.EntMan;
+            var maps = entities.System<SharedMapSystem>();
+            var map = maps.CreateMap(out var mapId);
+            var grid = maps.CreateGridEntity(mapId);
+            var coordinates = new EntityCoordinates(grid, 0.5f, 0.5f);
+            var containers = entities.System<SharedContainerSystem>();
+            var doAfter = entities.System<SharedDoAfterSystem>();
+            var point = entities.SpawnEntity("CMUMohawkM90Point", coordinates);
+            var mount = entities.GetComponent<DropshipWeaponPointComponent>(point);
+            var weaponSlot = containers.GetContainer(point, mount.WeaponContainerSlotId);
+            var gun = weaponSlot.ContainedEntities.Single();
+            Assert.That(mount.FixedWeapon, Is.True);
+            var loader = entities.SpawnEntity("RMCMechPowerLoader", coordinates);
+
+            var request = new GetAttachmentSlotEvent(entities.GetNetEntity(loader), entities.GetNetEntity(gun))
+            {
+                BeingAttached = false,
+            };
+            entities.EventBus.RaiseLocalEvent(point, request);
+            Assert.That(request.CanUse, Is.False, "The fixed gun must not be offered as a removal target.");
+
+            // A completed removal must also enforce the mount restriction.
+            var detach = new DropshipDetachDoAfterEvent(entities.GetNetEntity(point), entities.GetNetEntity(gun), weaponSlot.ID);
+            Assert.That(doAfter.TryStartDoAfter(new DoAfterArgs(entities, loader, TimeSpan.Zero, detach, point, point)), Is.True);
+            Assert.That(weaponSlot.Contains(gun), Is.True, "A completed removal must leave the chin gun installed.");
+
+            var ammo = entities.SpawnEntity("CMUMohawkM90Ammo", coordinates);
+            request = new GetAttachmentSlotEvent(entities.GetNetEntity(loader), entities.GetNetEntity(ammo));
+            entities.EventBus.RaiseLocalEvent(point, request);
+            Assert.That(request.CanUse, Is.True);
+            Assert.That(request.SlotId, Is.EqualTo(mount.AmmoContainerSlotId));
+            var attach = new DropshipAttachDoAfterEvent(entities.GetNetEntity(point), entities.GetNetEntity(ammo), request.SlotId);
+            Assert.That(doAfter.TryStartDoAfter(new DoAfterArgs(entities, loader, TimeSpan.Zero, attach, point, point)), Is.True);
+            var ammoSlot = containers.GetContainer(point, mount.AmmoContainerSlotId);
+            Assert.That(ammoSlot.Contains(ammo), Is.True);
+            request = new GetAttachmentSlotEvent(entities.GetNetEntity(loader), entities.GetNetEntity(ammo))
+            {
+                BeingAttached = false,
+            };
+            entities.EventBus.RaiseLocalEvent(point, request);
+            Assert.That(request.CanUse, Is.True, "Fixed weapons must retain ammunition servicing.");
+            Assert.That(request.SlotId, Is.EqualTo(ammoSlot.ID));
+            detach = new DropshipDetachDoAfterEvent(entities.GetNetEntity(point), entities.GetNetEntity(ammo), request.SlotId);
+            Assert.That(doAfter.TryStartDoAfter(new DoAfterArgs(entities, loader, TimeSpan.Zero, detach, point, point)), Is.True);
+            Assert.That(ammoSlot.Contains(ammo), Is.False);
+            Assert.That(weaponSlot.Contains(gun), Is.True);
+            entities.DeleteEntity(loader);
+
+            var wing = entities.SpawnEntity("CMUMohawkWeaponPortFore", coordinates);
+            var wingMount = entities.GetComponent<DropshipWeaponPointComponent>(wing);
+            Assert.That(wingMount.FixedWeapon, Is.False);
+            var wingGun = entities.SpawnEntity("RMCDropshipAttachmentGau21Cannon", coordinates);
+            loader = entities.SpawnEntity("RMCMechPowerLoader", coordinates);
+            request = new GetAttachmentSlotEvent(entities.GetNetEntity(loader), entities.GetNetEntity(wingGun));
+            entities.EventBus.RaiseLocalEvent(wing, request);
+            Assert.That(request.CanUse, Is.True);
+            Assert.That(request.SlotId, Is.EqualTo(wingMount.WeaponContainerSlotId));
+            attach = new DropshipAttachDoAfterEvent(entities.GetNetEntity(wing), entities.GetNetEntity(wingGun), request.SlotId);
+            Assert.That(doAfter.TryStartDoAfter(new DoAfterArgs(entities, loader, TimeSpan.Zero, attach, wing, wing)), Is.True);
+            var wingSlot = containers.GetContainer(wing, wingMount.WeaponContainerSlotId);
+            Assert.That(wingSlot.Contains(wingGun), Is.True);
+            request = new GetAttachmentSlotEvent(entities.GetNetEntity(loader), entities.GetNetEntity(wingGun))
+            {
+                BeingAttached = false,
+            };
+            entities.EventBus.RaiseLocalEvent(wing, request);
+            Assert.That(request.CanUse, Is.True, "Ordinary wing weapons must remain removable.");
+            Assert.That(request.SlotId, Is.EqualTo(wingSlot.ID));
+            detach = new DropshipDetachDoAfterEvent(entities.GetNetEntity(wing), entities.GetNetEntity(wingGun), request.SlotId);
+            Assert.That(doAfter.TryStartDoAfter(new DoAfterArgs(entities, loader, TimeSpan.Zero, detach, wing, wing)), Is.True);
+            Assert.That(wingSlot.Contains(wingGun), Is.False);
+            entities.DeleteEntity(map);
+        });
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("omaha")]
+    [TestCase("midway")]
+    public async Task EnginesWeaponsAndMedevacOperateThroughTheCabinController(string variant)
+    {
+        await using var pair = await PoolManager.GetServerClient(new PoolSettings { Dirty = true, Connected = true });
+        EntityUid ship = default;
+        EntityUid medevac = default;
+        EntityUid medicalPoint = default;
+        EntityUid medic = default;
+        EntityUid patient = default;
+        EntityUid target = default;
+        EntityUid ground = default;
+        EntityUid gun = default;
+        EntityUid gunAmmo = default;
+        EntityUid chinGun = default;
+        EntityUid chinAmmo = default;
+        await pair.Server.WaitAssertion(() =>
+        {
+            var entities = pair.Server.EntMan;
+            var maps = entities.System<SharedMapSystem>();
+            maps.CreateMap(out var mapId);
+            Assert.That(entities.System<MapLoaderSystem>().TryLoadGrid(mapId,
+                new ResPath($"/Maps/CMU14/Dropships/Mohawk/{variant}.yml"), out var loaded), Is.True);
+            ship = loaded!.Value.Owner;
+        });
+        await pair.RunSeconds(1);
+
+        await pair.Server.WaitAssertion(() =>
+        {
+            var entities = pair.Server.EntMan;
+            var containers = entities.System<SharedContainerSystem>();
+            var dropships = entities.System<SharedDropshipSystem>();
+            var points = entities.GetComponent<DropshipComponent>(ship).AttachmentPoints;
+
+            EntityUid Install(EntityUid point, string prototype)
+            {
+                var coordinates = entities.GetComponent<TransformComponent>(point).Coordinates;
+                var loader = entities.SpawnEntity("RMCMechPowerLoader", coordinates);
+                var item = entities.SpawnEntity(prototype, coordinates);
+                var request = new GetAttachmentSlotEvent(entities.GetNetEntity(loader), entities.GetNetEntity(item));
+                entities.EventBus.RaiseLocalEvent(point, request);
+                Assert.That(request.CanUse, Is.True, prototype);
+                Assert.That(request.SlotId, Is.Not.Empty, prototype);
+                var attach = new DropshipAttachDoAfterEvent(entities.GetNetEntity(point), entities.GetNetEntity(item), request.SlotId);
+                Assert.That(entities.System<SharedDoAfterSystem>().TryStartDoAfter(
+                    new DoAfterArgs(entities, loader, TimeSpan.Zero, attach, point, point)), Is.True);
+                Assert.That(containers.GetContainer(point, request.SlotId).Contains(item), Is.True, prototype);
+                Assert.That(dropships.TryGetGridDropship(item, out var owner), Is.True);
+                Assert.That(owner.Owner, Is.EqualTo(ship));
+                entities.DeleteEntity(loader);
+                return item;
+            }
+
+            var engines = points.Where(entities.HasComponent<DropshipEnginePointComponent>).ToArray();
+            Assert.That(engines, Has.Length.EqualTo(2));
+            Install(engines[0], "RMCDropshipAttachmentFuelEnhancer");
+            Install(engines[1], "RMCDropshipAttachmentCoolingSystem");
+
+            medicalPoint = points.First(entities.HasComponent<DropshipUtilityPointComponent>);
+            Assert.That(entities.GetComponent<TransformComponent>(medicalPoint).GridUid, Is.EqualTo(ship));
+            medevac = Install(medicalPoint, "RMCDropshipAttachmentMedevac");
+            Assert.That(entities.GetComponent<DropshipUtilityComponent>(medevac).AttachmentPoint, Is.EqualTo(medicalPoint));
+
+            var point = points.First(p => entities.HasComponent<DropshipWeaponPointComponent>(p) &&
+                entities.GetComponent<MetaDataComponent>(p).EntityPrototype?.ID != "CMUMohawkM90Point");
+            gun = Install(point, "RMCDropshipAttachmentGau21Cannon");
+            gunAmmo = Install(point, "RMCDropshipAttachmentAmmoGAU");
+            if (variant == "midway")
+            {
+                var chin = points.Single(p => entities.GetComponent<MetaDataComponent>(p).EntityPrototype?.ID == "CMUMohawkM90Point");
+                entities.EnsureComponent<DropshipFireControlBootComponent>(ship).Complete = true;
+                var chinGunComponent = entities.GetComponent<MohawkChinGunComponent>(chin);
+                chinGunComponent.Calibrated = true;
+                chinGunComponent.IffConfigured = true;
+                var weaponPoint = entities.GetComponent<DropshipWeaponPointComponent>(chin);
+                chinGun = containers.GetContainer(chin, weaponPoint.WeaponContainerSlotId).ContainedEntities.Single();
+                chinAmmo = Install(chin, "CMUMohawkM90Ammo");
+            }
+
+            medic = entities.SpawnEntity("CMMobHuman", new EntityCoordinates(ship, 0.5f, 0.5f));
+            entities.System<SkillsSystem>().SetSkill(medic, "RMCSkillMedical", 2);
+            ground = entities.System<SharedMapSystem>().CreateMap();
+            target = entities.SpawnEntity("RMCMedevacStretcher", new EntityCoordinates(ground, 0.5f, 0.5f));
+            patient = entities.SpawnEntity("CMMobHuman", new EntityCoordinates(ground, 0.5f, 0.5f));
+            Assert.That(entities.System<SharedBuckleSystem>().TryBuckle(patient, null, target, popup: false), Is.True);
+            var marker = entities.SpawnEntity(null, new EntityCoordinates(ground, 30, 30));
+            entities.AddComponent<DropshipDestinationComponent>(marker);
+            var nav = entities.QueryEntities<DropshipNavigationComputerComponent>()
+                .Single(c => entities.GetComponent<TransformComponent>(c.Owner).GridUid == ship);
+            Assert.That(dropships.FlyTo((nav.Owner, nav), marker, null, startupTime: 0.5f), Is.True);
+            var config = pair.Server.ResolveDependency<IConfigurationManager>();
+            Assert.That(entities.GetComponent<FTLComponent>(ship).TravelTime,
+                Is.EqualTo(entities.System<ShuttleSystem>().DefaultTravelTime * 0.75f + config.GetCVar(CCVars.FTLArrivalTime)).Within(0.01f));
+            Assert.That(entities.GetComponent<DropshipComponent>(ship).RechargeTime,
+                Is.EqualTo(TimeSpan.FromSeconds(config.GetCVar(CCVars.FTLCooldown) * 0.5f)));
+        });
+        await pair.RunSeconds(1);
+        await pair.Server.WaitAssertion(() =>
+        {
+            var entities = pair.Server.EntMan;
+            // Exercise CAS's fly-by gate while the real flight is in transit.
+            entities.AddComponent<DropshipInFlyByComponent>(ship);
+            var weapons = entities.System<SharedDropshipWeaponSystem>();
+            var rounds = entities.GetComponent<DropshipAmmoComponent>(gunAmmo);
+            var before = rounds.Rounds;
+            Assert.That(weapons.TryFireWeapon(gun, new EntityCoordinates(ground, 20, 20), DropshipWeaponStrikeType.Direct), Is.True);
+            Assert.That(rounds.Rounds, Is.EqualTo(before - rounds.RoundsPerShot));
+            Assert.That(entities.QueryEntities<AmmoInFlightComponent>().Any(), Is.True);
+            if (variant == "midway")
+            {
+                var seat = entities.QueryEntities<MohawkGunnerySeatComponent>().Single().Owner;
+                var gunner = entities.SpawnEntity("CMMobHuman", entities.GetComponent<TransformComponent>(seat).Coordinates);
+                Assert.That(entities.System<SharedBuckleSystem>().TryBuckle(gunner, null, seat, popup: false), Is.True);
+                entities.System<SkillsSystem>().SetSkill(gunner, "RMCSkillPilot", 1);
+                var terminal = entities.QueryEntities<DropshipTerminalWeaponsComponent>().Single(c => c.Comp.Gunnery);
+                var ui = entities.System<SharedUserInterfaceSystem>();
+                ui.OpenUi(terminal.Owner, DropshipTerminalWeaponsUi.Key, gunner);
+                entities.EventBus.RaiseLocalEvent(terminal.Owner, new MohawkChinGunControlMessage
+                {
+                    Actor = gunner,
+                    UiKey = DropshipTerminalWeaponsUi.Key,
+                });
+                var chinPoint = entities.QueryEntities<MohawkChinGunComponent>().Single();
+                Assert.That(chinPoint.Comp.Operator, Is.EqualTo(gunner));
+                var flare = entities.SpawnEntity(null, new EntityCoordinates(ground, 25, 25));
+                entities.AddComponent<FlareSignalComponent>(flare);
+                weapons.MakeDropshipTarget(flare, "TEST");
+                entities.EventBus.RaiseLocalEvent(terminal.Owner, new MohawkChinGunFlareMessage(entities.GetNetEntity(flare))
+                {
+                    Actor = gunner,
+                    UiKey = DropshipTerminalWeaponsUi.Key,
+                });
+                var config = pair.Server.ResolveDependency<IConfigurationManager>();
+                var casDebug = config.GetCVar(Content.Shared._RMC14.CCVar.RMCCVars.RMCDropshipCASDebug);
+                config.SetCVar(Content.Shared._RMC14.CCVar.RMCCVars.RMCDropshipCASDebug, true);
+                try
+                {
+                    Assert.That(weapons.TryFireWeapon(chinGun, new EntityCoordinates(ground, 25, 25),
+                        DropshipWeaponStrikeType.Direct, gunner, terminal), Is.True);
+                }
+                finally
+                {
+                    config.SetCVar(Content.Shared._RMC14.CCVar.RMCCVars.RMCDropshipCASDebug, casDebug);
+                }
+                Assert.That(entities.GetComponent<DropshipAmmoComponent>(chinAmmo).Rounds, Is.EqualTo(399));
+            }
+
+            var utility = entities.GetComponent<DropshipUtilityComponent>(medevac);
+            Assert.That(entities.System<DropshipUtilitySystem>().IsActivatable((medevac, utility), medic, out var popup), Is.True, popup);
+            var changed = new DropshipTargetChangedEvent(entities.GetNetEntity(target));
+            entities.EventBus.RaiseLocalEvent(medicalPoint, changed);
+            Assert.That(utility.Target, Is.EqualTo(target));
+            var interact = new InteractHandEvent(medic, medicalPoint);
+            entities.EventBus.RaiseLocalEvent(medicalPoint, interact);
+            Assert.That(entities.GetComponent<MedevacComponent>(medevac).IsActivated, Is.True);
+        });
+        await pair.RunSeconds(4);
+        await pair.Server.WaitAssertion(() =>
+        {
+            var entities = pair.Server.EntMan;
+            Assert.That(entities.GetComponent<TransformComponent>(patient).GridUid, Is.EqualTo(ship),
+                "The medevac module must deliver its patient into the moving cabin.");
+            Assert.That(entities.GetComponent<MedevacComponent>(medevac).IsActivated, Is.False);
+            Assert.That(entities.GetComponent<DropshipUtilityComponent>(medevac).NextActivateAt, Is.Not.Null);
+            entities.DeleteEntity(ship);
+        });
+        await pair.RunTicksSync(2);
+        await pair.CleanReturnAsync();
+    }
+}

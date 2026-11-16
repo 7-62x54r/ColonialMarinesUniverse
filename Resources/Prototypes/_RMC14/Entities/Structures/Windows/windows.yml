@@ -42,6 +42,8 @@
   - type: DamageMultiplierFlags
     flags: Breaching
   - type: RMCMesonsNonviewable
+  - type: XenoWeedable # CMU14: weeds grow over windows like cmss13
+    spawn: CMUXenoWeedsWindow # CMU14
 
 - type: entity
   abstract: true
@@ -53,13 +55,16 @@
     - Wall
   components:
   - type: VehicleSmashable
+    deleteOnHit: false
+    damageOnHit: 100
   - type: MeleeSound
     soundGroups:
       Brute:
         collection: GlassSmack
   - type: Damageable
-    damageContainer: StructuralMarine
     damageModifierSet: StructuralMarine
+  - type: Injurable
+    damageContainer: StructuralMarine
   - type: XenoToggleChargingDamage
     stageLoss: 2
     damage:
@@ -76,6 +81,9 @@
   name: hull window
   description: A glass window with a special rod matrix inside a wall frame. This one was made out of exotic materials to prevent hull breaches. No way to get through here.
   components:
+#cmu edit start: breakable once a hijacked dropship crashes into the ship
+  - type: CMUCrashBreakableHull
+#cmu edit end
   - type: Corrodible
     isCorrodible: false
   - type: Sprite
@@ -97,6 +105,9 @@
   name: hull window
   description: A glass window with a special rod matrix inside a wall frame. This one was made out of exotic materials to prevent hull breaches. No way to get through here.
   components:
+#cmu edit start: breakable once a hijacked dropship crashes into the ship
+  - type: CMUCrashBreakableHull
+#cmu edit end
   - type: Corrodible
     isCorrodible: false
   - type: Sprite
@@ -116,6 +127,9 @@
   name: hull window
   description: A glass window with a special rod matrix inside a wall frame. This one was made out of exotic materials to prevent hull breaches. No way to get through here.
   components:
+#cmu edit start: breakable once a hijacked dropship crashes into the ship
+  - type: CMUCrashBreakableHull
+#cmu edit end
   - type: Corrodible
     isCorrodible: false
   - type: Sprite
@@ -133,9 +147,6 @@
   parent: CMWindowReinforcedAlmayerHull
   id: RMCWindowReinforcedAlmayerHullHijackBustable
   suffix: Hijack Bustable
-  components:
-  - type: RMCReplaceOnHijackLand # TODO RMC14 also spawn glass
-    id: RMCWindowFrameAlmayer
 
 - type: entity
   parent: CMBaseWindow
@@ -194,6 +205,14 @@
     sound:
       collection: WindowShatter
   - type: ImmuneToUnarmed
+  - type: RMCHijackRandomDamageTarget
+    category: Window
+    damage:
+      types:
+        Structural: 60
+    breakDamage:
+      types:
+        Structural: 100
 
 - type: entity
   parent: CMBaseWindowIndestructible
@@ -272,6 +291,14 @@
     spawnPrototype: RMCWindowFrameWhite
     sound:
       collection: WindowShatter
+  - type: RMCHijackRandomDamageTarget
+    category: Window
+    damage:
+      types:
+        Structural: 60
+    breakDamage:
+      types:
+        Structural: 100
 
 - type: entity
   parent: CMBaseWindow
@@ -417,7 +444,6 @@
   - type: Icon
     sprite: _RMC14/Structures/Windows/colony_rwindow.rsi
     state: col_rwindow0
-    color: "#aba9a9"
   - type: IconSmooth
     key: windows
     additionalKeys:
@@ -630,3 +656,11 @@
     spawnPrototype: RMCWindowFrameAI
     sound:
       collection: WindowShatter
+  - type: RMCHijackRandomDamageTarget
+    category: Window
+    damage:
+      types:
+        Structural: 60
+    breakDamage:
+      types:
+        Structural: 100

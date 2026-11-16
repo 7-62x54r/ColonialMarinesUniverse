@@ -94570,7 +94570,7 @@ entities:
     - type: Transform
       pos: -15.5,-147.5
       parent: 1
-- proto: CMEncryptionKeyWEYA
+- proto: CMEncryptionKeyWEYU
   entities:
   - uid: 4698
     components:
@@ -101478,7 +101478,7 @@ entities:
     - type: Transform
       pos: -126.433876,-60.25896
       parent: 1
-- proto: CMM2132Machete
+- proto: AU14ToolMachete
   entities:
   - uid: 5028
     components:
@@ -136194,7 +136194,7 @@ entities:
     - type: Transform
       pos: -95.58069,-19.9706
       parent: 1
-- proto: GasPipeStraight
+- proto: CMUGasPipeStraight
   entities:
   - uid: 12792
     components:
@@ -137803,7 +137803,7 @@ entities:
     - type: Transform
       pos: -211.5,-165.5
       parent: 1
-- proto: GasPort
+- proto: CMUGasPort
   entities:
   - uid: 13002
     components:
@@ -137817,7 +137817,7 @@ entities:
       rot: 1.5707963267948966 rad
       pos: -74.5,-22.5
       parent: 1
-- proto: GasThermoMachineFreezer
+- proto: RMCSpaceHeater
   entities:
   - uid: 13004
     components:
@@ -152398,7 +152398,7 @@ entities:
         - 0
         - 0
         - 0
-- proto: RMCCableCoil
+- proto: CMUCableThinLVStack # CMU14: replaced RMCCableCoil, thin LV cable
   entities:
   - uid: 4701
     components:
@@ -152507,7 +152507,7 @@ entities:
     - type: Transform
       pos: -218.5,-144.5
       parent: 1
-- proto: RMCCableCoil1
+- proto: CMUCableThinLVStack1 # CMU14: replaced RMCCableCoil1, thin LV cable
   entities:
   - uid: 8567
     components:
@@ -152537,7 +152537,7 @@ entities:
     - type: Transform
       pos: -200.5,-1.5
       parent: 1
-- proto: RMCCableCoil10
+- proto: CMUCableThinLVStack10 # CMU14: replaced RMCCableCoil10, thin LV cable
   entities:
   - uid: 15396
     components:
@@ -152559,7 +152559,7 @@ entities:
     - type: Transform
       pos: -201.5,-2.5
       parent: 1
-- proto: RMCCableCoil30
+- proto: CMUCableThinLVStack # CMU14: replaced RMCCableCoil30, thin LV cable
   entities:
   - uid: 15403
     components:
@@ -152773,7 +152773,7 @@ entities:
     - type: Transform
       pos: -53.58691,-128.51099
       parent: 1
-- proto: RMCCanisterBlack
+- proto: CMUCanisterCarbonDioxide
   entities:
   - uid: 8575
     components:
@@ -152785,7 +152785,7 @@ entities:
     - type: Transform
       pos: -79.5,-65.5
       parent: 1
-- proto: RMCCanisterBlue
+- proto: CMUCanisterOxygen
   entities:
   - uid: 13116
     components:
@@ -152812,7 +152812,7 @@ entities:
     - type: Transform
       pos: -59.5,-24.5
       parent: 1
-- proto: RMCCanisterOrange
+- proto: CMUCanisterPlasma
   entities:
   - uid: 8351
     components:
@@ -172911,7 +172911,7 @@ entities:
       rot: 3.141592653589793 rad
       pos: -198.5,-187.5
       parent: 1
-- proto: RMCInflatableDoor
+- proto: CMUInflatableDoor # CMU14
   entities:
   - uid: 18508
     components:
@@ -173018,7 +173018,7 @@ entities:
     - type: Transform
       pos: -136.5,-195.5
       parent: 1
-- proto: RMCInflatableDoorBroken
+- proto: CMUInflatableDoorBroken # CMU14
   entities:
   - uid: 18529
     components:
@@ -173030,21 +173030,21 @@ entities:
     - type: Transform
       pos: -102.5,-165.5
       parent: 1
-- proto: RMCInflatableDoorFolded
+- proto: CMUInflatableDoorFolded # CMU14
   entities:
   - uid: 18531
     components:
     - type: Transform
       pos: -217.5,-167.5
       parent: 1
-- proto: RMCInflatableDoorFolded1
+- proto: CMUInflatableDoorFolded1 # CMU14
   entities:
   - uid: 18532
     components:
     - type: Transform
       pos: -112.54911,-192.37999
       parent: 1
-- proto: RMCInflatableWall
+- proto: CMUInflatableWall # CMU14
   entities:
   - uid: 18533
     components:
@@ -173061,7 +173061,7 @@ entities:
     - type: Transform
       pos: -9.5,-246.5
       parent: 1
-- proto: RMCInflatableWallBroken
+- proto: CMUInflatableWallBroken # CMU14
   entities:
   - uid: 18536
     components:
@@ -173098,7 +173098,7 @@ entities:
     - type: Transform
       pos: -111.5,-233.5
       parent: 1
-- proto: RMCInflatableWallFolded
+- proto: CMUInflatableWallFolded # CMU14
   entities:
   - uid: 8326
     components:
@@ -173119,7 +173119,7 @@ entities:
     - type: Transform
       pos: -217.5,-167.5
       parent: 1
-- proto: RMCInflatableWallFolded1
+- proto: CMUInflatableWallFolded1 # CMU14
   entities:
   - uid: 18544
     components:
@@ -186367,7 +186367,7 @@ entities:
     - type: Transform
       pos: -148.59567,-32.250698
       parent: 1
-- proto: RMCPickaxe
+- proto: AU14ToolPickaxe
   entities:
   - uid: 20465
     components:
@@ -219250,7 +219250,7 @@ entities:
     - type: Transform
       pos: -93.37922,-111.191574
       parent: 1
-- proto: RMCShovel
+- proto: AU14ToolShovel
   entities:
   - uid: 4342
     components:

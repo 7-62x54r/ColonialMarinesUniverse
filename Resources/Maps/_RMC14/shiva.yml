@@ -105812,7 +105812,7 @@ entities:
     - type: Transform
       pos: 116.55853,56.606167
       parent: 1
-- proto: RMCAegisCorpseSpawner
+- proto: CMUAegisCorpseSpawner
   entities:
   - uid: 13100
     components:
@@ -105839,7 +105839,7 @@ entities:
     - type: Transform
       pos: 146.5,11.5
       parent: 1
-- proto: RMCAegisSpawner
+- proto: CMUAegisSpawner
   entities:
   - uid: 13105
     components:
@@ -107516,14 +107516,14 @@ entities:
     - type: Transform
       pos: 153.5,154.5
       parent: 1
-- proto: RMCCableCoil
+- proto: CMUCableThinLVStack # CMU14: replaced RMCCableCoil, thin LV cable
   entities:
   - uid: 13376
     components:
     - type: Transform
       pos: 22.481524,50.677094
       parent: 1
-- proto: RMCCableCoil20
+- proto: CMUCableThinLVStack20 # CMU14: replaced RMCCableCoil20, thin LV cable
   entities:
   - uid: 13377
     components:
@@ -107600,7 +107600,7 @@ entities:
     - type: Transform
       pos: 189.5,124.5
       parent: 1
-- proto: RMCCableCoil30
+- proto: CMUCableThinLVStack # CMU14: replaced RMCCableCoil30, thin LV cable
   entities:
   - uid: 13392
     components:
@@ -107716,7 +107716,7 @@ entities:
       rot: 3.141592653589793 rad
       pos: 184.5,130.5
       parent: 1
-- proto: RMCCanisterBlue
+- proto: CMUCanisterOxygen
   entities:
   - uid: 13413
     components:
@@ -111985,7 +111985,7 @@ entities:
       parent: 1
     - type: Fixtures
       fixtures: {}
-- proto: RMCInflatableWall
+- proto: CMUInflatableWall # CMU14
   entities:
   - uid: 14104
     components:
@@ -112022,7 +112022,7 @@ entities:
     - type: Transform
       pos: 186.5,18.5
       parent: 1
-- proto: RMCInflatableWallBroken
+- proto: CMUInflatableWallBroken # CMU14
   entities:
   - uid: 14111
     components:
@@ -117195,7 +117195,7 @@ entities:
     - type: Transform
       pos: 190.5,130.5
       parent: 1
-- proto: RMCPickaxe
+- proto: AU14ToolPickaxe
   entities:
   - uid: 14892
     components:
@@ -122773,7 +122773,7 @@ entities:
     - type: Transform
       pos: 105.5,147.5
       parent: 1
-- proto: RMCShovel
+- proto: AU14ToolShovel
   entities:
   - uid: 13495
     components:

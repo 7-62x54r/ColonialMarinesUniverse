@@ -35,6 +35,9 @@
       path: /Audio/_RMC14/Machines/armor_equip.ogg
   - type: MoveOrderArmor
   - type: StoreAfterFailedInteract
+  - type: CMUItemStain
+    wornStates:
+      outerClothing: armor_blood
 
 - type: entity
   parent: [ RMCBaseArmorNoAccessory, RMCBaseUniformAccessoryItemOuterClothing ]
@@ -72,6 +75,7 @@
       - RMCXM51Holster
       - RMCDetector
       - RMCMatebaHolster
+      - RMCFoldingBarricade
 
 - type: entity
   abstract: true
@@ -81,9 +85,9 @@
     whitelist:
       components:
       - Gun
-      - Stunbaton
       - BallisticAmmoProvider #Note should get all maganizes
       tags:
+      - Stunbaton
       - Handcuffs
       - GasTank
       - Flashlight
@@ -91,6 +95,7 @@
       - Binoculars
       - RMCGeneralPistolHolster
       - RMCGeneralRevolverHolster
+      - RMCFoldingBarricade
 
 - type: entity
   abstract: true
@@ -103,10 +108,10 @@
       - Bible
       - Gun
       - BallisticAmmoProvider #Note should get all maganizes
-      - Stunbaton
       - CrewMonitoringConsole
       - CassettePlayer
       tags:
+      - Stunbaton
       - Handcuffs
       - GasTank
       - Flashlight
@@ -118,6 +123,7 @@
       - RMCMacheteScabbard
       - RMCScabbardKatana
       - RMCDetector
+      - RMCFoldingBarricade
 
 - type: entity
   abstract: true
@@ -135,6 +141,7 @@
       - RMCG8Pouch
       #TODO mines
       - RMCDetector
+      - RMCFoldingBarricade
       #Note should get all magazines and ignore guns
       - CMMagazineSmg
       - CMMagazinePistol
@@ -152,10 +159,10 @@
       - RMCLighter
       - Bible
       - BallisticAmmoProvider #Note should get all maganizes
-      - Stunbaton
       - Gun
       - CassettePlayer
       tags:
+      - Stunbaton
       - Handcuffs
       - GasTank
       - CigPack
@@ -174,6 +181,7 @@
       - RMCMatebaHolster
       - RMCCeremonialSword
       - RMCDetector
+      - RMCFoldingBarricade
 
 - type: entity
   abstract: true
@@ -185,10 +193,10 @@
       - RMCLighter
       - Bible
       - BallisticAmmoProvider #Note should get all maganizes
-      - Stunbaton
       - Gun
       - CassettePlayer
       tags:
+      - Stunbaton
       - Handcuffs
       - GasTank
       - CigPack
@@ -197,6 +205,7 @@
       - Flashlight
       - Machete
       - RMCDetector
+      - RMCFoldingBarricade
 
 # TODO: Add separate whitelists for 'safari jacket' and 'bureau deputy jacket'
 
@@ -314,7 +323,7 @@
     autoRot: true
     netsync: false
     color: "#FFFFFF"
-    mask: /Textures/_RMC14/Effects/LightMasks/wide_ellipsis.png
+    lightMask: EllipseWide
   - type: PointLightRotation
     rotation: 90
   - type: HandheldLight
@@ -342,8 +351,8 @@
       id: blinking
       interpolate: Nearest
       maxDuration: 1.0
-      minValue: 0.1
-      maxValue: 2.0
+      startValue: 0.1
+      endValue: 2.0
       isLooped: true
       property: Radius
       enabled: false
@@ -351,7 +360,6 @@
     maxCharge: 600
     startingCharge: 600
   - type: BatterySelfRecharger
-    autoRecharge: true
     autoRechargeRate: 2
   - type: WebbingClothing
     whitelist:
@@ -366,6 +374,18 @@
   parent: [ RMCBaseMarineArmorNoAccessory, RMCBaseUniformAccessoryItemOuterClothing ]
   id: RMCBaseMarineArmor
   abstract: true
+  components:
+  - type: UniformAccessoryHolder
+    allowedCategories:
+    - Patch
+    - Medal
+    - Armband
+    - PridePin
+    - Rank
+    - Decor
+    - Poncho
+    - Mask
+    - Utility
 
 - type: entity
   parent: RMCBaseMarineArmorNoAccessory
@@ -408,7 +428,7 @@
     autoRot: true
     netsync: false
     color: "#FFFFFF"
-    mask: /Textures/_RMC14/Effects/LightMasks/wide_ellipsis.png
+    lightMask: EllipseWide
   - type: PointLightRotation
     rotation: 90
   - type: HandheldLight
@@ -436,8 +456,8 @@
       id: blinking
       interpolate: Nearest
       maxDuration: 1.0
-      minValue: 0.1
-      maxValue: 2.0
+      startValue: 0.1
+      endValue: 2.0
       isLooped: true
       property: Radius
       enabled: false
@@ -445,13 +465,24 @@
     maxCharge: 600 #lights drain 3/s but recharge of 2 makes this 1/s. Therefore 600 is 10 minutes of light.
     startingCharge: 600
   - type: BatterySelfRecharger
-    autoRecharge: true
     autoRechargeRate: 2 #recharge of 2 makes total drain 1w / s so max charge is 1:1 with time. Time to fully charge should be 5 minutes. Having recharge gives light an extended flicker period which gives you some warning to return to light area.
 
 - type: entity
   parent: [ RMCBaseMarineArmorLightNoAccessory, RMCBaseUniformAccessoryItemOuterClothing ]
   id: RMCBaseMarineArmorLight
   abstract: true
+  components:
+  - type: UniformAccessoryHolder
+    allowedCategories:
+    - Patch
+    - Medal
+    - Armband
+    - PridePin
+    - Rank
+    - Decor
+    - Poncho
+    - Mask
+    - Utility
 
 - type: entity
   parent: RMCBaseMarineArmorLight

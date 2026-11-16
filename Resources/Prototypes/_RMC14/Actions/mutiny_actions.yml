@@ -6,10 +6,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Interface/cm_job_icons.rsi
-      state: hudmutineer
     useDelay: 2
+  - type: Sprite
+    layers:
+    - sprite: CMU14/Interface/Actions/mutiny_actions.rsi # CMU14: cmss13 recruit icon
+      state: recruit
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     range: 1.5
   - type: EntityTargetAction

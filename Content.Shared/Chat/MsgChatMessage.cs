@@ -35,6 +35,11 @@ namespace Content.Shared.Chat
         public bool QuoteBody;
         public Color? AccentColor;
 
+        /// <summary>
+        /// Overrides the row's background highlight color (normally derived from the chat channel).
+        /// </summary>
+        public Color? BackgroundColorOverride;
+
         public ChatDisplayMetadata(
             ChatDisplayKind kind,
             string? senderName = null,
@@ -42,7 +47,8 @@ namespace Content.Shared.Chat
             string? verb = null,
             string? channelLabel = null,
             bool quoteBody = false,
-            Color? accentColor = null)
+            Color? accentColor = null,
+            Color? backgroundColorOverride = null)
         {
             Kind = kind;
             SenderName = senderName;
@@ -51,6 +57,7 @@ namespace Content.Shared.Chat
             ChannelLabel = channelLabel;
             QuoteBody = quoteBody;
             AccentColor = accentColor;
+            BackgroundColorOverride = backgroundColorOverride;
         }
     }
 
@@ -73,6 +80,11 @@ namespace Content.Shared.Chat
 
         public NetEntity SenderEntity;
 
+        // CMU14
+        public NetEntity GhostFollowEntity;
+        public NetEntity XenoWatchEntity;
+        // CMU14
+
         /// <summary>
         ///     Identifier sent when <see cref="SenderEntity"/> is <see cref="NetEntity.Invalid"/>
         ///     if this was sent by a player to assign a key to the sender of this message.
@@ -88,28 +100,86 @@ namespace Content.Shared.Chat
 
         // RMC14
         public bool HidePopup;
+        public bool UseEmoteSpeechBubble;
         public string? SpeechStyleClass;
         public bool RepeatCheckSender;
+        public string? LanguageIcon;
+        // RMC14
 
         [NonSerialized]
         public bool Read;
 
-        public ChatMessage(ChatChannel channel, string message, string wrappedMessage, NetEntity source, int? senderKey, bool hideChat = false, Color? colorOverride = null, string? audioPath = null, float audioVolume = 0, bool hidePopup = false, string? speechStyleClass = null, bool repeatCheckSender = true, ChatDisplayMetadata? display = null)
+        public ChatMessage(
+            ChatChannel channel,
+            string message,
+            string wrappedMessage,
+            NetEntity source,
+            int? senderKey,
+            bool hideChat = false,
+            Color? colorOverride = null,
+            string? audioPath = null,
+            float audioVolume = 0,
+            bool hidePopup = false,
+            bool useEmoteSpeechBubble = false,
+            string? speechStyleClass = null,
+            bool repeatCheckSender = true,
+            ChatDisplayMetadata? display = null,
+            string? languageIcon = null, // RMC14
+            NetEntity ghostFollowEntity = default,
+            NetEntity xenoWatchEntity = default,
+            // Tints the row's background without the caller having to build a whole
+            // ChatDisplayMetadata just to set one field. Applied after the default display is
+            // resolved, so a caller can tint a message and still get the channel's normal
+            // sender/verb/label handling.
+            Color? backgroundColorOverride = null,
+            Color? accentColorOverride = null) // CMU14
         {
             Channel = channel;
             Message = message;
             WrappedMessage = wrappedMessage;
             SenderEntity = source;
+            GhostFollowEntity = ghostFollowEntity;
+            XenoWatchEntity = xenoWatchEntity;
             SenderKey = senderKey;
             HideChat = hideChat;
             MessageColorOverride = colorOverride;
             AudioPath = audioPath;
             AudioVolume = audioVolume;
             HidePopup = hidePopup;
+            UseEmoteSpeechBubble = useEmoteSpeechBubble;
             SpeechStyleClass = speechStyleClass;
             RepeatCheckSender = repeatCheckSender;
             Display = display ?? CreateDefaultDisplay(channel);
+            if (backgroundColorOverride != null)
+                Display.BackgroundColorOverride = backgroundColorOverride;
+            if (accentColorOverride != null)
+                Display.AccentColor = accentColorOverride;
+            LanguageIcon = languageIcon;
         }
+
+        // CMU14
+        public ChatMessage(ChatMessage copyFrom)
+        {
+            Channel = copyFrom.Channel;
+            Message = copyFrom.Message;
+            WrappedMessage = copyFrom.WrappedMessage;
+            SenderEntity = copyFrom.SenderEntity;
+            GhostFollowEntity = copyFrom.GhostFollowEntity;
+            XenoWatchEntity = copyFrom.XenoWatchEntity;
+            SenderKey = copyFrom.SenderKey;
+            HideChat = copyFrom.HideChat;
+            MessageColorOverride = copyFrom.MessageColorOverride;
+            AudioPath = copyFrom.AudioPath;
+            AudioVolume = copyFrom.AudioVolume;
+            Display = copyFrom.Display;
+            HidePopup = copyFrom.HidePopup;
+            UseEmoteSpeechBubble = copyFrom.UseEmoteSpeechBubble;
+            SpeechStyleClass = copyFrom.SpeechStyleClass;
+            RepeatCheckSender = copyFrom.RepeatCheckSender;
+            LanguageIcon = copyFrom.LanguageIcon;
+            Read = copyFrom.Read;
+        }
+        // CMU14
 
         private static ChatDisplayMetadata CreateDefaultDisplay(ChatChannel channel)
         {
@@ -136,7 +206,11 @@ namespace Content.Shared.Chat
                 ChatChannel.LOOC => "LOOC",
                 ChatChannel.OOC => "OOC",
                 ChatChannel.Dead => "DEAD",
-                ChatChannel.Admin => "ADMIN",
+                // ADM, not ADMIN: three characters fit the chat's prefix column alongside SAY/OOC/RAD
+                // instead of filling it and leaving admin messages with no gap before their text.
+                // ChatMessageRow.GetChannelLabel has a fallback copy of this table - it prefers this
+                // one when the message carries a label, so both have to say the same thing.
+                ChatChannel.Admin => "ADM",
                 ChatChannel.AdminAlert => "ALERT",
                 ChatChannel.AdminChat => "ASAY",
                 ChatChannel.MentorChat => "MENTOR",
@@ -147,6 +221,7 @@ namespace Content.Shared.Chat
                 _ => "CHAT"
             });
         }
+        // RMC14
     }
 
     /// <summary>
@@ -162,6 +237,7 @@ namespace Content.Shared.Chat
         public override void ReadFromBuffer(NetIncomingMessage buffer, IRobustSerializer serializer)
         {
             var length = buffer.ReadVariableInt32();
+            buffer.AssertAtLeastSize(length); // CMU14: validate before allocation.
             using var stream = new MemoryStream(length);
             buffer.ReadAlignedMemory(stream, length);
             serializer.DeserializeDirect(stream, out Message);

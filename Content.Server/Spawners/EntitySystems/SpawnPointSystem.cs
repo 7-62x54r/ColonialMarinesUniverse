@@ -1,9 +1,17 @@
-using Content.Server.AU14.Round;
+using Content.Server.CMU14.Round;
 using Content.Server.GameTicking;
+using Content.Server.CMU14.Roles;
 using Content.Server.Spawners.Components;
 using Content.Server.Station.Systems;
-using Content.Shared.AU14;
+using Content.Shared._RMC14.Map; // CMU14
+using Content.Shared.Maps; // CMU14
+using Content.Shared.CMU14.Round.Roles;
+using Content.Shared.CMU14;
+using Content.Shared.Roles;
 using Robust.Shared.Map;
+using Robust.Shared.Map.Components; // CMU14
+using Robust.Shared.Maths; // CMU14
+using Robust.Shared.Prototypes;
 using Robust.Shared.Random;
 
 namespace Content.Server.Spawners.EntitySystems;
@@ -12,9 +20,12 @@ public sealed partial class SpawnPointSystem : EntitySystem
 {
     [Dependency] private GameTicker _gameTicker = default!;
     [Dependency] private IRobustRandom _random = default!;
+    [Dependency] private IPrototypeManager _prototype = default!;
+    [Dependency] private RoundJobProfileSystem _roundJobProfiles = default!;
     [Dependency] private StationSystem _stationSystem = default!;
     [Dependency] private StationSpawningSystem _stationSpawning = default!;
     [Dependency] private AuRoundSystem _auRoundSystem = default!;
+    [Dependency] private RMCMapSystem _rmcMap = default!; // CMU14
 
     public override void Initialize()
     {
@@ -28,8 +39,13 @@ public sealed partial class SpawnPointSystem : EntitySystem
 
         bool isLateJoin = _gameTicker.RunLevel == GameRunLevel.InRound;
         string? jobId = args.Job?.ToString();
-        bool isOpfor  = !string.IsNullOrEmpty(jobId) && jobId.Contains("opfor",  StringComparison.OrdinalIgnoreCase);
-        bool isGovfor = !string.IsNullOrEmpty(jobId) && jobId.Contains("govfor", StringComparison.OrdinalIgnoreCase);
+        JobPrototype? job = null;
+        if (args.Job is { } jobProto)
+            _prototype.TryIndex(jobProto, out job);
+
+        var side = _roundJobProfiles.GetRoundSide(job, jobId);
+        bool isOpfor = side == RoundJobSide.Opfor;
+        bool isGovfor = side == RoundJobSide.Govfor;
 
         // --- AU14: Faction spawn routing ---
         // If the player is govfor or opfor we decide where they spawn based solely on
@@ -46,16 +62,26 @@ public sealed partial class SpawnPointSystem : EntitySystem
             // of any entity that lives on that ship.
             var factionShipGrids = new HashSet<EntityUid>(); // grids belonging to THIS faction's ships
             var allShipGrids     = new HashSet<EntityUid>(); // grids belonging to ANY faction ship
+            var factionShipStations = new HashSet<EntityUid>();
+            var allShipStations = new HashSet<EntityUid>();
             var shipQuery = EntityQueryEnumerator<ShipFactionComponent>();
             while (shipQuery.MoveNext(out var shipUid, out var shipFaction))
             {
                 if (string.IsNullOrEmpty(shipFaction.Faction)) continue;
                 allShipGrids.Add(shipUid);
+                var shipStation = _stationSystem.GetOwningStation(shipUid);
+                if (shipStation is { } resolvedShipStation)
+                    allShipStations.Add(resolvedShipStation);
+
                 bool isFactionMatch = isGovfor
                     ? shipFaction.Faction.Equals("govfor", StringComparison.OrdinalIgnoreCase)
                     : shipFaction.Faction.Equals("opfor",  StringComparison.OrdinalIgnoreCase);
                 if (isFactionMatch)
+                {
                     factionShipGrids.Add(shipUid);
+                    if (shipStation is { } resolvedFactionShipStation)
+                        factionShipStations.Add(resolvedFactionShipStation);
+                }
             }
 
             if (factionInShip)
@@ -70,7 +96,7 @@ public sealed partial class SpawnPointSystem : EntitySystem
                 var pts = EntityQueryEnumerator<SpawnPointComponent, TransformComponent>();
                 while (pts.MoveNext(out var _, out var sp, out var xform))
                 {
-                    if (xform.GridUid == null || !factionShipGrids.Contains(xform.GridUid.Value))
+                    if (!IsOnShip(xform, factionShipGrids, factionShipStations))
                         continue;
                     if (sp.SpawnType == SpawnPointType.Observer)
                         continue;
@@ -81,17 +107,17 @@ public sealed partial class SpawnPointSystem : EntitySystem
                         fallback.Add(xform.Coordinates);
                 }
 
-                if (preferred.Count == 0 && fallback.Count == 0)
+                if (preferred.Count > 0 || fallback.Count > 0) // CMU14: no ship markers falls through to the fallbacks below
                 {
-                    Log.Error($"[SpawnPointSystem] No spawn points found on ship for faction " +
-                              $"{(isGovfor ? "govfor" : "opfor")} — player cannot spawn!");
-                    return;
+                    var loc = preferred.Count > 0 ? _random.Pick(preferred) : _random.Pick(fallback);
+                    args.SpawnResult = _stationSpawning.SpawnPlayerMob(
+                        loc, args.Job, args.HumanoidCharacterProfile, args.Station);
+                    return; // hard return — never touches planet logic
                 }
 
-                var loc = preferred.Count > 0 ? _random.Pick(preferred) : _random.Pick(fallback);
-                args.SpawnResult = _stationSpawning.SpawnPlayerMob(
-                    loc, args.Job, args.HumanoidCharacterProfile, args.Station);
-                return; // hard return — never touches planet logic
+                // CMU14: spawning somewhere beats not spawning at all
+                Log.Warning($"[SpawnPointSystem] No spawn points found on ship for faction " +
+                          $"{(isGovfor ? "govfor" : "opfor")}, falling back to any spawn point.");
             }
             else
             {
@@ -104,7 +130,7 @@ public sealed partial class SpawnPointSystem : EntitySystem
                 while (pts.MoveNext(out var _, out var sp, out var xform))
                 {
                     // Exclude anything on a faction ship
-                    if (xform.GridUid != null && allShipGrids.Contains(xform.GridUid.Value))
+                    if (IsOnShip(xform, allShipGrids, allShipStations))
                         continue;
 
                     if ((sp.SpawnType == SpawnPointType.Job || sp.SpawnType == SpawnPointType.Unset) &&
@@ -145,7 +171,8 @@ public sealed partial class SpawnPointSystem : EntitySystem
                 possiblePositions.Add(xform.Coordinates);
             }
             else if (spawnPoint.SpawnType == SpawnPointType.Job &&
-                     (args.Job == null || spawnPoint.Job == args.Job))
+                     (args.Job == null || spawnPoint.Job == null || spawnPoint.Job == args.Job ||
+                      CMUTakesJob(uid, args.Job))) // cmu edit: spawn points that take extra jobs
             {
                 if (isLateJoin)
                     preferredPositions.Add(xform.Coordinates);
@@ -154,16 +181,27 @@ public sealed partial class SpawnPointSystem : EntitySystem
             }
         }
 
-        // Last resort: any spawn point.
+        // CMU14: the job's marker isn't on this station, walk the fallback chain instead of
+        // grabbing whatever spawner the query hands back first
         if (preferredPositions.Count == 0 && possiblePositions.Count == 0)
         {
-            var pts2 = EntityQueryEnumerator<SpawnPointComponent, TransformComponent>();
-            if (pts2.MoveNext(out var _, out var _, out var xform2))
-                possiblePositions.Add(xform2.Coordinates);
+            CMUCollectFallbackSpawns(args.Job, args.Station, possiblePositions);
+
+            if (possiblePositions.Count > 0)
+            {
+                Log.Warning($"No spawn point for job {args.Job} on station {ToPrettyString(args.Station)}, using a fallback spawn point.");
+            }
             else
             {
-                Log.Error("No spawn points were available!");
-                return;
+                Log.Error($"No spawn points were available!\nRunLevel: {_gameTicker.RunLevel} Station: {ToPrettyString(args.Station)} Job: {args.Job}");
+
+                // CMU14: a map with no spawn points at all must not lock valid roles out of the
+                // round. Fall back to the first unblocked tile near the largest grid's middle.
+                // return; // CMU14
+                if (!TryGetFallbackSpawn(args.Station, out var fallback))
+                    return;
+
+                possiblePositions.Add(fallback);
             }
         }
 
@@ -173,5 +211,68 @@ public sealed partial class SpawnPointSystem : EntitySystem
 
         args.SpawnResult = _stationSpawning.SpawnPlayerMob(
             spawnLoc, args.Job, args.HumanoidCharacterProfile, args.Station);
+    }
+
+    // cmu edit start: a spawn point can take jobs besides its own, like detectives at the deputy spawns
+    private bool CMUTakesJob(EntityUid spawnPoint, Robust.Shared.Prototypes.ProtoId<Content.Shared.Roles.JobPrototype>? job)
+    {
+        return job != null &&
+               TryComp(spawnPoint, out Content.Shared.CMU14.Spawners.CMUSpawnPointExtraJobsComponent? extra) &&
+               extra.Jobs.Contains(job.Value);
+    }
+    // cmu edit end
+
+    // CMU14 method: last ditch spawn for stations with no spawn points. Walks outward from
+    // the middle of the largest grid's bounding box to the first tile nothing blocks.
+    private bool TryGetFallbackSpawn(EntityUid? station, out EntityCoordinates coords)
+    {
+        coords = default;
+
+        if (station is not { } stationUid
+            || _stationSystem.GetLargestGrid(stationUid) is not { } gridUid
+            || !TryComp<MapGridComponent>(gridUid, out var grid))
+            return false;
+
+        var aabb = grid.LocalAABB;
+        var center = new Vector2i((int) ((aabb.Left + aabb.Right) / 2f), (int) ((aabb.Bottom + aabb.Top) / 2f));
+        var reach = (int) MathF.Max(aabb.Width, aabb.Height) / 2 + 1;
+
+        for (var radius = 0; radius <= reach; radius++)
+        {
+            for (var dx = -radius; dx <= radius; dx++)
+            {
+                for (var dy = -radius; dy <= radius; dy++)
+                {
+                    if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != radius)
+                        continue;
+
+                    var tile = new EntityCoordinates(gridUid, center + new Vector2i(dx, dy));
+                    // CMU14: IsTileBlocked ignores empty space, the ring can walk off the hull
+                    if (_rmcMap.TryGetTileDef(tile, out var def)
+                        && def.ID != ContentTileDefinition.SpaceID
+                        && !_rmcMap.IsTileBlocked(tile))
+                    {
+                        coords = tile;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsOnShip(
+        TransformComponent xform,
+        IReadOnlySet<EntityUid> shipGrids,
+        IReadOnlySet<EntityUid> shipStations)
+    {
+        if (xform.GridUid is not { } grid)
+            return false;
+
+        if (shipGrids.Contains(grid))
+            return true;
+
+        return _stationSystem.GetOwningStation(grid) is { } station && shipStations.Contains(station);
     }
 }

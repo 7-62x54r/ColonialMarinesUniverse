@@ -1,4 +1,4 @@
-﻿cmd-whitelistadd-desc = Adds the player with the given username to the server whitelist.
+cmd-whitelistadd-desc = Adds the player with the given username to the server whitelist.
 cmd-whitelistadd-help = Usage: whitelistadd <username or User ID>
 cmd-whitelistadd-existing = {$username} is already on the whitelist!
 cmd-whitelistadd-added = {$username} added to the whitelist
@@ -22,11 +22,12 @@ ban-banned-1 = You, or another user of this computer or connection, are banned f
 ban-banned-2 = The ban reason is: "{$reason}"
 ban-banned-3 = Attempts to circumvent this ban such as creating a new account will be logged.
 
-soft-player-cap-full = The server is full!
-panic-bunker-account-denied = This server is in panic bunker mode, often enabled as a precaution against raids. New connections by accounts not meeting certain requirements are temporarily not accepted. Try again later
-panic-bunker-account-denied-reason = This server is in panic bunker mode, often enabled as a precaution against raids. New connections by accounts not meeting certain requirements are temporarily not accepted. Try again later. Reason: "{$reason}"
-panic-bunker-account-reason-account = Your Space Station 14 account is too new. It must be older than {$minutes} minutes
-panic-bunker-account-reason-overall = Your overall playtime on the server must be greater than {$minutes} $minutes
+# CMU14: capacity message
+soft-player-cap-full = We're at capacity right now, but we'd love to have you. Try again shortly, or find us at discord.gg/colonialmarines!
+panic-bunker-account-denied = We're in 'panic bunker' mode, new connections not meeting certain requirements are temporarily not accepted. We'll be back soon, try again later, visit our Discord for more information.
+panic-bunker-account-denied-reason = We're in 'panic bunker' mode, new connections not meeting certain requirements are temporarily not accepted. We'll be back soon, visit our Discord for more information. Requirement: "{$reason}"
+panic-bunker-account-reason-account = Your account is too new. It must be older than {$minutes} minutes!
+panic-bunker-account-reason-overall = Overall playtime must be greater than {$minutes} minutes!
 
 whitelist-playtime = You do not have enough playtime to join this server. You need at least {$minutes} minutes of playtime to join this server.
 whitelist-player-count = This server is currently not accepting players. Please try again later.

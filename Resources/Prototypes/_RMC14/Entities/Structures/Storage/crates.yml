@@ -26,6 +26,8 @@
     sprite: _RMC14/Structures/Storage/Crates/basic.rsi
     state: icon
   - type: RequisitionsCrate
+    reward: 15
+  - type: CargoSellWhitelist
   - type: InteractionOutline
   - type: Physics
   - type: Fixtures
@@ -43,6 +45,7 @@
   - type: PlaceableSurface
     isPlaceable: false
   - type: Damageable
+  - type: Injurable
     damageContainer: StructuralInorganic
   - type: Corrodible
     timeToApply: 4
@@ -74,8 +77,8 @@
           Invoice: { state: invoice }
   - type: PaperLabel
     labelSlot:
-      insertVerbText: Attach Invoice
-      ejectVerbText: Remove Invoice
+      insertVerbText: rmc-requisition-invoice-attach
+      ejectVerbText: rmc-requisition-invoice-remove
       whitelist:
         components:
         - RequisitionsInvoice
@@ -87,6 +90,9 @@
   - type: StaticPrice
     price: 50
   - type: Weldable
+  - type: RMCWeldEffectSource
+    startingOffset: -0.45, 0
+    endingOffset: 0.45, 0
   - type: ResistLocker
   - type: RequireProjectileTarget
   - type: InteractedBlacklist
@@ -102,18 +108,26 @@
     virtualLeft: RMCVirtualCrateLeft
   - type: RMCCanBeFultoned
   - type: ReceiverXenoClaws
-    minimumClawStrength: ImpossiblySharp
+    minimumClawStrength: VerySharp
   - type: XenoCrusherChargable
+    passOnDestroy: true
     setDamage:
       types:
         Blunt: 0
-    throwRange: 2
+
   - type: CrashLandable
   - type: ParaDroppable
     dropScatter: 4
   - type: AnimationPlayer
   - type: RMCMesonsNonviewable
   - type: EntityStorageCloseOnMapInit
+  - type: Flamability
+    chance: 0.06
+    rate: 0.3
+    spread: 0.2
+    range: 0.5
+    burnDurationMin: 70
+    burnDurationMax: 620
 
 - type: entity
   parent: RMCCrateBase
@@ -305,6 +319,7 @@
   name: freezer crate
   description: A freezer crate.
   components:
+  - type: CMUBloodRefrigerator # CMU14: keeps blood and plasma fresh
   - type: Sprite
     sprite: _RMC14/Structures/Storage/Crates/freezer.rsi
     layers:
@@ -936,3 +951,14 @@
       map: ["enum.PaperLabelVisuals.Layer"]
   - type: Icon
     sprite: _RMC14/Structures/Storage/Crates/woodcrate.rsi
+  - type: ReceiverXenoClaws
+    minimumClawStrength: Normal
+  - type: XenoCrusherChargable
+    instantDestroy: true
+  - type: Flamability
+    chance: 0.9
+    rate: 3.0
+    spread: 1.2
+    destroyAnyway: true
+    burnDurationMin: 70
+    burnDurationMax: 620

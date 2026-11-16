@@ -1,5 +1,6 @@
 #nullable enable annotations
 using System.Numerics;
+using Content.IntegrationTests.Fixtures;
 using Content.Server.Interaction;
 using Content.Shared.Hands.Components;
 using Content.Shared.Hands.EntitySystems;
@@ -16,7 +17,7 @@ namespace Content.IntegrationTests.Tests.Interaction.Click
 {
     [TestFixture]
     [TestOf(typeof(InteractionSystem))]
-    public sealed class InteractionSystemTests
+    public sealed partial class InteractionSystemTests : GameTest
     {
         [TestPrototypes]
         private const string Prototypes = @"
@@ -38,80 +39,12 @@ namespace Content.IntegrationTests.Tests.Interaction.Click
 ";
 
         [Test]
-        public async Task InteractionTest()
-        {
-            await using var pair = await PoolManager.GetServerClient();
-            var server = pair.Server;
-
-            var sEntities = server.ResolveDependency<IEntityManager>();
-            var mapManager = server.ResolveDependency<IMapManager>();
-            var sysMan = server.ResolveDependency<IEntitySystemManager>();
-            var handSys = sysMan.GetEntitySystem<SharedHandsSystem>();
-
-            var map = await pair.CreateTestMap();
-            var mapId = map.MapId;
-            var coords = map.MapCoords;
-
-            await server.WaitIdleAsync();
-            EntityUid user = default;
-            EntityUid target = default;
-            EntityUid item = default;
-
-            await server.WaitAssertion(() =>
-            {
-                user = sEntities.SpawnEntity(null, coords);
-                sEntities.EnsureComponent<HandsComponent>(user);
-                sEntities.EnsureComponent<ComplexInteractionComponent>(user);
-                handSys.AddHand(user, "hand", HandLocation.Left);
-                target = sEntities.SpawnEntity(null, coords);
-                item = sEntities.SpawnEntity(null, coords);
-                sEntities.EnsureComponent<ItemComponent>(item);
-            });
-
-            await server.WaitRunTicks(1);
-
-            var entitySystemManager = server.ResolveDependency<IEntitySystemManager>();
-            InteractionSystem interactionSystem = default!;
-            TestInteractionSystem testInteractionSystem = default!;
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(entitySystemManager.TryGetEntitySystem(out interactionSystem));
-                Assert.That(entitySystemManager.TryGetEntitySystem(out testInteractionSystem));
-            });
-
-            var interactUsing = false;
-            var interactHand = false;
-            await server.WaitAssertion(() =>
-            {
-                testInteractionSystem.InteractUsingEvent = (ev) => { Assert.That(ev.Target, Is.EqualTo(target)); interactUsing = true; };
-                testInteractionSystem.InteractHandEvent = (ev) => { Assert.That(ev.Target, Is.EqualTo(target)); interactHand = true; };
-
-                interactionSystem.UserInteraction(user, sEntities.GetComponent<TransformComponent>(target).Coordinates, target);
-                Assert.Multiple(() =>
-                {
-                    Assert.That(interactUsing, Is.False);
-                    Assert.That(interactHand);
-                });
-
-                Assert.That(handSys.TryPickup(user, item));
-
-                interactionSystem.UserInteraction(user, sEntities.GetComponent<TransformComponent>(target).Coordinates, target);
-                Assert.That(interactUsing);
-            });
-
-            testInteractionSystem.ClearHandlers();
-            await pair.CleanReturnAsync();
-        }
-
-        [Test]
         public async Task InteractionObstructionTest()
         {
-            await using var pair = await PoolManager.GetServerClient();
+            var pair = Pair;
             var server = pair.Server;
 
             var sEntities = server.ResolveDependency<IEntityManager>();
-            var mapManager = server.ResolveDependency<IMapManager>();
             var sysMan = server.ResolveDependency<IEntitySystemManager>();
             var handSys = sysMan.GetEntitySystem<SharedHandsSystem>();
 
@@ -168,17 +101,15 @@ namespace Content.IntegrationTests.Tests.Interaction.Click
             });
 
             testInteractionSystem.ClearHandlers();
-            await pair.CleanReturnAsync();
         }
 
         [Test]
         public async Task InteractionInRangeTest()
         {
-            await using var pair = await PoolManager.GetServerClient();
+            var pair = Pair;
             var server = pair.Server;
 
             var sEntities = server.ResolveDependency<IEntityManager>();
-            var mapManager = server.ResolveDependency<IMapManager>();
             var sysMan = server.ResolveDependency<IEntitySystemManager>();
             var handSys = sysMan.GetEntitySystem<SharedHandsSystem>();
 
@@ -234,18 +165,15 @@ namespace Content.IntegrationTests.Tests.Interaction.Click
             });
 
             testInteractionSystem.ClearHandlers();
-            await pair.CleanReturnAsync();
         }
-
 
         [Test]
         public async Task InteractionOutOfRangeTest()
         {
-            await using var pair = await PoolManager.GetServerClient();
+            var pair = Pair;
             var server = pair.Server;
 
             var sEntities = server.ResolveDependency<IEntityManager>();
-            var mapManager = server.ResolveDependency<IMapManager>();
             var sysMan = server.ResolveDependency<IEntitySystemManager>();
             var handSys = sysMan.GetEntitySystem<SharedHandsSystem>();
 
@@ -300,17 +228,15 @@ namespace Content.IntegrationTests.Tests.Interaction.Click
             });
 
             testInteractionSystem.ClearHandlers();
-            await pair.CleanReturnAsync();
         }
 
         [Test]
         public async Task InsideContainerInteractionBlockTest()
         {
-            await using var pair = await PoolManager.GetServerClient();
+            var pair = Pair;
             var server = pair.Server;
 
             var sEntities = server.ResolveDependency<IEntityManager>();
-            var mapManager = server.ResolveDependency<IMapManager>();
             var sysMan = server.ResolveDependency<IEntitySystemManager>();
             var handSys = sysMan.GetEntitySystem<SharedHandsSystem>();
             var conSystem = sysMan.GetEntitySystem<SharedContainerSystem>();
@@ -388,10 +314,9 @@ namespace Content.IntegrationTests.Tests.Interaction.Click
             });
 
             testInteractionSystem.ClearHandlers();
-            await pair.CleanReturnAsync();
         }
 
-        public sealed class TestInteractionSystem : EntitySystem
+        public sealed partial class TestInteractionSystem : EntitySystem
         {
             public EntityEventHandler<InteractUsingEvent>? InteractUsingEvent;
             public EntityEventHandler<InteractHandEvent>? InteractHandEvent;

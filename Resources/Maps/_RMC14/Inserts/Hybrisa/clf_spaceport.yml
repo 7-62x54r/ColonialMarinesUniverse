@@ -2947,7 +2947,7 @@ entities:
     - type: Transform
       pos: 20.901918,10.354139
       parent: 1
-- proto: RMCCableCoil1
+- proto: CMUCableThinLVStack1 # CMU14: replaced RMCCableCoil1, thin LV cable
   entities:
   - uid: 767
     components:
@@ -4404,7 +4404,7 @@ entities:
       rot: 1.5707963267948966 rad
       pos: 18.5,15.5
       parent: 1
-- proto: RMCGuidebookSOP
+- proto: AU14GuidebookSOP
   entities:
   - uid: 420
     components:
@@ -5579,7 +5579,7 @@ entities:
     - type: Transform
       pos: 8.256172,12.426577
       parent: 1
-- proto: RMCShovel
+- proto: AU14ToolShovel
   entities:
   - uid: 465
     components:

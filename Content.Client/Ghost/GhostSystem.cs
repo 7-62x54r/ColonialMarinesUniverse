@@ -1,10 +1,13 @@
-using Content.Client._RMC14.NightVision;
 using Content.Client.Movement.Systems;
+using Content.Shared._RMC14.Mentor.ImaginaryFriend;
 using Content.Shared.Actions;
-using Content.Shared.Ghost;
+using Content.Shared.GameTicking;
+using Content.Shared.Ghost.Components;
+using Content.Shared.Ghost.Systems;
+using Content.Shared.NightVision;
+using Content.Shared.Overlays;
 using Robust.Client.Console;
 using Robust.Client.GameObjects;
-using Robust.Client.Graphics;
 using Robust.Client.Player;
 using Robust.Shared.Player;
 
@@ -15,20 +18,19 @@ namespace Content.Client.Ghost
         [Dependency] private IClientConsoleHost _console = default!;
         [Dependency] private IPlayerManager _playerManager = default!;
         [Dependency] private SharedActionsSystem _actions = default!;
-        [Dependency] private PointLightSystem _pointLightSystem = default!;
+        [Dependency] private PointLightSystem _pointLight = default!;
         [Dependency] private ContentEyeSystem _contentEye = default!;
         [Dependency] private SpriteSystem _sprite = default!;
-        //RMC14
-        [Dependency] private IOverlayManager _overlay = default!;
+        [Dependency] private SharedNightVisionSystem _nv = default!;
 
         public int AvailableGhostRoleCount { get; private set; }
 
         private bool _ghostVisibility = true;
 
-        private bool GhostVisibility
+        public bool GhostVisibility
         {
             get => _ghostVisibility;
-            set
+            private set
             {
                 if (_ghostVisibility == value)
                 {
@@ -40,7 +42,7 @@ namespace Content.Client.Ghost
                 var query = AllEntityQuery<GhostComponent, SpriteComponent>();
                 while (query.MoveNext(out var uid, out _, out var sprite))
                 {
-                    _sprite.SetVisible((uid, sprite), value || uid == _playerManager.LocalEntity);
+                    _sprite.SetVisible((uid, sprite), value || uid == _playerManager.LocalEntity || HasComp<ImaginaryFriendComponent>(uid)); //RMC14
                 }
             }
         }
@@ -53,6 +55,7 @@ namespace Content.Client.Ghost
         public event Action<GhostComponent>? PlayerAttached;
         public event Action? PlayerDetached;
         public event Action<GhostWarpsResponseEvent>? GhostWarpsResponse;
+        public event Action? GhostWarpsReset;
         public event Action<GhostUpdateGhostRoleCountEvent>? GhostRoleCountUpdated;
 
         public override void Initialize()
@@ -67,6 +70,7 @@ namespace Content.Client.Ghost
             SubscribeLocalEvent<GhostComponent, LocalPlayerDetachedEvent>(OnGhostPlayerDetach);
 
             SubscribeNetworkEvent<GhostWarpsResponseEvent>(OnGhostWarpsResponse);
+            SubscribeNetworkEvent<RoundRestartCleanupEvent>(OnRoundRestartCleanup);
             SubscribeNetworkEvent<GhostUpdateGhostRoleCountEvent>(OnUpdateGhostRoleCount);
 
             SubscribeLocalEvent<EyeComponent, ToggleLightingActionEvent>(OnToggleLighting);
@@ -77,7 +81,7 @@ namespace Content.Client.Ghost
         private void OnStartup(EntityUid uid, GhostComponent component, ComponentStartup args)
         {
             if (TryComp(uid, out SpriteComponent? sprite))
-                _sprite.SetVisible((uid, sprite), GhostVisibility || uid == _playerManager.LocalEntity);
+                _sprite.SetVisible((uid, sprite), GhostVisibility || uid == _playerManager.LocalEntity || HasComp<ImaginaryFriendComponent>(uid)); // RMC14
         }
 
         //RMC14
@@ -87,34 +91,48 @@ namespace Content.Client.Ghost
                 return;
 
             TryComp<PointLightComponent>(uid, out var light);
+            TryComp<LightingNightVisionComponent>(uid, out var nightVision);
 
             if (!component.DrawLight)
             {
                 // normal lighting
                 Popup.PopupEntity(Loc.GetString("ghost-gui-toggle-lighting-manager-popup-normal"), args.Performer);
                 _contentEye.RequestEye(component.DrawFov, true);
+                if (light != null)
+                    _pointLight.SetEnabled(uid, false, light);
+                if (nightVision != null)
+                    _nv.SetEnabled((uid, nightVision), false);
             }
-            else if ((!light?.Enabled ?? false) && !_overlay.HasOverlay<HalfNightVisionBrightnessOverlay>()) // skip this option if we have no PointLightComponent
+            else if (light is { Enabled: false } && nightVision is not { Enabled: true })
             {
-                // enable personal light
+                // personal light
                 Popup.PopupEntity(Loc.GetString("ghost-gui-toggle-lighting-manager-popup-personal-light"), args.Performer);
-                _pointLightSystem.SetEnabled(uid, true, light);
+                _pointLight.SetEnabled(uid, true, light);
             }
-            else if ((light?.Enabled ?? false) && !_overlay.HasOverlay<HalfNightVisionBrightnessOverlay>())
+            else if (light is { Enabled: true } && nightVision != null)
             {
-                //RMC14 half bright mode
+                // RMC14 half-bright mode follows personal light.
                 Popup.PopupEntity(Loc.GetString("rmc-ghost-gui-toggle-lighting-manager-popup-halfbright"), args.Performer);
-                _pointLightSystem.SetEnabled(uid, false, light);
-                _overlay.AddOverlay(new HalfNightVisionBrightnessOverlay());
+                _pointLight.SetEnabled(uid, false, light);
+                _nv.SetEnabled((uid, nightVision), true);
+            }
+            else if (nightVision is { Enabled: false })
+            {
+                // If PointLight is unavailable, preserve the upstream three-state cycle.
+                Popup.PopupEntity(Loc.GetString("ghost-gui-toggle-lighting-manager-popup-half-bright"), args.Performer);
+                _nv.SetEnabled((uid, nightVision), true);
             }
             else
             {
                 // fullbright mode
                 Popup.PopupEntity(Loc.GetString("ghost-gui-toggle-lighting-manager-popup-fullbright"), args.Performer);
                 _contentEye.RequestEye(component.DrawFov, false);
-                _pointLightSystem.SetEnabled(uid, false, light);
-                _overlay.RemoveOverlay<HalfNightVisionBrightnessOverlay>();
+                if (light != null)
+                    _pointLight.SetEnabled(uid, false, light);
+                if (nightVision != null)
+                    _nv.SetEnabled((uid, nightVision), false);
             }
+
             args.Handled = true;
         }
         //RMC14
@@ -152,8 +170,6 @@ namespace Content.Client.Ghost
             if (uid != _playerManager.LocalEntity)
                 return;
 
-            _overlay.RemoveOverlay<HalfNightVisionBrightnessOverlay>(); //RMC14
-
             GhostVisibility = false;
             PlayerRemoved?.Invoke(component);
         }
@@ -179,7 +195,6 @@ namespace Content.Client.Ghost
         {
             GhostVisibility = false;
             PlayerDetached?.Invoke();
-            _overlay.RemoveOverlay<HalfNightVisionBrightnessOverlay>(); //RMC14
         }
 
         private void OnGhostWarpsResponse(GhostWarpsResponseEvent msg)
@@ -192,15 +207,20 @@ namespace Content.Client.Ghost
             GhostWarpsResponse?.Invoke(msg);
         }
 
+        private void OnRoundRestartCleanup(RoundRestartCleanupEvent _)
+        {
+            GhostWarpsReset?.Invoke();
+        }
+
         private void OnUpdateGhostRoleCount(GhostUpdateGhostRoleCountEvent msg)
         {
             AvailableGhostRoleCount = msg.AvailableGhostRoles;
             GhostRoleCountUpdated?.Invoke(msg);
         }
 
-        public void RequestWarps()
+        public void RequestWarps(string? tab = null) // CMU14: tab scopes the server's preview overrides
         {
-            RaiseNetworkEvent(new GhostWarpsRequestEvent());
+            RaiseNetworkEvent(new GhostWarpsRequestEvent(tab));
         }
 
         public void ReturnToBody()

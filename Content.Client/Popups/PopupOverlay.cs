@@ -1,4 +1,5 @@
 using System.Numerics;
+using Content.Shared._RMC14.Xenonids.Eye;
 using Content.Shared.Examine;
 using Robust.Client.Graphics;
 using Robust.Client.Player;
@@ -83,6 +84,15 @@ public sealed class PopupOverlay : Overlay
         {
             viewPos = _transform.GetMapCoordinates(ourEntity.Value);
             ourPos = viewPos.Position;
+
+            // RMC14
+            if (_entManager.TryGetComponent<QueenEyeActionComponent>(ourEntity.Value, out var queenEye) &&
+                queenEye.Eye is { } eyeUid)
+            {
+                viewPos = _transform.GetMapCoordinates(eyeUid);
+                ourPos = viewPos.Position;
+            }
+            // RMC14
         }
 
         foreach (var popup in _popup.WorldLabels)
@@ -95,8 +105,9 @@ public sealed class PopupOverlay : Overlay
             var distance = (mapPos.Position - ourPos).Length();
 
             // Should handle fade here too wyci.
+            // CMU14: pass predicate state without allocating a closure for each popup on each draw.
             if (!args.WorldBounds.Contains(mapPos.Position) || !_examine.InRangeUnOccluded(viewPos, mapPos, distance,
-                    e => e == popup.InitialPos.EntityId || e == ourEntity, entMan: _entManager))
+                    (popup.InitialPos.EntityId, ourEntity), static (uid, state) => uid == state.EntityId || uid == state.ourEntity))
                 continue;
 
             var pos = Vector2.Transform(mapPos.Position, matrix);

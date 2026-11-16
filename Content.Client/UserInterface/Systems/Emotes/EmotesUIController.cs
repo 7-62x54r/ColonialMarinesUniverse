@@ -18,25 +18,34 @@ namespace Content.Client.UserInterface.Systems.Emotes;
 [UsedImplicitly]
 public sealed partial class EmotesUIController : UIController, IOnStateChanged<GameplayState>
 {
-    [Dependency] private IEntityManager _entityManager = default!;
     [Dependency] private IPrototypeManager _prototypeManager = default!;
     [Dependency] private IPlayerManager _playerManager = default!;
-    
+
     private MenuButton? EmotesButton => UIManager.GetActiveUIWidgetOrNull<MenuBar.Widgets.GameTopMenuBar>()?.EmotesButton;
     private SimpleRadialMenu? _menu;
 
-    private static readonly Dictionary<EmoteCategory, (string Tooltip, SpriteSpecifier Sprite)> EmoteGroupingInfo
-        = new Dictionary<EmoteCategory, (string Tooltip, SpriteSpecifier Sprite)>
+    private static readonly Dictionary<EmoteCategory, (string Tooltip, SpriteSpecifier Sprite)> EmoteGroupingInfo = new()
     {
         [EmoteCategory.General] = ("emote-menu-category-general", new SpriteSpecifier.Rsi(new ResPath("/Textures/Clothing/Head/Soft/mimesoft.rsi"), "icon")),
         [EmoteCategory.Hands] = ("emote-menu-category-hands", new SpriteSpecifier.Rsi(new ResPath("/Textures/Clothing/Hands/Gloves/latex.rsi"), "icon")),
         [EmoteCategory.Vocal] = ("emote-menu-category-vocal", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
-        [EmoteCategory.Farewell] = ("emote-menu-category-farefell", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
         [EmoteCategory.Greeting] = ("emote-menu-category-greeting", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
-        [EmoteCategory.Question] = ("emote-menu-category-question", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
-        [EmoteCategory.RestrictedArea] = ("emote-menu-category-restrictedarea", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
-        [EmoteCategory.TaskUpdate] = ("emote-menu-category-taskupdate", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Farewell] = ("emote-menu-category-farewell", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.APOLLO] = ("emote-menu-category-apollo", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Propaganda] = ("emote-menu-category-propaganda", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Positive] = ("emote-menu-category-positive", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Negative] = ("emote-menu-category-negative", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Curious] = ("emote-menu-category-curious", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Interrogation] = ("emote-menu-category-interrogation", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Identification] = ("emote-menu-category-identification", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Concern] = ("emote-menu-category-concern", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Search] = ("emote-menu-category-search", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
         [EmoteCategory.Warning] = ("emote-menu-category-warning", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Alert] = ("emote-menu-category-alert", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Observation] = ("emote-menu-category-observation", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Threat] = ("emote-menu-category-threat", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Accusation] = ("emote-menu-category-accusation", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
+        [EmoteCategory.Statement] = ("emote-menu-category-statement", new SpriteSpecifier.Texture(new ResPath("/Textures/Interface/Emotes/vocal.png"))),
     };
 
     public void OnStateEntered(GameplayState state)
@@ -132,26 +141,26 @@ public sealed partial class EmotesUIController : UIController, IOnStateChanged<G
         if (_menu == null)
             return;
 
-        _menu.Close();
+        _menu.Release();
         _menu = null;
     }
 
-    private IEnumerable<RadialMenuOption> ConvertToButtons(IEnumerable<EmotePrototype> emotePrototypes)
+    private IEnumerable<RadialMenuOptionBase> ConvertToButtons(IEnumerable<EmotePrototype> emotePrototypes)
     {
         var whitelistSystem = EntitySystemManager.GetEntitySystem<EntityWhitelistSystem>();
         var player = _playerManager.LocalSession?.AttachedEntity;
 
-        Dictionary<EmoteCategory, List<RadialMenuOption>> emotesByCategory = new(); 
+        Dictionary<EmoteCategory, List<RadialMenuOptionBase>> emotesByCategory = new();
         foreach (var emote in emotePrototypes)
         {
-            if(emote.Category == EmoteCategory.Invalid)
+            if (emote.Category == EmoteCategory.Invalid)
                 continue;
 
             // only valid emotes that have ways to be triggered by chat and player have access / no restriction on
             if (emote.Category == EmoteCategory.Invalid
                 || emote.ChatTriggers.Count == 0
                 || !(player.HasValue && whitelistSystem.IsWhitelistPassOrNull(emote.Whitelist, player.Value))
-                || whitelistSystem.IsBlacklistPass(emote.Blacklist, player.Value))
+                || whitelistSystem.IsWhitelistPass(emote.Blacklist, player.Value))
                 continue;
 
             if (!emote.Available
@@ -161,19 +170,19 @@ public sealed partial class EmotesUIController : UIController, IOnStateChanged<G
 
             if (!emotesByCategory.TryGetValue(emote.Category, out var list))
             {
-                list = new List<RadialMenuOption>();
+                list = new List<RadialMenuOptionBase>();
                 emotesByCategory.Add(emote.Category, list);
             }
 
             var actionOption = new RadialMenuActionOption<EmotePrototype>(HandleRadialButtonClick, emote)
             {
-                Sprite = emote.Icon,
+                IconSpecifier = RadialMenuIconSpecifier.With(emote.Icon),
                 ToolTip = Loc.GetString(emote.Name)
             };
             list.Add(actionOption);
         }
 
-        var models = new RadialMenuOption[emotesByCategory.Count];
+        var models = new RadialMenuOptionBase[emotesByCategory.Count];
         var i = 0;
         foreach (var (key, list) in emotesByCategory)
         {
@@ -181,7 +190,7 @@ public sealed partial class EmotesUIController : UIController, IOnStateChanged<G
 
             models[i] = new RadialMenuNestedLayerOption(list)
             {
-                Sprite = tuple.Sprite,
+                IconSpecifier = RadialMenuIconSpecifier.With(tuple.Sprite),
                 ToolTip = Loc.GetString(tuple.Tooltip)
             };
             i++;
@@ -192,6 +201,6 @@ public sealed partial class EmotesUIController : UIController, IOnStateChanged<G
 
     private void HandleRadialButtonClick(EmotePrototype prototype)
     {
-        _entityManager.RaisePredictiveEvent(new PlayEmoteMessage(prototype.ID));
+        EntityManager.RaisePredictiveEvent(new PlayEmoteMessage(prototype.ID));
     }
 }

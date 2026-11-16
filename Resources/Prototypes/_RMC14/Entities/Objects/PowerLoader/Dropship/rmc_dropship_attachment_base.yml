@@ -28,6 +28,7 @@
   - type: InteractionOutline
   - type: Clickable
   - type: Damageable
+  - type: Injurable
     damageContainer: Inorganic
   - type: Destructible
     thresholds:
@@ -44,6 +45,7 @@
     virtualRight: RMCVirtualDropshipGearRight
     virtualLeft: RMCVirtualDropshipGearLeft
   - type: Item
+    size: Ginormous
   - type: XenoCrusherChargable
     instantDestroy: true
   - type: VisiblyAcidOutsideContainer

@@ -1,17 +1,26 @@
 using System.Collections.Frozen;
 using System.Text.RegularExpressions;
-using Content.Shared._AU14.Abominations;
-using Content.Shared._CMU14.Yautja;
+using Content.Shared.CMU14.Yautja;
 using Content.Shared._RMC14.Chat;
-using Content.Shared.AU14;
 using Content.Shared._RMC14.Xenonids;
 using Content.Shared._RMC14.Xenonids.Evolution;
+using Content.Shared._RMC14.Xenonids.Hive;
+using Content.Shared.ActionBlocker;
+using Content.Shared.CMU14;
+using Content.Shared.Chat.Prototypes;
 using Content.Shared.Popups;
 using Content.Shared.Radio;
 using Content.Shared.Speech;
+using Content.Shared.Whitelist;
+using Robust.Shared.Audio;
+using Robust.Shared.Audio.Systems;
+using Robust.Shared.Console;
+using Robust.Shared.Network;
+using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
+using Robust.Shared.Random;
 using Robust.Shared.Utility;
-using Content.Shared._RMC14.Xenonids.Hive;
+using CultistComponent = Content.Shared.CMU14.Threats.Mobs.Cultist.CultistComponent;
 
 namespace Content.Shared.Chat;
 
@@ -32,40 +41,87 @@ public abstract partial class SharedChatSystem : EntitySystem
     public const char MentorPrefix = '}';
     public const char DefaultChannelKey = 'h';
 
+    public const int VoiceRange = 10; // how far voice goes in world units
+    public const int WhisperClearRange = 2; // how far whisper goes while still being understandable, in world units
+    public const int WhisperMuffledRange = 5; // how far whisper goes at all, in world units
+    public static readonly SoundSpecifier DefaultAnnouncementSound
+        = new SoundPathSpecifier("/Audio/Announcements/announce.ogg");
+
     public static readonly ProtoId<RadioChannelPrototype> CommonChannel = "MarineCommon";
     public static readonly ProtoId<RadioChannelPrototype> HivemindChannel = "Hivemind";
 
     public static readonly string DefaultChannelPrefix = $"{RadioChannelPrefix}{DefaultChannelKey}";
     public static readonly ProtoId<SpeechVerbPrototype> DefaultSpeechVerb = "Default";
 
-    [Dependency] private IPrototypeManager _prototypeManager = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
+    [Dependency] private EntityWhitelistSystem _whitelist = default!;
+    [Dependency] private ActionBlockerSystem _actionBlocker = default!;
+    [Dependency] private SharedAudioSystem _audio = default!;
+    [Dependency] private IRobustRandom _random = default!;
+    [Dependency] private INetManager _net = default!;
     [Dependency] private XenoEvolutionSystem _xenoEvolution = default!;
     [Dependency] private SharedXenoHiveSystem _hive = default!;
 
-    /// <summary>
-    /// Cache of the keycodes for faster lookup.
-    /// </summary>
-    public FrozenDictionary<char, RadioChannelPrototype> _keyCodes = default!;
+    // RMC14
+    public FrozenDictionary<string, RadioChannelPrototype> _channelLookup = default!;
+    public FrozenSet<char> _validPrefixes = default!;
+    // RMC14
 
     public override void Initialize()
     {
         base.Initialize();
-        DebugTools.Assert(_prototypeManager.HasIndex(CommonChannel));
+
+        DebugTools.Assert(ProtoMan.HasIndex(CommonChannel));
+
         SubscribeLocalEvent<PrototypesReloadedEventArgs>(OnPrototypeReload);
         CacheRadios();
+        CacheEmotes();
     }
 
     protected virtual void OnPrototypeReload(PrototypesReloadedEventArgs obj)
     {
         if (obj.WasModified<RadioChannelPrototype>())
             CacheRadios();
+
+        if (obj.WasModified<EmotePrototype>())
+            CacheEmotes();
     }
 
     private void CacheRadios()
     {
-        _keyCodes = _prototypeManager.EnumeratePrototypes<RadioChannelPrototype>()
-            .ToFrozenDictionary(x => x.KeyCode);
+        // RMC14
+        var channelDict = new Dictionary<string, RadioChannelPrototype>();
+        var prefixSet = new HashSet<char>();
+        // cmu edit start
+        var channelsByKey = new Dictionary<string, List<RadioChannelPrototype>>();
+        // cmu edit end
+
+        foreach (var radioChannel in ProtoMan.EnumeratePrototypes<RadioChannelPrototype>())
+        {
+            var keyCode = char.ToLowerInvariant(radioChannel.KeyCode);
+            channelDict[$"{radioChannel.RadioPrefix}{keyCode}"] = radioChannel;
+            // cmu edit start
+            channelsByKey.GetOrNew($"{radioChannel.RadioPrefix}{keyCode}").Add(radioChannel);
+            // cmu edit end
+
+            prefixSet.Add(radioChannel.RadioPrefix);
+
+            if (radioChannel.RadioPrefix == RadioChannelPrefix)
+            {
+                channelDict[$"{RadioChannelAltPrefix}{keyCode}"] = radioChannel;
+                prefixSet.Add(RadioChannelAltPrefix);
+                // cmu edit start
+                channelsByKey.GetOrNew($"{RadioChannelAltPrefix}{keyCode}").Add(radioChannel);
+                // cmu edit end
+            }
+        }
+
+        _channelLookup = channelDict.ToFrozenDictionary();
+        // cmu edit start
+        CMUCacheSharedRadioKeys(channelsByKey);
+        // cmu edit end
+        _validPrefixes = prefixSet.ToFrozenSet();
+        // RMC14
     }
 
     /// <summary>
@@ -75,13 +131,13 @@ public abstract partial class SharedChatSystem : EntitySystem
     public SpeechVerbPrototype GetSpeechVerb(EntityUid source, string message, SpeechComponent? speech = null)
     {
         if (!Resolve(source, ref speech, false))
-            return _prototypeManager.Index(DefaultSpeechVerb);
+            return ProtoMan.Index(DefaultSpeechVerb);
 
         // check for a suffix-applicable speech verb
         SpeechVerbPrototype? current = null;
         foreach (var (str, id) in speech.SuffixSpeechVerbs)
         {
-            var proto = _prototypeManager.Index(id);
+            var proto = ProtoMan.Index(id);
             if (message.EndsWith(Loc.GetString(str)) && proto.Priority >= (current?.Priority ?? 0))
             {
                 current = proto;
@@ -89,7 +145,7 @@ public abstract partial class SharedChatSystem : EntitySystem
         }
 
         // if no applicable suffix verb return the normal one used by the entity
-        return current ?? _prototypeManager.Index(speech.SpeechVerb);
+        return current ?? ProtoMan.Index(speech.SpeechVerb);
     }
 
     /// <summary>
@@ -111,11 +167,14 @@ public abstract partial class SharedChatSystem : EntitySystem
         if (input.Length <= 2)
             return;
 
-        if (!(input.StartsWith(RadioChannelPrefix) || input.StartsWith(RadioChannelAltPrefix)))
+        // RMC14
+        if (!_validPrefixes.Contains(input[0]))
             return;
 
-        if (!_keyCodes.TryGetValue(char.ToLower(input[1]), out _))
+        var lookupKey = $"{input[0]}{char.ToLowerInvariant(input[1])}";
+        if (!_channelLookup.ContainsKey(lookupKey))
             return;
+        // RMC14
 
         prefix = input[..2];
         output = input[2..];
@@ -131,7 +190,7 @@ public abstract partial class SharedChatSystem : EntitySystem
     /// <param name="channel">The channel that was requested, if any</param>
     /// <param name="quiet">Whether or not to generate an informative pop-up message.</param>
     /// <returns></returns>
-    public bool TryProccessRadioMessage(
+    public bool TryProcessRadioMessage(
         EntityUid source,
         string input,
         out string output,
@@ -150,62 +209,70 @@ public abstract partial class SharedChatSystem : EntitySystem
         {
             output = SanitizeMessageCapital(input[1..].TrimStart());
             channel = ((HasComp<XenoComponent>(source) && !IsHivebrokenXeno(source)) || HasComp<CultistComponent>(source))
-                ? _prototypeManager.Index<RadioChannelPrototype>(HivemindChannel)
-                : _prototypeManager.Index<RadioChannelPrototype>(CommonChannel);
+                ? ProtoMan.Index<RadioChannelPrototype>(HivemindChannel)
+                : ProtoMan.Index<RadioChannelPrototype>(CommonChannel);
 
-
-            if (channel.ID == HivemindChannel &&
-                !_xenoEvolution.HasLiving<XenoEvolutionGranterComponent>(1, null, hive))
+            // RMC14
+            if (channel?.ID == HivemindChannel.Id &&
+                !CanUseHivemind(source, hive, quiet))
             {
-                if (!quiet)
-                    _popup.PopupEntity(Loc.GetString("rmc-no-queen-hivemind-chat"), source, source, PopupType.LargeCaution);
-
                 output = SanitizeMessageCapital(input[1..].TrimStart());
                 return false;
             }
+            // RMC14
 
             return true;
         }
 
-        if (!(input.StartsWith(RadioChannelPrefix) || input.StartsWith(RadioChannelAltPrefix)))
+        // RMC14
+        if (!_validPrefixes.Contains(input[0]))
             return false;
+        // RMC14
 
         if (input.Length < 2 || char.IsWhiteSpace(input[1]))
         {
             output = SanitizeMessageCapital(input[1..].TrimStart());
             if (HasComp<XenoComponent>(source) && !IsHivebrokenXeno(source))
+            {
+                Log.Info("Has XenoComponent, returning false");
                 return false;
-
+            }
             if (!quiet)
                 _popup.PopupEntity(Loc.GetString("chat-manager-no-radio-key"), source, source);
             return true;
         }
 
+        // RMC14
+        var prefix = input[0];
         var channelKey = input[1];
-        channelKey = char.ToLower(channelKey);
+        var lookupKey = $"{prefix}{char.ToLowerInvariant(channelKey)}";
+
+        var foundChannel = _channelLookup.TryGetValue(lookupKey, out channel);
+        // cmu edit start: a key several channels share goes to the one the speaker can use
+        if (foundChannel && channel != null)
+            channel = CMUResolveSharedRadioKey(source, lookupKey, channel);
+        // cmu edit end
+
         output = SanitizeMessageCapital(input[2..].TrimStart());
 
-        if (channelKey == DefaultChannelKey)
+        if (!foundChannel && char.ToLowerInvariant(channelKey) == DefaultChannelKey)
         {
             var ev = new GetDefaultRadioChannelEvent();
             RaiseLocalEvent(source, ev);
 
             if (ev.Channel == HivemindChannel.Id &&
-                !_xenoEvolution.HasLiving<XenoEvolutionGranterComponent>(1, null, hive))
+                !CanUseHivemind(source, hive, quiet))
             {
-                if (!quiet)
-                    _popup.PopupEntity(Loc.GetString("rmc-no-queen-hivemind-chat"), source, source, PopupType.LargeCaution);
-
                 output = SanitizeMessageCapital(input[1..].TrimStart());
                 return false;
             }
 
             if (ev.Channel != null)
-                _prototypeManager.TryIndex(ev.Channel, out channel);
+                ProtoMan.TryIndex(ev.Channel, out channel);
             return true;
         }
 
-        if (!_keyCodes.TryGetValue(channelKey, out channel) && !quiet)
+        if (!foundChannel && !quiet)
         {
             var msg = Loc.GetString("chat-manager-no-such-channel", ("key", channelKey));
             _popup.PopupEntity(msg, source, source);
@@ -215,15 +282,37 @@ public abstract partial class SharedChatSystem : EntitySystem
         RaiseLocalEvent(source, ref prefixEv);
         channel = prefixEv.Channel;
 
-        if (HasComp<XenoComponent>(source) && !IsHivebrokenXeno(source) && channel == null)
+        if (channel?.ID == HivemindChannel.Id &&
+            !CanUseHivemind(source, hive, quiet))
+        {
             return false;
+        }
+
+        if (HasComp<XenoComponent>(source) && !IsHivebrokenXeno(source) && channel == null)
+        {
+            Log.Info("Has XenoComponent but no channel, returning false");
+            return false;
+        }
+        // RMC14
 
         return true;
     }
 
+    private bool CanUseHivemind(EntityUid source, Entity<HiveComponent>? hive, bool quiet)
+    {
+        if (_xenoEvolution.HasLiving<XenoEvolutionGranterComponent>(1, null, hive))
+            return true;
+
+        if (!quiet)
+            _popup.PopupEntity(Loc.GetString("rmc-no-queen-hivemind-chat"), source, source, PopupType.LargeCaution);
+
+        return false;
+    }
+
     private bool IsHivebrokenXeno(EntityUid uid)
     {
-        return TryComp(uid, out YautjaThrallComponent? thrall) && thrall.Hivebroken;
+        return HasComp<YautjaHivebrokenXenoComponent>(uid) ||
+               TryComp(uid, out YautjaThrallComponent? thrall) && thrall.Hivebroken;
     }
 
     public string SanitizeMessageCapital(string message)
@@ -321,10 +410,18 @@ public abstract partial class SharedChatSystem : EntitySystem
     /// Injects a tag around all found instances of a specific string in a ChatMessage.
     /// Excludes strings inside other tags and brackets.
     /// </summary>
-    public static string InjectTagAroundString(ChatMessage message, string targetString, string tag, string? tagParameter)
+    public static string InjectTagAroundString(
+        ChatMessage message,
+        string targetString,
+        string tag,
+        string? tagParameter,
+        bool targetIsRegex = false)
     {
         var rawmsg = message.WrappedMessage;
-        var regex = new Regex("(?i)(" + Regex.Escape(targetString) + ")(?-i)(?![^[]*])");
+        var targetPattern = targetIsRegex ? targetString : Regex.Escape(targetString);
+#pragma warning disable RA0026
+        var regex = new Regex("(?i)(" + targetPattern + ")(?-i)(?![^[]*])");
+#pragma warning restore RA0026
         rawmsg = regex.Replace(rawmsg, $"[{tag}={tagParameter}]$1[/{tag}]");
         return rawmsg;
     }
@@ -339,4 +436,269 @@ public abstract partial class SharedChatSystem : EntitySystem
         tagStart += tag.Length + 2;
         return rawmsg.Substring(tagStart, tagEnd - tagStart);
     }
+
+    // CMU: Per-word and per-phrase bold/italic markup system
+    //
+    // Phrase-level: "**phrase**" bolds, "//phrase//" italicizes, "***phrase***"
+    // does both. Word-level: "word*" bolds, "word/" italicizes, "word***" does
+    // both. Optional trailing punctuation (!?.,;:) directly before the marker is
+    // included inside the emphasis, so "HELP!*" bolds "HELP!" as one unit.
+    //
+    // Regexes are applied most-specific-marker-first (triple, then double, then
+    // single) so a longer marker sequence is never partially consumed by a
+    // shorter pattern before it gets a chance to match as a whole.
+    private static readonly Regex PhraseBoldItalicRegex = new(@"\*\*\*(.+?)\*\*\*", RegexOptions.Compiled);
+    private static readonly Regex PhraseBoldRegex = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
+    private static readonly Regex PhraseItalicRegex = new(@"//(.+?)//", RegexOptions.Compiled);
+    private static readonly Regex InlineBoldItalicRegex = new(@"(\w+[!?.,;:]*)\*\*\*(?=\s|$)", RegexOptions.Compiled);
+    private static readonly Regex InlineBoldRegex = new(@"(\w+[!?.,;:]*)\*(?=\s|$)", RegexOptions.Compiled);
+    private static readonly Regex InlineItalicRegex = new(@"(\w+[!?.,;:]*)/(?=\s|$)", RegexOptions.Compiled);
+
+    private const char BoldSentinelStart = '\uE000';
+    private const char BoldSentinelEnd = '\uE001';
+    private const char ItalicSentinelStart = '\uE002';
+    private const char ItalicSentinelEnd = '\uE003';
+
+    /// <summary>
+    /// Applies phrase-level markup first (***, then **, then //), then falls
+    /// back to word-level markup (word***, word*, word/) for anything left
+    /// unmarked. Uses sentinel characters so the markup survives
+    /// FormattedMessage.EscapeText. Call ResolveBoldSentinels after escaping to
+    /// turn sentinels into real tags, or StripBoldSentinels if the destination
+    /// doesn't support markup (e.g. hidden "X emotes..." popups).
+    /// </summary>
+    public string MarkInlineFormatting(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return message;
+
+        var result = PhraseBoldItalicRegex.Replace(message, m =>
+            $"{BoldSentinelStart}{ItalicSentinelStart}{m.Groups[1].Value}{ItalicSentinelEnd}{BoldSentinelEnd}");
+
+        result = PhraseBoldRegex.Replace(result, m =>
+            $"{BoldSentinelStart}{m.Groups[1].Value}{BoldSentinelEnd}");
+
+        result = PhraseItalicRegex.Replace(result, m =>
+            $"{ItalicSentinelStart}{m.Groups[1].Value}{ItalicSentinelEnd}");
+
+        result = InlineBoldItalicRegex.Replace(result, m =>
+            $"{BoldSentinelStart}{ItalicSentinelStart}{m.Groups[1].Value}{ItalicSentinelEnd}{BoldSentinelEnd}");
+
+        result = InlineBoldRegex.Replace(result, m =>
+            $"{BoldSentinelStart}{m.Groups[1].Value}{BoldSentinelEnd}");
+
+        result = InlineItalicRegex.Replace(result, m =>
+            $"{ItalicSentinelStart}{m.Groups[1].Value}{ItalicSentinelEnd}");
+
+        return result;
+    }
+
+    public string ResolveBoldSentinels(string escapedMessage)
+    {
+        // CMU: RobustToolbox's rich text tags each push their own font onto
+        // a stack independently (see BoldTag.cs / ItalicTag.cs / BoldItalicTag.cs
+        // in the engine) - nesting [bold][italic]...[/italic][/bold] does NOT
+        // combine into a bold-italic font, the inner tag's font just overwrites
+        // the outer one and bold is lost. [bolditalic]...[/bolditalic] is a
+        // separate dedicated tag/font for the combined case. Collapse the
+        // adjacent combined-sentinel pairs into that tag first, before
+        // resolving whatever single-flag sentinels are left over.
+        var result = escapedMessage
+            .Replace($"{BoldSentinelStart}{ItalicSentinelStart}", "[bolditalic]")
+            .Replace($"{ItalicSentinelEnd}{BoldSentinelEnd}", "[/bolditalic]");
+
+        return result
+            .Replace(BoldSentinelStart.ToString(), "[bold]")
+            .Replace(BoldSentinelEnd.ToString(), "[/bold]")
+            .Replace(ItalicSentinelStart.ToString(), "[italic]")
+            .Replace(ItalicSentinelEnd.ToString(), "[/italic]");
+    }
+
+    /// <summary>
+    /// Removes sentinel characters entirely without converting them to markup.
+    /// Use this for destinations that don't render markup, such as the hidden
+    /// "X emotes..." popup shown when a listener can't understand the language.
+    /// </summary>
+    public string StripBoldSentinels(string message)
+    {
+        return message
+            .Replace(BoldSentinelStart.ToString(), "")
+            .Replace(BoldSentinelEnd.ToString(), "")
+            .Replace(ItalicSentinelStart.ToString(), "")
+            .Replace(ItalicSentinelEnd.ToString(), "");
+    }
+    protected virtual void SendEntityEmote(
+        EntityUid source,
+        string action,
+        ChatTransmitRange range,
+        string? nameOverride,
+        bool hideLog = false,
+        bool checkEmote = true,
+        bool ignoreActionBlocker = false,
+        NetUserId? author = null,
+        string? speechBubbleMessage = null,
+        string? speechStyleClass = null
+        )
+    { }
+
+    /// <summary>
+    /// Sends an in-character chat message to relevant clients.
+    /// </summary>
+    /// <param name="source">The entity that is speaking.</param>
+    /// <param name="message">The message being spoken or emoted.</param>
+    /// <param name="desiredType">The chat type.</param>
+    /// <param name="hideChat">Whether or not this message should appear in the chat window.</param>
+    /// <param name="hideLog">Whether or not this message should appear in the adminlog window.</param>
+    /// <param name="shell"></param>
+    /// <param name="player">The player doing the speaking.</param>
+    /// <param name="nameOverride">The name to use for the speaking entity. Usually this should just be modified via <see cref="TransformSpeakerNameEvent"/>. If this is set, the event will not get raised.</param>
+    /// <param name="checkRadioPrefix">Whether or not <paramref name="message"/> should be parsed with consideration of radio channel prefix text at start the start.</param>
+    /// <param name="ignoreActionBlocker">If set to true, action blocker will not be considered for whether an entity can send this message.</param>
+    public virtual void TrySendInGameICMessage(
+        EntityUid source,
+        string message,
+        InGameICChatType desiredType,
+        bool hideChat,
+        bool hideLog = false,
+        IConsoleShell? shell = null,
+        ICommonSession? player = null,
+        string? nameOverride = null,
+        bool checkRadioPrefix = true,
+        bool ignoreActionBlocker = false)
+    { }
+
+    /// <summary>
+    /// Sends an in-character chat message to relevant clients.
+    /// </summary>
+    /// <param name="source">The entity that is speaking.</param>
+    /// <param name="message">The message being spoken or emoted.</param>
+    /// <param name="desiredType">The chat type.</param>
+    /// <param name="range">Conceptual range of transmission, if it shows in the chat window, if it shows to far-away ghosts or ghosts at all...</param>
+    /// <param name="hideLog">Disables the admin log for this message if true. Used for entities that are not players, like vendors, cloning, etc.</param>
+    /// <param name="shell"></param>
+    /// <param name="player">The player doing the speaking.</param>
+    /// <param name="nameOverride">The name to use for the speaking entity. Usually this should just be modified via <see cref="TransformSpeakerNameEvent"/>. If this is set, the event will not get raised.</param>
+    /// <param name="ignoreActionBlocker">If set to true, action blocker will not be considered for whether an entity can send this message.</param>
+    public virtual void TrySendInGameICMessage(
+        EntityUid source,
+        string message,
+        InGameICChatType desiredType,
+        ChatTransmitRange range,
+        bool hideLog = false,
+        IConsoleShell? shell = null,
+        ICommonSession? player = null,
+        string? nameOverride = null,
+        bool checkRadioPrefix = true,
+        bool ignoreActionBlocker = false
+        )
+    { }
+
+    /// <summary>
+    /// Sends an out-of-character chat message to relevant clients.
+    /// </summary>
+    /// <param name="source">The entity that is speaking.</param>
+    /// <param name="message">The message being spoken or emoted.</param>
+    /// <param name="type">The chat type.</param>
+    /// <param name="hideChat">Whether or not to show the message in the chat window.</param>
+    /// <param name="shell"></param>
+    /// <param name="player">The player doing the speaking.</param>
+    public virtual void TrySendInGameOOCMessage(
+        EntityUid source,
+        string message,
+        InGameOOCChatType type,
+        bool hideChat,
+        IConsoleShell? shell = null,
+        ICommonSession? player = null
+        )
+    { }
+
+    /// <summary>
+    /// Dispatches an announcement to all.
+    /// </summary>
+    /// <param name="message">The contents of the message.</param>
+    /// <param name="sender">The sender (Communications Console in Communications Console Announcement).</param>
+    /// <param name="playSound">Play the announcement sound.</param>
+    /// <param name="announcementSound">Sound to play.</param>
+    /// <param name="colorOverride">Optional color for the announcement message.</param>
+    public virtual void DispatchGlobalAnnouncement(
+        string message,
+        string? sender = null,
+        bool playSound = true,
+        SoundSpecifier? announcementSound = null,
+        Color? colorOverride = null
+        )
+    { }
+
+    /// <summary>
+    /// Dispatches an announcement to players selected by filter.
+    /// </summary>
+    /// <param name="filter">Filter to select players who will recieve the announcement.</param>
+    /// <param name="message">The contents of the message.</param>
+    /// <param name="source">The entity making the announcement (used to determine the station).</param>
+    /// <param name="sender">The sender (Communications Console in Communications Console Announcement).</param>
+    /// <param name="playSound">Play the announcement sound.</param>
+    /// <param name="announcementSound">Sound to play.</param>
+    /// <param name="colorOverride">Optional color for the announcement message.</param>
+    public virtual void DispatchFilteredAnnouncement(
+        Filter filter,
+        string message,
+        EntityUid? source = null,
+        string? sender = null,
+        bool playSound = true,
+        SoundSpecifier? announcementSound = null,
+        Color? colorOverride = null)
+    { }
+
+    /// <summary>
+    /// Dispatches an announcement on a specific station.
+    /// </summary>
+    /// <param name="source">The entity making the announcement (used to determine the station).</param>
+    /// <param name="message">The contents of the message.</param>
+    /// <param name="sender">The sender (Communications Console in Communications Console Announcement).</param>
+    /// <param name="playDefaultSound">Play the announcement sound.</param>
+    /// <param name="announcementSound">Sound to play.</param>
+    /// <param name="colorOverride">Optional color for the announcement message.</param>
+    public virtual void DispatchStationAnnouncement(
+        EntityUid source,
+        string message,
+        string? sender = null,
+        bool playDefaultSound = true,
+        SoundSpecifier? announcementSound = null,
+        Color? colorOverride = null)
+    { }
+}
+
+/// <summary>
+/// Controls transmission of chat.
+/// </summary>
+public enum ChatTransmitRange : byte
+{
+    /// Acts normal, ghosts can hear across the map, etc.
+    Normal,
+    /// Normal but ghosts are still range-limited.
+    GhostRangeLimit,
+    /// Hidden from the chat window.
+    HideChat,
+    /// Ghosts can't hear or see it at all. Regular players can if in-range.
+    NoGhosts
+}
+
+/// <summary>
+/// InGame IC chat is for chat that is specifically ingame (not lobby) but is also in character, i.e. speaking.
+/// </summary>
+// ReSharper disable once InconsistentNaming
+public enum InGameICChatType : byte
+{
+    Speak,
+    Emote,
+    Whisper
+}
+
+/// <summary>
+/// InGame OOC chat is for chat that is specifically ingame (not lobby) but is OOC, like deadchat or LOOC.
+/// </summary>
+public enum InGameOOCChatType : byte
+{
+    Looc,
+    Dead
 }

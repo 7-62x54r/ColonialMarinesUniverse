@@ -1,6 +1,9 @@
+using System.Numerics;
+using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.NightVision;
 using Robust.Client.Graphics;
 using Robust.Client.Player;
+using Robust.Shared.Configuration;
 using Robust.Shared.Enums;
 using Robust.Shared.Prototypes;
 
@@ -11,6 +14,7 @@ public sealed partial class NightVisionFilterOverlay : Overlay
     [Dependency] private IEntityManager _entity = default!;
     [Dependency] private IPlayerManager _players = default!;
     [Dependency] private IPrototypeManager _prototypes = default!;
+    [Dependency] private IConfigurationManager _config = default!;
 
     private static readonly ProtoId<ShaderPrototype> ShaderId = "RMCNightVision";
 
@@ -37,6 +41,13 @@ public sealed partial class NightVisionFilterOverlay : Overlay
         if (nightVision.Green && ScreenTexture != null)
         {
             _shader.SetParameter("SCREEN_TEXTURE", ScreenTexture);
+
+            var colorVal = _config.GetCVar(RMCCVars.RMCNightVisionColor);
+            var color = nightVision.Tint ?? ((NightVisionColor) colorVal).ToColor();
+            _shader.SetParameter("nv_color", new Vector3(color.R, color.G, color.B));
+            _shader.SetParameter("noise_strength", nightVision.NoiseStrength);
+            _shader.SetParameter("vignette_strength", nightVision.VignetteStrength);
+
             handle.UseShader(_shader);
             handle.DrawRect(args.WorldBounds, Color.White);
             handle.UseShader(null);

@@ -1,6 +1,6 @@
 using System.Linq;
-using Content.Shared._AU14.Xeno;
-using Content.Shared._AU14.Xeno.ManageHive;
+using Content.Shared.CMU14.Threats.Mobs.Xeno;
+using Content.Shared.CMU14.Threats.Mobs.Xeno.ManageHive;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Chat;
 using Content.Shared._RMC14.Commendations;
@@ -19,6 +19,7 @@ using Content.Shared.Database;
 using Content.Shared.Dataset;
 using Content.Shared.GameTicking;
 using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
 using Content.Shared.IdentityManagement.Components;
 using Content.Shared.Mobs.Components;
 using Content.Shared.Mobs.Systems;
@@ -284,7 +285,7 @@ public sealed partial class ManageHiveSystem : EntitySystem
         if (!CanSacrificeBurrowedPopup(ent, out var hive))
             return;
 
-        _hive.IncreaseBurrowedLarva(hive, -1);
+        _hive.ChangeBurrowedLarva(hive, -1);
         var given = _xenoEvolution.AddPointsCapped(target, _burrowedLarvaEvolutionPointsPer);
 
         _popup.PopupCursor(Loc.GetString("rmc-hivemanagement-exchange-larva-given-user", ("target", ent), ("points", given)), ent);
@@ -391,7 +392,7 @@ public sealed partial class ManageHiveSystem : EntitySystem
         var individuals = GetEveryoneNearQueen(ent.Owner);
         if (individuals is null)
         {
-            _popup.PopupClient(Loc.GetString("xeno-manage-hive-allies-individuals-alone"), ent.Owner);
+            _popup.PopupSelf(Loc.GetString("xeno-manage-hive-allies-individuals-alone"), ent.Owner);
             return;
         }
         var choices = new List<DialogOption>();
@@ -595,6 +596,9 @@ public sealed partial class ManageHiveSystem : EntitySystem
             _popup.PopupEntity(Loc.GetString("rmc-hivemanagement-cant-deevolve-larva"), watchedId, manage, PopupType.MediumCaution);
             return false;
         }
+
+        if (!_xenoEvolution.HivebrokenCheckPopup(watchedId, popupTarget: manage.Owner))
+            return false;
 
         if (!_xenoPlasma.HasPlasmaPopup(manage.Owner, manage.Comp.DevolvePlasmaCost, false))
             return false;

@@ -59,7 +59,6 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
     [Dependency] private EntityLookupSystem _lookup = default!;
     [Dependency] private ExamineSystemShared _examine = default!;
     [Dependency] private SharedGunSystem _gun = default!;
-    [Dependency] private IMapManager _mapManager = default!;
     [Dependency] private SharedMapSystem _map = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
     [Dependency] private IRobustRandom _random = default!;
@@ -106,7 +105,6 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
         SubscribeLocalEvent<RMCBruteProjectileComponent, AfterProjectileHitEvent>(OnProjectileHit);
         SubscribeLocalEvent<RMCBruteProjectileComponent, ProjectileFixedDistanceStopEvent>(OnProjectileFixedDistanceStop);
 
-        SubscribeLocalEvent<RMCProjectileSkipXenosComponent, PreventCollideEvent>(OnSkipXenosPreventCollide);
         SubscribeLocalEvent<RMCBackblastOnShootComponent, GunShotEvent>(OnBackblastShot);
     }
 
@@ -218,7 +216,7 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
 
         try
         {
-            _gun.AttemptShoot(args.User, launcher.Owner, gun, coordinates);
+            _gun.AttemptShoot(args.User, (launcher.Owner, gun), coordinates);
         }
         finally
         {
@@ -381,8 +379,8 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
         if (userMap.MapId != targetMap.MapId)
             return true;
 
-        if (!_mapManager.TryFindGridAt(userMap, out var userGrid, out var grid) ||
-            !_mapManager.TryFindGridAt(targetMap, out var targetGrid, out _) ||
+        if (!_map.TryFindGridAt(userMap, out var userGrid, out var grid) ||
+            !_map.TryFindGridAt(targetMap, out var targetGrid, out _) ||
             userGrid != targetGrid)
         {
             return !_examine.InRangeUnOccluded(userMap, targetMap, 0, uid => uid == user || uid == target);
@@ -398,7 +396,7 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
             if (tile == start || (tile == end && targetIsWall))
                 continue;
 
-            var anchored = _map.GetAnchoredEntitiesEnumerator(userGrid, grid, tile);
+            var anchored = _map.GetAnchoredEntities(userGrid, grid, tile);
             while (anchored.MoveNext(out var uid))
             {
                 if (uid == null || uid.Value == user || uid.Value == target)
@@ -514,6 +512,9 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
         HashSet<Vector2i> seen,
         BruteWaveState wave)
     {
+        if (!_map.MapExists(origin.MapId))
+            return;
+
         foreach (var tile in tiles)
         {
             DetonateTile(component, origin, tile.Offset, tile.Edge, seen, wave);
@@ -648,15 +649,6 @@ public sealed partial class RMCBruteLauncherSystem : EntitySystem
 
             _throwing.TryThrow(ent.Owner, Vector2.Normalize(direction), component.ThrowSpeed, animated: false, playSound: false, compensateFriction: true);
         }
-    }
-
-    private void OnSkipXenosPreventCollide(Entity<RMCProjectileSkipXenosComponent> projectile, ref PreventCollideEvent args)
-    {
-        if (args.Cancelled)
-            return;
-
-        if (HasComp<XenoComponent>(args.OtherEntity))
-            args.Cancelled = true;
     }
 
     private void OnBackblastShot(Entity<RMCBackblastOnShootComponent> launcher, ref GunShotEvent args)

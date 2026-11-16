@@ -81,9 +81,9 @@ public enum LogType
     ChemicalReaction = 17,
 
     /// <summary>
-    /// Reagent effects related interactions.
+    /// EntityEffect related interactions.
     /// </summary>
-    ReagentEffect = 18,
+    EntityEffect = 18,
 
     /// <summary>
     /// Canister valve was opened or closed.
@@ -479,6 +479,16 @@ public enum LogType
     /// </summary>
     Instrument = 103,
 
+    /// <summary>
+    /// Events related to players connecting/disconnecting.
+    /// </summary>
+    Connection = 104,
+
+    /// <summary>
+    /// Silicon law changes.
+    /// </summary>
+    SiliconLaw = 105,
+
     RMCMarineAnnounce = 10000,
     RMCXenoAnnounce = RMCMarineAnnounce + 1,
     RMCNamedItem = RMCMarineAnnounce + 2,
@@ -524,4 +534,12 @@ public enum LogType
     RMCTelephone = RMCMarineAnnounce + 42,
     RMCIconLabel = RMCMarineAnnounce + 43,
     RMCMedalRecommendation = RMCMarineAnnounce + 44,
+    RMCXenoPsychic = RMCMarineAnnounce + 45,
+
+    // cmu edit start: CMU log types, kept well clear of the RMC range
+    /// <summary>
+    /// A third party was called in from a console.
+    /// </summary>
+    CMUThirdPartyCall = 20000,
+    // cmu edit end
 }

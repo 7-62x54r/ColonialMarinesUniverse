@@ -2,7 +2,23 @@
   id: Sneeze
   name: chat-emote-name-sneeze
   category: Vocal
+  whitelist:
+    components:
+    - Vocal
+  blacklist:
+    tags:
+    - SiliconEmotes
   chatMessages: ["chat-emote-msg-sneeze"]
+  chatTriggers:
+  - sneeze
+  - sneezes
+  - sneezed
+  - sneeze.
+  - sneezes.
+  - sneezed.
+  - sneeze!
+  - sneezes!
+  - sneezed!
 
 - type: emote
   id: Cough
@@ -13,6 +29,8 @@
     components:
     - Vocal
   blacklist:
+    components:
+    - Yautja
     tags:
     - SiliconEmotes
     - WorkingJoe
@@ -20,7 +38,7 @@
   chatTriggers:
     - cough
     - coughs
-    - coughed 
+    - coughed
     - cough.
     - coughs.
     - coughed.
@@ -64,6 +82,8 @@
     tags:
     - SiliconEmotes
     - WorkingJoe
+    components:
+    - Yautja
   chatMessages: ["chat-emote-msg-yawn"]
   chatTriggers:
     - yawn

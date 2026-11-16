@@ -1,11 +1,15 @@
 using Content.Shared.Alert;
 using Content.Shared.Buckle.Components;
+using Content.Shared.Movement.Components;
+using Robust.Shared.Input;
 using Robust.Shared.Maths;
+using ServerMoverController = Content.Server.Physics.Controllers.MoverController;
 
 namespace Content.IntegrationTests.Tests.Movement;
 
 public sealed class BuckleMovementTest : MovementTest
 {
+
     // Check that interacting with a chair straps you to it and prevents movement.
     [Test]
     public async Task ChairTest()

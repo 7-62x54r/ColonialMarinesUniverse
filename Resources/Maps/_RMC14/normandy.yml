@@ -68,13 +68,14 @@ entities:
     - type: GasTileOverlay
     - type: RadiationGridResistance
     - type: Dropship
+      maxInternalWeapons: 2
       marineHijackSound: !type:SoundPathSpecifier
         params:
           volume: -6
         path: /Audio/_RMC14/Announcements/ARES/hijack.ogg
       localHijackSound: !type:SoundPathSpecifier
         path: /Audio/_RMC14/Machines/Shuttle/queen_alarm.ogg
-- proto: AtmosDeviceFanTiny
+- proto: RMCTinyFan
   entities:
   - uid: 2
     components:

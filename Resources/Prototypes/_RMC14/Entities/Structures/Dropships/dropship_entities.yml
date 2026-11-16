@@ -51,6 +51,44 @@
     - RMCDropshipUtilityPoint
 
 - type: entity
+  parent: RMCUtilityAttachmentPoint
+  id: CMUGunshipHardpointAttachmentPoint
+  name: hardpoint attachment point
+  description: A restricted attachment point for crew-served gunship hardpoint systems.
+  components:
+  - type: GunshipHardpointAttachmentPoint
+  - type: Tag
+    tags:
+    - CMUGunshipHardpointAttachmentPoint
+
+# AU-14: interior (crew compartment) weapon attach point. Weapons installed here
+# (40mm BOFORS, 105mm howitzer, JDAM bomb clamp) are fireable from the pilot
+# weapons console and usable in fire missions.
+- type: entity
+  parent: RMCUtilityAttachmentPoint
+  id: AU14InteriorWeaponAttachmentPoint
+  name: interior weapon attach point
+  description: A crew compartment attach point for dropship weapons such as the 40mm BOFORS autocannon, the M137 105mm howitzer, and the JDAM bomb clamp. Weapons installed here can be fired from the pilot weapons console.
+  components:
+  - type: DropshipUtilityPoint
+    location: PortFore
+  - type: Tag
+    tags:
+    - RMCDropshipUtilityPoint
+    - AU14InteriorWeaponPoint
+
+- type: entity
+  parent: RMCUtilityAttachmentPoint
+  id: CMUGunshipUtilityAttachmentPoint
+  name: gunship utility attachment point
+  description: A restricted attachment point for gunship utility systems.
+  components:
+  - type: GunshipUtilityAttachmentPoint
+  - type: Tag
+    tags:
+    - CMUGunshipUtilityAttachmentPoint
+
+- type: entity
   parent: CMBaseStructureCorrodible
   id: RMCEngineAttachmentPoint
   name: engine system attach point

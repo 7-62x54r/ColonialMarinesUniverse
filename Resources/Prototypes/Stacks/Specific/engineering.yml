@@ -1,0 +1,59 @@
+# they're uninflated by default so they're tiny
+- type: stack
+  parent: BaseSmallStack
+  id: InflatableWall
+  name: stack-inflatable-wall
+  icon: { sprite: "/Textures/Objects/Misc/inflatable_wall.rsi", state: item_wall }
+  spawn: InflatableWallStack1
+
+- type: stack
+  id: InflatableDoor
+  name: stack-inflatable-door
+  icon: { sprite: "/Textures/Objects/Misc/inflatable_door.rsi", state: item_door }
+  spawn: InflatableDoorStack1
+  maxCount: 4 # Maybe increased to 5 to reuse the base?
+
+# Cables
+- type: stack
+  parent: BaseMediumStack
+  id: Cable
+  name: stack-lv-cable
+  icon: { sprite: "/Textures/Objects/Tools/cable-coils.rsi", state: coil-30 }
+  spawn: CableApcStack1
+
+- type: stack
+  parent: BaseMediumStack
+  id: CableMV
+  name: stack-mv-cable
+  icon: { sprite: "/Textures/Objects/Tools/cable-coils.rsi", state: coilmv-30 }
+  spawn: CableMVStack1
+
+- type: stack
+  parent: BaseMediumStack
+  id: CableHV
+  name: stack-hv-cable
+  icon: { sprite: "/Textures/Objects/Tools/cable-coils.rsi", state: coilhv-30 }
+  spawn: CableHVStack1
+
+# CMU14 Begin: stack kinds for the thin CMU power cables
+- type: stack
+  parent: BaseMediumStack
+  id: CMUThinCableHV
+  name: stack-thin-hv-cable
+  icon: { sprite: "/Textures/_RMC14/Structures/Power/cables_thin.rsi", state: intactred }
+  spawn: CMUCableThinHVStack1
+
+- type: stack
+  parent: BaseMediumStack
+  id: CMUThinCableMV
+  name: stack-thin-mv-cable
+  icon: { sprite: "/Textures/_RMC14/Structures/Power/cables_thin.rsi", state: intactyellow }
+  spawn: CMUCableThinMVStack1
+
+- type: stack
+  parent: BaseMediumStack
+  id: CMUThinCableLV
+  name: stack-thin-lv-cable
+  icon: { sprite: "/Textures/_RMC14/Structures/Power/cables_thin.rsi", state: intactblue }
+  spawn: CMUCableThinLVStack1
+# CMU14 End

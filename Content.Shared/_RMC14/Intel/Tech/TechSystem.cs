@@ -1,11 +1,16 @@
 using System.Numerics;
+using Content.Shared.CMU14.Round.Objectives;
+using Content.Shared.CMU14.Threats;
+using Content.Shared._RMC14.ARES;
+using Content.Shared._RMC14.ARES.Logs;
 using Content.Shared._RMC14.Dropship.Fabricator;
 using Content.Shared._RMC14.Marines.Announce;
 using Content.Shared._RMC14.Requisitions;
 using Content.Shared._RMC14.Requisitions.Components;
 using Content.Shared._RMC14.Scaling;
-using Content.Shared.AU14.Threats;
-using Content.Shared.AU14.Util;
+using Content.Shared._RMC14.Weapons.Ranged.IFF;
+using Content.Shared.Access.Systems;
+using Content.Shared.CMU14.Util;
 using Content.Shared.GameTicking;
 using Content.Shared.UserInterface;
 using Robust.Shared.Map;
@@ -18,7 +23,9 @@ namespace Content.Shared._RMC14.Intel.Tech;
 
 public sealed partial class TechSystem : EntitySystem
 {
+    [Dependency] private ARESCoreSystem _core = default!;
     [Dependency] private DropshipFabricatorSystem _dropshipFabricator = default!;
+    [Dependency] private SharedIdCardSystem _idCard = default!;
     [Dependency] private SharedGameTicker _ticker = default!;
     [Dependency] private IntelSystem _intel = default!;
     [Dependency] private SharedMapSystem _map = default!;
@@ -29,6 +36,9 @@ public sealed partial class TechSystem : EntitySystem
     // NOTE: Do not depend on platform-specific AuThirdPartySystem here (shared) — use ExecuteTechPartySpawn helper
     // to let server code call the server-side spawn implementation.
     [Dependency] private IPrototypeManager _proto = default!;
+
+    private static readonly EntProtoId<ARESLogTypeComponent> LogCat = "ARESTabIntelLogs";
+
     public override void Initialize()
     {
         SubscribeLocalEvent<TechAnnounceEvent>(OnTechAnnounce);
@@ -46,10 +56,22 @@ public sealed partial class TechSystem : EntitySystem
             });
     }
 
+    // CMU14-start
+    private string LocOrRaw(string value)
+    {
+        return Loc.TryGetString(value, out var localized) ? localized : value;
+    }
+    // CMU14-end
+
     private void OnTechAnnounce(TechAnnounceEvent ev)
     {
-        var msg = Loc.GetString("rmc-announcement-message-raw", ("author", ev.Author), ("message", ev.Message));
-        _marineAnnounce.AnnounceToMarines(msg, ev.Sound);
+        // CMU14-start: use LocOrRaw to avoid missing localization keys causing exceptions
+        var author = LocOrRaw(ev.Author);
+        var message = LocOrRaw(ev.Message);
+
+        var msg = Loc.GetString("rmc-announcement-message-raw", ("author", author), ("message", message));
+        // CMU14-end
+        _marineAnnounce.AnnounceToMarines(msg, ev.Sound, faction: ev.Team);
     }
 
     private void OnTechUnlockTier(TechUnlockTierEvent ev)
@@ -71,12 +93,14 @@ public sealed partial class TechSystem : EntitySystem
 
     private void OnTechDropshipBudget(TechDropshipBudgetEvent ev)
     {
-        _dropshipFabricator.ChangeBudget(ev.Amount);
+        // CMU14: faction gameplay fixes.
+        var faction = string.IsNullOrEmpty(ev.Team) || ev.Team == Team.None ? null : ev.Team;
+        _dropshipFabricator.ChangeBudget(ev.Amount, faction);
     }
 
     private void OnTechLogisticsDelivery(TechLogisticsDeliveryEvent ev)
     {
-        _requisitions.CreateSpecialDelivery(ev.Object);
+        _requisitions.CreateSpecialDelivery(ev.Object, ev.Team); // CMU14
     }
 
     private void OnControlConsoleBeforeOpen(Entity<TechControlConsoleComponent> ent, ref BeforeActivatableUIOpenEvent args)
@@ -119,20 +143,34 @@ public sealed partial class TechSystem : EntitySystem
         if (option.Purchased && !option.Repurchasable)
             return;
 
-        if (!_intel.TryUsePoints(team, option.CurrentCost))
+        // cmu edit start: capped repurchases
+        if (option.MaxPurchases > 0 && option.TimesPurchased >= option.MaxPurchases)
             return;
+        // cmu edit end
+
+        // cmu edit start: spend from the combined objective + intel pool shown on the console (intel first)
+        if (!_intel.TrySpendCombinedPoints(team, option.CurrentCost))
+            return;
+        // cmu edit end
 
         tier[args.Index] = option with
         {
             CurrentCost = option.CurrentCost + option.Increase,
             Purchased = true,
+            TimesPurchased = option.TimesPurchased + 1, // cmu edit
+            // CMU14: reuse the round-relative lock so all consoles display and enforce the same cooldown.
+            TimeLock = option.PurchaseCooldown > TimeSpan.Zero
+                ? _ticker.RoundDuration() + option.PurchaseCooldown
+                : option.TimeLock,
         };
         Dirty(ent);
 
-        // Raise a shared event so the authoritative ObjectiveMaster/Objective system can deduct AU win points server-side.
-        var auAmount =option.CurrentCost;
-        var spendEv = new Content.Shared.AU14.Objectives.SpendWinPointsEvent { Team = team, Amount = auAmount };
-        RaiseLocalEvent(spendEv);
+        // cmu edit start: TrySpendCombinedPoints already took any objective points it needed, so the old
+        // unconditional win-point deduction here would charge twice.
+        // var auAmount =option.CurrentCost;
+        // var spendEv = new SpendWinPointsEvent { Team = team, Amount = auAmount };
+        // RaiseLocalEvent(spendEv);
+        // cmu edit end
 
         foreach (var ev in option.Events)
         {
@@ -161,6 +199,13 @@ public sealed partial class TechSystem : EntitySystem
                 var newEv = logisticsEv with { Team = team };
                 RaiseLocalEvent(newEv);
             }
+            // cmu edit start: ship fire missions go to the buying team's ship
+            else if (ev is Content.Shared.CMU14.ShipWeapons.CMUTechShipWeaponMissionEvent shipWeaponEv)
+            {
+                var newEv = shipWeaponEv with { Team = team };
+                RaiseLocalEvent(newEv);
+            }
+            // cmu edit end
             else if (ev is TechPartySpawnEvent partySpawnEv)
             {
                 if (string.IsNullOrEmpty(partySpawnEv.ThirdPartyId))
@@ -181,20 +226,32 @@ public sealed partial class TechSystem : EntitySystem
         }
 
         _intel.UpdateTree(tree);
+
+        if (_idCard.TryFindIdCard(args.Actor, out var idCard) && TryComp(idCard, out ItemIFFComponent? idCardIFF))
+        {
+            foreach (var faction in idCardIFF.Factions)
+            {
+                _core.CreateARESLog(faction, LogCat, (string) $"{Name(args.Actor)} purchased intel node: {LocOrRaw(option.Name)}"); // CMU14
+            }
+        }
+        else
+        {
+            _core.CreateARESLog(ent, LogCat, (string) $"{Name(args.Actor)} purchased intel node: {LocOrRaw(option.Name)}"); // CMU14
+        }
     }
 
     /// <summary>
     /// Shared helper: execute a TechPartySpawn by resolving the prototype and invoking the provided spawn action
     /// for each requested amount. Returns true when the prototype was found and spawnAction invoked.
     /// </summary>
-    public static bool ExecuteTechPartySpawn(IPrototypeManager proto, string thirdPartyId, Action<AuThirdPartyPrototype> spawnAction)
+    public static bool ExecuteTechPartySpawn(IPrototypeManager proto, string thirdPartyId, Action<ThirdPartyPrototype> spawnAction)
     {
         if (string.IsNullOrEmpty(thirdPartyId))
         {
             Logger.GetSawmill("content").Warning("[TechSystem] ExecuteTechPartySpawn called with null/empty thirdPartyId.");
             return false;
         }
-        if (!proto.TryIndex<AuThirdPartyPrototype>(thirdPartyId, out var partyProto))
+        if (!proto.TryIndex<ThirdPartyPrototype>(thirdPartyId, out var partyProto))
         {
             proto.TryIndex(thirdPartyId, out var _); // keep for debug if needed
             Logger.GetSawmill("content").Warning($"[TechSystem] Requested third party id '{thirdPartyId}' not found in prototypes.");

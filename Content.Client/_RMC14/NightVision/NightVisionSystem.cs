@@ -21,6 +21,8 @@ public sealed partial class NightVisionSystem : SharedNightVisionSystem
 
         SubscribeLocalEvent<NightVisionComponent, LocalPlayerAttachedEvent>(OnNightVisionAttached);
         SubscribeLocalEvent<NightVisionComponent, LocalPlayerDetachedEvent>(OnNightVisionDetached);
+        SubscribeLocalEvent<NightVisionComponent, EntParentChangedMessage>(OnNightVisionParentChanged);
+        SubscribeLocalEvent<NightVisionComponent, MapUidChangedEvent>(OnNightVisionMapChanged);
     }
 
     private void OnNightVisionAttached(Entity<NightVisionComponent> ent, ref LocalPlayerAttachedEvent args)
@@ -31,6 +33,16 @@ public sealed partial class NightVisionSystem : SharedNightVisionSystem
     private void OnNightVisionDetached(Entity<NightVisionComponent> ent, ref LocalPlayerDetachedEvent args)
     {
         Off();
+    }
+
+    private void OnNightVisionParentChanged(Entity<NightVisionComponent> ent, ref EntParentChangedMessage args)
+    {
+        NightVisionChanged(ent);
+    }
+
+    private void OnNightVisionMapChanged(Entity<NightVisionComponent> ent, ref MapUidChangedEvent args)
+    {
+        NightVisionChanged(ent);
     }
 
     protected override void NightVisionChanged(Entity<NightVisionComponent> ent)
@@ -64,11 +76,12 @@ public sealed partial class NightVisionSystem : SharedNightVisionSystem
 
     private void SetExperimentalMesons(bool on)
     {
-        if (_player.LocalEntity == null)
+        // Entity deletion can remove the eye before night vision and the local player session.
+        if (_player.LocalEntity is not { } local || !TryComp<EyeComponent>(local, out var eye))
             return;
 
         // Experimental synth mesons use FoV only; older RMC meson optics keep their existing visuals.
-        _eye.SetDrawFov(_player.LocalEntity.Value, !on);
+        _eye.SetDrawFov(local, !on, eye);
     }
 
     private void Off()

@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using Robust.Shared.Network;
 using Robust.Shared.Serialization;
 
@@ -14,6 +14,7 @@ namespace Content.Shared.Administration
         public override void ReadFromBuffer(NetIncomingMessage buffer, IRobustSerializer serializer)
         {
             var count = buffer.ReadVariableInt32();
+            buffer.AssertAtLeastSize(count * NetMessageExt.MinSizeOfString); // CMU14: validate before allocation.
 
             AvailableCommands = new string[count];
 
@@ -26,7 +27,7 @@ namespace Content.Shared.Administration
             {
                 var active = buffer.ReadBoolean();
                 buffer.ReadPadBits();
-                var flags = (AdminFlags) buffer.ReadUInt32();
+                var flags = (AdminFlags) buffer.ReadUInt64();
                 var title = buffer.ReadString();
 
                 Admin = new AdminData
@@ -54,7 +55,7 @@ namespace Content.Shared.Administration
 
             buffer.Write(Admin.Active);
             buffer.WritePadBits();
-            buffer.Write((uint) Admin.Flags);
+            buffer.Write((ulong) Admin.Flags);
             buffer.Write(Admin.Title);
         }
 

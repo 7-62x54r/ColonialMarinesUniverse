@@ -18,6 +18,7 @@ using Robust.Shared.Map.Components;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Systems;
 using Robust.Shared.Player;
+using Robust.Shared.Profiling;
 using Robust.Shared.Random;
 using Robust.Shared.Threading;
 using Robust.Shared.Timing;
@@ -51,7 +52,15 @@ namespace Content.Server.NPC.Pathfinding
         [Dependency] private NPCSystem _npc = default!;
         [Dependency] private SharedMapSystem _maps = default!;
         [Dependency] private SharedPhysicsSystem _physics = default!;
+        [Dependency] private ProfManager _prof = default!;
         [Dependency] private SharedTransformSystem _transform = default!;
+
+        [Dependency] private EntityQuery<AccessReaderComponent> _accessReaderQuery = default!;
+        [Dependency] private EntityQuery<DestructibleComponent> _destructibleQuery = default!;
+        [Dependency] private EntityQuery<DoorComponent> _doorQuery = default!;
+        [Dependency] private EntityQuery<ClimbableComponent> _climbableQuery = default!;
+        [Dependency] private EntityQuery<FixturesComponent> _fixturesQuery = default!;
+        [Dependency] private EntityQuery<MapGridComponent> _mapGridQuery = default!;
 
         private readonly Dictionary<ICommonSession, PathfindingDebugMode> _subscribedSessions = new();
 
@@ -65,6 +74,8 @@ namespace Content.Server.NPC.Pathfinding
         /// </summary>
         private const int PathTickLimit = 256;
 
+        private readonly ParallelOptions _parallelOptions = new();
+
         private int _portalIndex;
         private readonly Dictionary<int, PathPortal> _portals = new();
 
@@ -73,26 +84,9 @@ namespace Content.Server.NPC.Pathfinding
             return min + (float) random.NextDouble() * (max - min);
         }
 
-        private EntityQuery<AccessReaderComponent> _accessQuery;
-        private EntityQuery<DestructibleComponent> _destructibleQuery;
-        private EntityQuery<DoorComponent> _doorQuery;
-        private EntityQuery<ClimbableComponent> _climbableQuery;
-        private EntityQuery<FixturesComponent> _fixturesQuery;
-        private EntityQuery<MapGridComponent> _gridQuery;
-        private EntityQuery<TransformComponent> _xformQuery;
-
         public override void Initialize()
         {
             base.Initialize();
-
-            _accessQuery = GetEntityQuery<AccessReaderComponent>();
-            _destructibleQuery = GetEntityQuery<DestructibleComponent>();
-            _doorQuery = GetEntityQuery<DoorComponent>();
-            _climbableQuery = GetEntityQuery<ClimbableComponent>();
-            _fixturesQuery = GetEntityQuery<FixturesComponent>();
-            _gridQuery = GetEntityQuery<MapGridComponent>();
-            _xformQuery = GetEntityQuery<TransformComponent>();
-
             _playerManager.PlayerStatusChanged += OnPlayerChange;
             InitializeGrid();
             SubscribeNetworkEvent<RequestPathfindingDebugMessage>(OnBreadcrumbs);
@@ -109,49 +103,135 @@ namespace Content.Server.NPC.Pathfinding
         public override void Update(float frameTime)
         {
             base.Update(frameTime);
-            var options = new ParallelOptions()
-            {
-                MaxDegreeOfParallelism = _parallel.ParallelProcessCount,
-            };
+            var options = _parallelOptions;
+            options.MaxDegreeOfParallelism = _parallel.ParallelProcessCount;
 
-            UpdateGrid(options);
+            var profiling = _prof.IsEnabled;
+            if (profiling)
+            {
+                using var profile = _prof.Group("PathfinderSystem.UpdateGrid");
+                UpdateGrid(options);
+            }
+            else
+            {
+                UpdateGrid(options);
+            }
+
             _stopwatch.Restart();
+            var queued = _pathRequests.Count;
             var amount = Math.Min(PathTickLimit, _pathRequests.Count);
-            var results = ArrayPool<PathResult>.Shared.Rent(amount);
-
-
-            Parallel.For(0, amount, options, i =>
+            if (amount == 0)
             {
-                // If we're over the limit (either time-sliced or hard cap).
-                if (_stopwatch.Elapsed >= PathTime)
+                if (profiling)
                 {
-                    results[i] = PathResult.Continuing;
-                    return;
+                    _prof.WriteValue("PathfinderSystem Queued Requests", 0);
+                    _prof.WriteValue("PathfinderSystem Processed Requests", 0);
+                    _prof.WriteValue("PathfinderSystem Continuing Requests", 0);
+                    _prof.WriteValue("PathfinderSystem Completed Requests", 0);
+                    _prof.WriteValue("PathfinderSystem NoPath Requests", 0);
+                }
+                return;
+            }
+
+            var results = ArrayPool<PathResult>.Shared.Rent(amount);
+            try
+            {
+                if (profiling)
+                {
+                    using var profile = _prof.Group("PathfinderSystem.ProcessRequests");
+                    ProcessPathRequests(results, amount, options);
+                }
+                else
+                {
+                    ProcessPathRequests(results, amount, options);
                 }
 
-                var request = _pathRequests[i];
+                var continuing = 0;
+                var completed = 0;
+                var noPath = 0;
 
-                try
+                if (profiling)
                 {
-                    switch (request)
-                    {
-                        case AStarPathRequest astar:
-                            results[i] = UpdateAStarPath(astar);
-                            break;
-                        case BFSPathRequest bfs:
-                            results[i] = UpdateBFSPath(_random, bfs);
-                            break;
-                        default:
-                            throw new NotImplementedException();
-                    }
+                    using var profile = _prof.Group("PathfinderSystem.CleanupRequests");
+                    CleanupPathRequests(results, amount, ref continuing, ref completed, ref noPath);
                 }
-                catch (Exception)
+                else
                 {
-                    results[i] = PathResult.NoPath;
-                    throw;
+                    CleanupPathRequests(results, amount, ref continuing, ref completed, ref noPath);
                 }
-            });
 
+                if (profiling)
+                {
+                    _prof.WriteValue("PathfinderSystem Queued Requests", queued);
+                    _prof.WriteValue("PathfinderSystem Processed Requests", amount);
+                    _prof.WriteValue("PathfinderSystem Continuing Requests", continuing);
+                    _prof.WriteValue("PathfinderSystem Completed Requests", completed);
+                    _prof.WriteValue("PathfinderSystem NoPath Requests", noPath);
+                }
+
+            }
+            finally
+            {
+                ArrayPool<PathResult>.Shared.Return(results);
+            }
+        }
+
+        private void ProcessPathRequests(PathResult[] results, int amount, ParallelOptions options)
+        {
+            // A single request cannot benefit from worker scheduling.
+            if (amount == 1)
+            {
+                ProcessPathRequest(results, 0);
+                return;
+            }
+
+            ProcessPathRequestsParallel(results, amount, options);
+        }
+
+        private void ProcessPathRequestsParallel(PathResult[] results, int amount, ParallelOptions options)
+        {
+            Parallel.For(0, amount, options, i => ProcessPathRequest(results, i));
+        }
+
+        private void ProcessPathRequest(PathResult[] results, int i)
+        {
+            // If we're over the limit (either time-sliced or hard cap).
+            if (_stopwatch.Elapsed >= PathTime)
+            {
+                results[i] = PathResult.Continuing;
+                return;
+            }
+
+            var request = _pathRequests[i];
+
+            try
+            {
+                switch (request)
+                {
+                    case AStarPathRequest astar:
+                        results[i] = UpdateAStarPath(astar);
+                        break;
+                    case BFSPathRequest bfs:
+                        results[i] = UpdateBFSPath(_random, bfs);
+                        break;
+                    default:
+                        throw new NotImplementedException();
+                }
+            }
+            catch (Exception)
+            {
+                results[i] = PathResult.NoPath;
+                throw;
+            }
+        }
+
+        private void CleanupPathRequests(
+            PathResult[] results,
+            int amount,
+            ref int continuing,
+            ref int completed,
+            ref int noPath)
+        {
             var offset = 0;
 
             // then, single-threaded cleanup.
@@ -169,10 +249,20 @@ namespace Content.Server.NPC.Pathfinding
                 switch (result)
                 {
                     case PathResult.Continuing:
+                        continuing++;
                         break;
                     case PathResult.PartialPath:
                     case PathResult.Path:
+                        completed++;
+                        SendDebug(path);
+                        // Don't use RemoveSwap because we still want to try and process them in order.
+                        _pathRequests.RemoveAt(resultIndex);
+                        offset--;
+                        path.Tcs.SetResult(result);
+                        SendRoute(path);
+                        break;
                     case PathResult.NoPath:
+                        noPath++;
                         SendDebug(path);
                         // Don't use RemoveSwap because we still want to try and process them in order.
                         _pathRequests.RemoveAt(resultIndex);
@@ -184,8 +274,6 @@ namespace Content.Server.NPC.Pathfinding
                         throw new NotImplementedException();
                 }
             }
-
-            ArrayPool<PathResult>.Shared.Return(results);
         }
 
         /// <summary>
@@ -416,8 +504,12 @@ namespace Content.Server.NPC.Pathfinding
             if (!TryGetChunk(origin, comp, out var chunk))
                 return null;
 
-            var chunkPos = new Vector2(MathHelper.Mod(localPos.X, ChunkSize), MathHelper.Mod(localPos.Y, ChunkSize));
-            var polys = chunk.Polygons[(int)chunkPos.X * ChunkSize + (int)chunkPos.Y];
+            // CMU14: floor before wrapping so tiny negative positions cannot round up to ChunkSize.
+            // var chunkPos = new Vector2(MathHelper.Mod(localPos.X, ChunkSize), MathHelper.Mod(localPos.Y, ChunkSize));
+            // var polys = chunk.Polygons[(int)chunkPos.X * ChunkSize + (int)chunkPos.Y];
+            var tileX = MathHelper.Mod((int) MathF.Floor(localPos.X), ChunkSize);
+            var tileY = MathHelper.Mod((int) MathF.Floor(localPos.Y), ChunkSize);
+            var polys = chunk.Polygons[tileX * ChunkSize + tileY];
 
             foreach (var poly in polys)
             {

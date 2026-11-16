@@ -12,8 +12,13 @@
   name: Drone
   description: An alien drone.
   components:
+  - type: FiremanCarriable # CMU14: Yautja can aggressively grab, carry and throw this caste, matching
+    canThrow: true           # CM-SS13's grab gate (mob_grab.dm:82-89: Yautja reach MOB_SIZE_XENO, 3).
+    carrierWhitelist:
+      components:
+      - Yautja
   - type: GhostRole
-    name: cm-job-name-xeno-drone
+    name: cmu-job-name-xeno-unknown
   - type: MobState
     allowedStates:
     - Alive
@@ -28,14 +33,36 @@
     tags:
     - DoorBumpOpener
     - RMCSynthGrabbable
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 300
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 300
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 1
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 22.5
+      types:
+        Blunt: 7.5
+        Slash: 7.5
+        Piercing: 7.5
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: Xeno
     role: CMXenoDrone
     hudOffset: -0.1,0.15
@@ -91,21 +118,28 @@
     canEvolveWithoutGranter: true
     max: 200
     evolvesTo:
+    - CMXenoReaper # CMU14
     - CMXenoCarrier
     - CMXenoBurrower
     - CMXenoHivelord
+    # earlyEvolvesTo: # CMU14: combat tier 2 evolutions remain available after marines land
+    - CMXenoLurker
+    - CMXenoSpitter
+    - CMXenoWarrior
+    - CMXenoBull # CMU14
     evolvesToWithoutPoints:
     - CMXenoQueen
   - type: Evasion
-    evasion: 20
+    evasion: 15
   - type: XenoInhands
     prefix: drone
   - type: IntelRecoverCorpseObjectiveOnDeath
     value: 0.1
   - type: FixedIdentity
-    name: cm-job-name-xeno-drone
+    name: cmu-job-name-xeno-unknown
   - type: RMCSurgeryXenoHeart
     item: RMCOrganXenoHeartT1
+  - type: CMUXenoZJump
 
 - type: entity
   parent: CMXenoDroneBase
@@ -115,7 +149,7 @@
     guides:
     - RMCGuideRoleDrone
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Drone/drone.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Drone/drone.rsi # AU14-Edit
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -146,6 +180,8 @@
     - DoorXenoResin
     - XenoStickyResin
     - XenoFastResin
+    - XenoCollapseResin
+    - XenoResinSpikes
   - type: VentCrawler
     ventCrawlIcon: drone
   - type: RMCActionOrder
@@ -157,7 +193,7 @@
   suffix: Gardener
   components:
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Drone/gardener_drone.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Drone/gardener_drone.rsi # AU14-Edit
     layers:
     - map: [ "enum.XenoVisualLayers.Base" ]
       state: alive
@@ -196,6 +232,7 @@
     restHealMultiplier: 1.05
   - type: XenoStrain
     name: rmc-xeno-gardener-name
+    baseCaste: CMXenoDrone # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-gardener-description
     popup: rmc-xeno-gardener-popup
   - type: XenoFruitPlanter
@@ -221,7 +258,7 @@
   suffix: Healer
   components:
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Drone/healer_drone.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Drone/healer_drone.rsi # AU14-Edit
     layers:
     - map: [ "enum.XenoVisualLayers.Base" ]
       state: alive
@@ -260,17 +297,22 @@
     plasmaTransferDelay: 1.5
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 17.5
+      types:
+        Blunt: 5.83
+        Slash: 5.83
+        Piercing: 5.84
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 25
+      types:
+        Blunt: 8.33
+        Slash: 8.33
+        Piercing: 8.34
   - type: XenoPheromones
     pheromonesMultiplier: 3
     pheroSuffix: strong
   - type: XenoStrain
     name: rmc-xeno-healer-name
+    baseCaste: CMXenoDrone # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-healer-description
     popup: rmc-xeno-healer-popup
   - type: XenoFruitPlanter

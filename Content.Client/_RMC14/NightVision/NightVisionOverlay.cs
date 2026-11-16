@@ -1,10 +1,12 @@
 using System.Numerics;
 using Content.Client.Examine;
+using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.NightVision;
 using Content.Shared._RMC14.Xenonids;
 using Robust.Client.GameObjects;
 using Robust.Client.Graphics;
 using Robust.Client.Player;
+using Robust.Shared.Configuration;
 using Robust.Shared.Enums;
 using Robust.Shared.Map;
 using Robust.Shared.Prototypes;
@@ -18,6 +20,7 @@ public sealed partial class NightVisionOverlay : Overlay
     [Dependency] private IEntityManager _entity = default!;
     [Dependency] private IPlayerManager _players = default!;
     [Dependency] private IPrototypeManager _prototype = default!;
+    [Dependency] private IConfigurationManager _config = default!;
 
     private readonly ContainerSystem _container;
     private readonly ExamineSystem _examine;
@@ -57,7 +60,8 @@ public sealed partial class NightVisionOverlay : Overlay
 
         _entries.Clear();
         var entities = _entity.EntityQueryEnumerator<RMCNightVisionVisibleComponent, SpriteComponent, TransformComponent>();
-        while (entities.MoveNext(out var uid, out var visible, out var sprite, out var xform))
+        while (nightVision.DrawVisibleMobs &&
+               entities.MoveNext(out var uid, out var visible, out var sprite, out var xform))
         {
             _entries.Add(new NightVisionRenderEntry((uid, sprite, xform),
                 eye?.Position.MapId,
@@ -106,6 +110,12 @@ public sealed partial class NightVisionOverlay : Overlay
         _shader.SetParameter("renderScale", args.Viewport.RenderScale * args.Viewport.Eye.Scale);
         _shader.SetParameter("SCREEN_TEXTURE", ScreenTexture);
 
+        var colorVal = _config.GetCVar(RMCCVars.RMCNightVisionColor);
+        var color = nightVision.Tint ?? ((NightVisionColor) colorVal).ToColor();
+        _shader.SetParameter("nv_color", new Vector3(color.R, color.G, color.B));
+        _shader.SetParameter("noise_strength", nightVision.NoiseStrength);
+        _shader.SetParameter("vignette_strength", nightVision.VignetteStrength);
+
         var worldHandle = args.WorldHandle;
         worldHandle.UseShader(_shader);
         worldHandle.DrawRect(args.WorldBounds, Color.White);
@@ -126,6 +136,10 @@ public sealed partial class NightVisionOverlay : Overlay
     {
         var (uid, sprite, xform) = ent;
         if (xform.MapID != map)
+            return;
+
+        // CMU14: these effects already render the composed body; a raw thermal redraw erases them.
+        if (HasCMUComposedPresentation(uid))
             return;
 
         var seeThrough = seeThroughContainers && !_xenoQuery.HasComp(uid);

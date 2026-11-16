@@ -14,7 +14,6 @@
   - "RMCAdminFax"
   - "AdminPDA"
   - "AdminHypo"
-  - "RMCPlushie.*"
 
 - id: "AllowAllOnAdminMaps"
   type: "Whitelist"
@@ -26,6 +25,7 @@
   entityMatchers:
   - ".*"
 
+# ├──[ Prototypes marked with suffix "Don't Map" ]───────────────────┤
 - id: "DoNotMapSpecifiers"
   type: "Blacklist"
   entityMatchers:
@@ -35,23 +35,37 @@
   - "RMCBottleAntiZed"
   - "RMCBlackGooGlass.*"
 
-- id: "AllowApprovedDeniedStamps"
-  type: "Whitelist"
-  entityMatchers:
-  - "CMStamp(Approved|Denied)"
-
+# ├──[ Legacy Map Stamps support - should remove them instead ]──────┤
 - id: "AllowFactionStamps"
   type: "Whitelist"
   entityMatchers:
   - "CMStamp(Liaison|CO|QM)"
   - "RMCStamp(FreePress|TSE|SPP|CLF)"
 
+# ├──[ Legacy Approved/Denied Stamps - remove them for AU14Stamp ]───┤
+- id: "AllowApprovedDeniedStamps"
+  type: "Whitelist"
+  entityMatchers:
+  - "CMStamp(Approved|Denied)"
+
+# ├──[ Warships ]────────────────────────────────────────────────────┤
 - id: "USSBushWarship"
   type: "Whitelist"
   on_paths:
   - "USSBush_above.yml"
   - "USSBush.yml"
   - "USSBush_below.yml"
+  entityMatchers:
+  - "CMStamp.*"
+
+- id: "USSBushWarshipRedux"
+  type: "Whitelist"
+  on_paths:
+  - "USSBushReworkFinalize0"
+  - "USSBushReworkFinalize-1"
+  - "USSBushReworkFinalize1"
+  - "USSBushReworkFinalize2"
+  - "USSBushReworkFinalize3"
   entityMatchers:
   - "CMStamp.*"
 
@@ -64,6 +78,7 @@
   entityMatchers:
   - "CMStamp.*"
 
+# ├──[ Plushies ]────────────────────────────────────────────────────┤
 - id: "AllowedPlushies"
   type: "Whitelist"
   entityMatchers:
@@ -71,6 +86,13 @@
   - "RMCPlushieSharkBlue"
   - "RMCPlushieGnarpGnarp"
 
+# ├──[ Figurines ]───────────────────────────────────────────────────┤
+- id: "RemoveFigurines"
+  type: "Blacklist"
+  entityMatchers:
+  - "RMCFigurine.*"
+
+# ├──[ Comms / Sensor Towers ]───────────────────────────────────────┤
 - id: "SensorCommsTowers"
   type: "Blacklist"
   entityMatchers:
@@ -81,3 +103,45 @@
   type: "Whitelist"
   entityMatchers:
   - "RMCCommunicationsTowerProp.*"
+
+# ├──[ Unused Vending Machines (base ss14) ]─────────────────────────┤
+- id: "BaseGameVendingMachines"
+  type: "Blacklist"
+  entityMatchers:
+    - "VendingMachine(Engi|Booze|Cart|Chef|Dinner|Med|Nutri|Sec|Robotics|Salvage|WallMed|HappyHonk|Chemicals|Chapel).*"
+    - "VendingMachineSeeds"     # there's also SeedsUnlocked
+    - "VendingMachine.*robe.*"  # secdrobe, lawdrobe, hydrobe, etc.
+
+# ├──[ ColMarTech Vendors ]──────────────────────────────────────────┤
+# - id: "ColMarTechVendors"
+#   type: "Blacklist"
+#   entityMatchers:
+#   - "ColMarTech.*"
+
+# Unused Upstream Prototypes (Use the CMU variants)
+- id: "DeprecatedUpstreamPrototypes"
+  type: "Blacklist"
+  entityMatchers:
+  - "RMCPlushie.*"
+  - "RMCPickaxe"
+  - "RMCAegisCorpseSpawner"
+  - "RMCAegisSpawner"
+  - "RMCIDCardAegis"
+  - "RMCIDCardAegisIntel"
+  - "RMCTacticalMapTableLarge"
+  - "RMCTacticalMapTableLargeRotated"
+  - "RMCTacticalMapTableLargeSquare"
+  - "RMCTacticalMapTable"
+  - "RMCCableCoil.*" # CMU14: deprecated upstream coils, replaced by the CMU thin coils
+
+# Unused Upstream Prototypes for Atmos (Use the CMU variants)
+- id: "DeprecatedAtmosUpstreamPrototypes"
+  type: "Blacklist"
+  entityMatchers:
+  - "RMCCanister.*"
+  - "(Air|Portable)Scrubber"
+  - "AtmosDeviceFan(Tiny|Directional)"
+  - "Gas(Pipe(Half|Straight|Fourway|Sensor|Manifold)|Vent(Pump|Scrubber)|Passive(Vent|Gate)|OutletInjector|PressurePump|VolumePump|Valve|Port|DualPortVentPump|Filter|Mixer|ThermoMachine(Heater|Freezer)|MinerOxygen).*"
+  - "(Signal|Pressure)ControlledValve.*"
+  - "HeatExchanger.*"
+  - "SpaceHeater"

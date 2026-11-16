@@ -1,7 +1,9 @@
 using Content.Shared.CharacterInfo;
 using Content.Shared.Objectives;
+using Content.Shared.Roles;
 using Robust.Client.Player;
 using Robust.Client.UserInterface;
+using Robust.Shared.Prototypes;
 
 namespace Content.Client.CharacterInfo;
 
@@ -32,7 +34,21 @@ public sealed partial class CharacterInfoSystem : EntitySystem
     private void OnCharacterInfoEvent(CharacterInfoEvent msg, EntitySessionEventArgs args)
     {
         var entity = GetEntity(msg.NetEntity);
-        var data = new CharacterData(entity, msg.JobTitle, msg.Objectives, msg.Briefing, Name(entity), msg.LorePrimerLines);
+
+        // The entity this info refers to may no longer exist client-side by the time this
+        // (possibly delayed) event arrives, e.g. if it was deleted or the client reconnected
+        // in the meantime. Just drop the stale update rather than crashing.
+        if (!Exists(entity))
+            return;
+
+        var data = new CharacterData(
+            entity,
+            msg.Objectives,
+            msg.Briefing,
+            msg.Job,
+            msg.JobTitle,
+            Name(entity),
+            msg.LorePrimerLines);
 
         OnCharacterUpdate?.Invoke(data);
     }
@@ -46,9 +62,10 @@ public sealed partial class CharacterInfoSystem : EntitySystem
 
     public readonly record struct CharacterData(
         EntityUid Entity,
-        string Job,
         Dictionary<string, List<ObjectiveInfo>> Objectives,
         string? Briefing,
+        ProtoId<JobPrototype>? JobId,
+        string JobTitle,
         string EntityName,
         List<string> LorePrimerLines
     );

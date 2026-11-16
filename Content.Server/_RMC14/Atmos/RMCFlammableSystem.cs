@@ -11,19 +11,6 @@ public sealed partial class RMCFlammableSystem : SharedRMCFlammableSystem
     [Dependency] private FlammableSystem _flammable = default!;
     [Dependency] private ActionBlockerSystem _actionBlocker = default!;
 
-    public override void Initialize()
-    {
-        base.Initialize();
-
-        SubscribeLocalEvent<FlammableComponent, ShowFireAlertEvent>(OnShowFireAlert);
-    }
-
-    private void OnShowFireAlert(Entity<FlammableComponent> ent, ref ShowFireAlertEvent args)
-    {
-        if (ent.Comp.OnFire)
-            args.Show = true;
-    }
-
     public override bool Ignite(Entity<FlammableComponent?> flammable, int intensity, int duration, int? maxStacks, bool igniteDamage = true)
     {
         base.Ignite(flammable, intensity, duration, maxStacks);
@@ -37,7 +24,14 @@ public sealed partial class RMCFlammableSystem : SharedRMCFlammableSystem
         if (maxStacks != null && stacks > maxStacks)
             stacks = maxStacks.Value;
 
-        _flammable.SetFireStacks(flammable, stacks, flammable, true);
+        // CMU14: SetFireStacks also clamps to the mob's MaximumFireStacks, wizden default 10,
+        // which defeated the fuel's own maxStacks and made every fuel equally easy to put out.
+        if (maxStacks is { } max
+            && max > flammable.Comp.MaximumFireStacks)
+            flammable.Comp.MaximumFireStacks = max;
+
+        _flammable.SetFireStacks(flammable, stacks, flammable);
+        _flammable.Ignite(flammable.Owner, flammable.Owner, flammable.Comp);
         if (!flammable.Comp.OnFire)
             return false;
 
@@ -46,8 +40,9 @@ public sealed partial class RMCFlammableSystem : SharedRMCFlammableSystem
             EnsureComp<RMCFireBypassActiveComponent>(flammable);
         }
 
-        flammable.Comp.Intensity = intensity;
-        flammable.Comp.Duration = duration;
+        var onFire = EnsureComp<OnFireComponent>(flammable);
+        onFire.Intensity = intensity;
+        onFire.Duration = duration;
         return true;
     }
 
@@ -58,7 +53,7 @@ public sealed partial class RMCFlammableSystem : SharedRMCFlammableSystem
         if (!Resolve(flammable, ref flammable.Comp, false))
             return;
 
-        _flammable.Extinguish(flammable, flammable);
+        _flammable.TryExtinguish(flammable);
     }
 
     public override void Pat(Entity<FlammableComponent?> flammable, int stacks)
@@ -74,9 +69,13 @@ public sealed partial class RMCFlammableSystem : SharedRMCFlammableSystem
         if (!Resolve(flammable, ref flammable.Comp, false))
             return;
 
-        flammable.Comp.Intensity = 30;
-        flammable.Comp.Duration = 20;
-        Dirty(flammable);
+        // Changing stack count must preserve the burning fuel's intensity and duration.
+        if (TryComp<OnFireComponent>(flammable, out var onFire) &&
+            (onFire.Intensity <= 0 || onFire.Duration <= 0))
+        {
+            onFire.Intensity = 30;
+            onFire.Duration = 20;
+        }
 
         _flammable.AdjustFireStacks(flammable, stacks, flammable);
     }

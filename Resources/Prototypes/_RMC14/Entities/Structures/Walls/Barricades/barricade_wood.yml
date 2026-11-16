@@ -5,6 +5,8 @@
   description: A wall made out of wooden planks nailed together. Not very sturdy, but can provide some concealment.
   components:
   - type: VehicleSmashable
+    minDestroyWeightClass: Light
+    minContinueWeightClass: Medium
   - type: Sprite
     drawdepth: WallTops
     sprite: _RMC14/Structures/Walls/Barricades/barricade.rsi
@@ -13,11 +15,13 @@
     - map: [ "acided" ]
   - type: Appearance
   - type: Damageable
-    damageContainer: Inorganic
     damageModifierSet: Wood
+  - type: Injurable
+    damageContainer: Inorganic
   - type: NailgunRepairable
     # cm13 max_health%: 1
-    repairWood: 100
+    repairValues:
+      RMCWood: 100
   - type: Destructible
     thresholds:
     - trigger:

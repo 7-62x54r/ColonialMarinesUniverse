@@ -40737,7 +40737,7 @@ entities:
       parent: 2
     - type: Fixtures
       fixtures: {}
-- proto: RMCCableCoil20
+- proto: CMUCableThinLVStack20 # CMU14: replaced RMCCableCoil20, thin LV cable
   entities:
   - uid: 1384
     components:
@@ -53701,7 +53701,7 @@ entities:
     - XenoMapTracked
     - TacticalMapTracked
     - TacticalMapIcon
-- proto: RMCShovel
+- proto: AU14ToolShovel
   entities:
   - uid: 2920
     components:
@@ -54022,7 +54022,7 @@ entities:
     - type: Transform
       pos: -30.519722,55.615574
       parent: 2
-- proto: RMCTacticalMapTableLargeRotated
+- proto: CMUTacticalMapTableLargeRotatedGovfor
   entities:
   - uid: 3002
     components:

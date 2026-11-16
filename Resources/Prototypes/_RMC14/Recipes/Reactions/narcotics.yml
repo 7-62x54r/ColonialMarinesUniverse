@@ -1,8 +1,6 @@
 - type: reaction
   id: RMCMindbreakerToxin
   reactants:
-    RMCBlackGoo: # TODO RMC14 remove this later
-      amount: 0.5
     RMCSilicon:
       amount: 1
     RMCHydrogen:
@@ -14,9 +12,9 @@
 
 - type: reaction
   id: RMCSpaceDrugs
+  minTemp: 340 # CMU14: needs heat
+  conserveEnergy: false # CMU14: do not self-heat past the gate
   reactants:
-    RMCBlackGoo: # TODO RMC14 remove this later
-      amount: 0.5
     RMCMercury:
       amount: 1
     RMCSugar:

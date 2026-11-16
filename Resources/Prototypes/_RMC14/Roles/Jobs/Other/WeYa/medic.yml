@@ -20,6 +20,15 @@
     - type: NpcFactionMember
       factions:
       - WeYa
+    - type: Language
+      spokenLanguages:
+      - English
+      - Japanese
+      understoodLanguages:
+      - English
+      - Japanese
+      currentLanguage: English
+      defaultLanguage: English
     - type: Skills
       skills:
         RMCSkillCqc: 1
@@ -98,7 +107,7 @@
     - CMMagazineSMGM63Ext
     - CMMagazineSMGM63Ext
     back:
-    - CMDefibrillator
+    - AU14CMDefibrillator # cmu edit: was CMDefibrillator
     - CMAdvFirstAidKitFilled
     - CMAdvFirstAidKitFilled
     - CMStunbaton

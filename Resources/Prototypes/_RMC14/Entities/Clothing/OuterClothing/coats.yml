@@ -34,6 +34,9 @@
     blacklist:
       components:
       - Xeno
+  - type: CMUItemStain
+    wornStates:
+      outerClothing: jacket_blood
 
 - type: entity
   abstract: True
@@ -86,9 +89,9 @@
     whitelist:
       components:
       - RMCLighter
-      - Stunbaton
       - Gun
       tags:
+      - Stunbaton
       - Handcuffs
       - GasTank
       - Flashlight
@@ -117,9 +120,9 @@
       - Blowtorch
       - Gun
       - RMCLighter
-      - Stunbaton
       - CrewMonitoringConsole
       tags:
+      - Stunbaton
       #TODO any analyzer - plant etc
       - Multitool
       - Radio
@@ -155,11 +158,11 @@
     whitelist:
       components:
       - RMCLighter
-      - Stunbaton
       - Gun
       - CrewMonitoringConsole
       - CassettePlayer
       tags:
+      - Stunbaton
       - Handcuffs
       - GasTank
       - Flashlight
@@ -190,9 +193,9 @@
       components:
       - CMSurgeryTool
       - RMCLighter
-      - Stunbaton
       - Gun
       tags:
+      - Stunbaton
       - DiscreteHealthAnalyzer
       - CMOintment
       - CMTraumaKit
@@ -259,7 +262,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/cmp.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 
 # Military Warden
@@ -274,7 +277,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/warden.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 # Military Police
 - type: entity
@@ -288,7 +291,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/mp.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 # Logistics Officer
 - type: entity
@@ -315,7 +318,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/chef.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 # Auxiliary Supply Officer
 - type: entity
@@ -329,7 +332,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/aso/jungle.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
   - type: Appearance
   - type: ItemCamouflage
     camouflageVariations:
@@ -350,7 +353,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/aso/black.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: RMCBaseJacket
@@ -363,7 +366,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/aso/white.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: RMCBaseJacket
@@ -376,7 +379,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/aso/black_alt.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: RMCCoatASOBlackAlt
@@ -407,7 +410,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/pilot.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
   - type: FoldableClothing
     foldedEquippedPrefix: jacket
     foldedHeldPrefix: jacket
@@ -424,7 +427,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/CO/jacket.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: CMCoatCO
@@ -437,7 +440,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/CO/bomber.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
   - type: Appearance
   - type: Foldable
     canFoldInsideContainer: true
@@ -516,7 +519,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/CO/formal_black.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: CMCoatCO
@@ -529,7 +532,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/CO/formal_white.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: CMCoatCO
@@ -588,7 +591,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/coat_formal.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: RMCBaseJacket
@@ -600,7 +603,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/officer.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
 
 - type: entity
   parent: [CMCoatOfficer, RMCBaseJacketButtonable]
@@ -613,7 +616,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/service/jungle.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
   - type: Appearance
   - type: ItemCamouflage
     camouflageVariations:
@@ -628,6 +631,27 @@
   id: RMCCoatServiceFolded
   name: marine service jacket
   description: A service jacket typically worn by officers of the UNMC.
+  suffix: Unbuttoned
+
+- type: entity
+  parent: [CMCoatOfficer, RMCBaseJacketButtonable]
+  id: RMCCoatAllWeather
+  name: marine all-weather coat
+  description: A water-resistant trench coat issued to marines not expected to see frontline combat. You think you remember hearing something about these bleeding orange into the wash.
+  components:
+  - type: Sprite
+    sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/allweather.rsi
+  - type: Clothing
+    sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/allweather.rsi
+  - type: CMArmor
+    melee: 10
+  - type: Appearance
+
+- type: entity
+  parent: [RMCBaseJacketButtonableOpened, RMCCoatAllWeather]
+  id: RMCCoatAllWeatherFolded
+  name: marine all-weather coat
+  description: A water-resistant trench coat issued to marines not expected to see frontline combat. You think you remember hearing something about these bleeding orange into the wash.
   suffix: Unbuttoned
 
 - type: entity
@@ -727,7 +751,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Synthetic/synth_utility.rsi
   - type: CMArmor
-    melee: 10
+    melee: 20
   - type: Appearance
 
 # Normal utility vest
@@ -985,7 +1009,7 @@
   - type: Clothing
     sprite: _RMC14/Objects/Clothing/OuterClothing/Coats/Snowsuits/normal.rsi
   - type: CMArmor
-    melee: 15
+    melee: 30
     bullet: 15
     bio: 20
     explosionArmor: 0
@@ -1053,15 +1077,17 @@
       - PillPacket
       - PillCanister
       - CMSurgicalCase
-  - type: CMArmor
-    melee: 15
-    bullet: 15
-    bio: 20
-    explosionArmor: 0
-  - type: CMHardArmor
-  - type: ClothingSpeedModifier # SLOWDOWN_ARMOR_VERY_LIGHT
-    walkModifier: 0.897
-    sprintModifier: 0.897
+  # cmu edit start
+  # - type: CMArmor
+  #   melee: 30
+  #   bullet: 15
+  #   bio: 20
+  #   explosionArmor: 0
+  # - type: CMHardArmor
+  # - type: ClothingSpeedModifier # SLOWDOWN_ARMOR_VERY_LIGHT
+  #   walkModifier: 0.897
+  #   sprintModifier: 0.897
+  # cmu edit end
 #AU-14 - end
 
 - type: entity

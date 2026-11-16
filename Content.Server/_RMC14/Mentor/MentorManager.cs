@@ -1,16 +1,26 @@
+using System.Collections.Concurrent;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Content.Server.Administration.Managers;
+using Content.Server.CMU14.HelpRelay.Systems;
 using Content.Server.Database;
+using Content.Server.GameTicking;
 using Content.Server.Players.RateLimiting;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Mentor;
 using Content.Shared.Administration;
+using Content.Shared.CCVar;
+using Content.Shared.CMU14.HelpRelay.BugHelp; // CMU14: anonymity alias for Discord relay surfaces
 using Content.Shared.Players.RateLimiting;
 using Content.Shared.Roles;
 using Robust.Server.Player;
 using Robust.Shared.Configuration;
+using Robust.Shared.Enums;
 using Robust.Shared.Network;
 using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
@@ -23,7 +33,9 @@ public sealed partial class MentorManager : IPostInjectInit
 {
     [Dependency] private IAdminManager _admin = default!;
     [Dependency] private IConfigurationManager _config = default!;
+    [Dependency] private HelpRelayManager _helpRelay = default!; // CMU14: mhelp Discord delivery goes through the shared help relay
     [Dependency] private IServerDbManager _db = default!;
+    [Dependency] private IEntityManager _entMan = default!;
     [Dependency] private ILogManager _log = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -32,13 +44,50 @@ public sealed partial class MentorManager : IPostInjectInit
     [Dependency] private UserDbDataManager _userDb = default!;
 
     private const string RateLimitKey = "MentorHelp";
-    private static readonly ProtoId<JobPrototype> MentorJob = "CMSeniorEnlistedAdvisor";
+    private static readonly ProtoId<JobPrototype> MentorJob = "AU14JobGOVFORadvisor";
+
+    // CMU14 Help Relay Begin: webhook state moved to HelpRelayManager (cmu.help_relay_webhook[_mhelp]).
+    //private GameTicker _ticker = default!;
+    //private const ushort MessageLengthCap = 3500;
+    //private const string TooLongText = "... **(msg too long)**";
+
+    //private readonly ConcurrentQueue<WebhookPayload> _pendingPayloads = new();
+    //private string _mentorHelpWebhookUrl = string.Empty;
+    //private readonly HttpClient _httpClient = new();
+    //private int _queueProcessorStarted;
+    // CMU14 End
 
     private readonly HashSet<ICommonSession> _activeMentors = new();
     private readonly Dictionary<NetUserId, bool> _mentors = new();
     private readonly Dictionary<NetUserId, (TimeSpan Timestamp, bool Typing)> _typingUpdateTimestamps = new();
     private readonly Dictionary<NetUserId, List<NetUserId>> _destinationClaims = new();
     private readonly Dictionary<NetUserId, HashSet<NetUserId>> _mentorClaims = new();
+
+    // CMU14 BugHelp Begin: per-destination transcript for bug report promotion (BUGHELP-DESIGN.md §4.2).
+    // Human lines only, so the promoted report reads as the conversation. SERVER notices stay out.
+    private readonly Dictionary<NetUserId, List<(string Author, string Text)>> _transcripts = new();
+    private const int TranscriptLineCap = 50;
+    // CMU14 End
+
+    // CMU14 Help Relay Begin: webhook payload DTOs replaced by the shared relay's embed family.
+    //private sealed class WebhookPayload
+    //{
+    //    [JsonPropertyName("username")] public string? Username { get; set; }
+    //    [JsonPropertyName("embeds")] public List<WebhookEmbed>? Embeds { get; set; } = new();
+    //}
+
+    //private sealed class WebhookEmbed
+    //{
+    //    [JsonPropertyName("description")] public string? Description { get; set; }
+    //    [JsonPropertyName("color")] public int? Color { get; set; }
+    //    [JsonPropertyName("footer")] public WebhookEmbedFooter? Footer { get; set; }
+    //}
+
+    //private sealed class WebhookEmbedFooter
+    //{
+    //    [JsonPropertyName("text")] public string? Text { get; set; }
+    //}
+    // CMU14 End
 
     private async Task LoadData(ICommonSession player, CancellationToken cancel)
     {
@@ -81,6 +130,9 @@ public sealed partial class MentorManager : IPostInjectInit
 
     private void OnPlayerStatusChanged(object? sender, SessionStatusEventArgs args)
     {
+        if (args.NewStatus != SessionStatus.Disconnected)
+            return;
+
         var user = args.Session;
         _typingUpdateTimestamps.Remove(user.UserId);
 
@@ -93,12 +145,10 @@ public sealed partial class MentorManager : IPostInjectInit
             }
         }
 
-        if (_mentorClaims.TryGetValue(user.UserId, out var destinations))
+        if (!_mentorClaims.TryGetValue(user.UserId, out var destinations)) return;
+        foreach (var destination in destinations.ToArray())
         {
-            foreach (var destination in destinations)
-            {
-                Unclaim(user.Channel, destination, true);
-            }
+            Unclaim(user.Channel, destination, true);
         }
     }
 
@@ -208,6 +258,9 @@ public sealed partial class MentorManager : IPostInjectInit
 
         foreach (var mentor in _activeMentors)
         {
+            if (!mentor.Channel.IsConnected)
+                continue;
+
             try
             {
                 _net.ServerSendMessage(claim, mentor.Channel);
@@ -257,6 +310,26 @@ public sealed partial class MentorManager : IPostInjectInit
         }
     }
 
+    private void OnMentorTeleport(MentorClientTeleportMsg message)
+    {
+        var author = message.MsgChannel;
+        if (!_player.TryGetSessionById(author.UserId, out var authorSession) ||
+            !_activeMentors.Contains(authorSession))
+        {
+            return;
+        }
+
+        if (authorSession.AttachedEntity is not { } mentorEntity)
+            return;
+
+        var destination = new NetUserId(message.Destination);
+        if (!_player.TryGetSessionById(destination, out var targetSession) || targetSession.AttachedEntity is not { } targetEntity)
+            return;
+
+        var ev = new MentorFollowEvent(_entMan.GetNetEntity(mentorEntity), _entMan.GetNetEntity(targetEntity));
+        _entMan.EventBus.RaiseLocalEvent(mentorEntity, ref ev);
+    }
+
     private void Unclaim(INetChannel author, NetUserId destination, bool disconnect)
     {
         if (!_destinationClaims.TryGetValue(destination, out var claims))
@@ -298,6 +371,9 @@ public sealed partial class MentorManager : IPostInjectInit
 
         foreach (var mentor in _activeMentors)
         {
+            if (!mentor.Channel.IsConnected)
+                continue;
+
             try
             {
                 _net.ServerSendMessage(msg, mentor.Channel);
@@ -312,6 +388,9 @@ public sealed partial class MentorManager : IPostInjectInit
 
     private void SendMentorStatus(ICommonSession player)
     {
+        if (!player.Channel.IsConnected)
+            return;
+
         var isMentor = _activeMentors.Contains(player);
         var canReMentor = _mentors.TryGetValue(player.UserId, out var mentor) && mentor;
         var msg = new MentorStatusMsg()
@@ -336,7 +415,7 @@ public sealed partial class MentorManager : IPostInjectInit
             return;
 
         var recipients = new HashSet<INetChannel>();
-        if (destinationChannel != null && destinationChannel.IsConnected)
+        if (destinationChannel is { IsConnected: true })
             recipients.Add(destinationChannel);
 
         var isMentor = false;
@@ -345,7 +424,20 @@ public sealed partial class MentorManager : IPostInjectInit
             if (author != null && active.UserId == author.UserId)
                 isMentor = true;
 
-            recipients.Add(active.Channel);
+            if (active.Channel.IsConnected)
+                recipients.Add(active.Channel);
+        }
+
+        // CMU14 BugHelp: keep human lines only (author != null filters connect/disconnect notices)
+        // for bug report promotion; tail-capped to bound memory. The mentee is stored as the
+        // anonymity alias; staff keep their names. The relay channel itself mirrors ahelp and
+        // keeps real names; only promoted reports anonymize.
+        if (author != null)
+        {
+            var lines = _transcripts.GetOrNew(destination);
+            lines.Add((isMentor ? authorName ?? destinationName : BugHelpAnonymity.Alias, message));
+            if (lines.Count > TranscriptLineCap)
+                lines.RemoveRange(0, lines.Count - TranscriptLineCap);
         }
 
         var isAdmin = author != null && _admin.IsAdmin(author);
@@ -376,6 +468,17 @@ public sealed partial class MentorManager : IPostInjectInit
 
         if (author != null)
             SendTypingUpdate(author.Channel, destination, false);
+
+        // CMU14 Help Relay: conversation relay — one Discord message per player, edited in place as
+        // lines arrive (the ahelp relay model), not one message per line.
+        if (!create) return;
+        _helpRelay.RelayConversationLine(
+            HelpSource.MHelp,
+            destination,
+            destinationName,
+            isMentor,
+            authorName ?? destinationName,
+            message);
     }
 
     private void SendTypingUpdate(INetChannel author, Guid destination, bool typing)
@@ -389,7 +492,7 @@ public sealed partial class MentorManager : IPostInjectInit
 
         foreach (var admin in GetActiveMentors())
         {
-            if (admin.UserId == author.UserId)
+            if (admin.UserId == author.UserId || !admin.Channel.IsConnected)
                 continue;
 
             _net.ServerSendMessage(update, admin.Channel);
@@ -400,6 +503,62 @@ public sealed partial class MentorManager : IPostInjectInit
     {
         return _mentors.TryGetValue(player, out var mentor) && mentor;
     }
+
+    // CMU14 BugHelp Begin: transcript access + SERVER-line broadcast for bug report promotion.
+    // CMU14 BugHelp: promotion transcript access. Returns the live tail; callers read only.
+    public IReadOnlyList<(string Author, string Text)> GetTranscript(NetUserId destination)
+        => _transcripts.TryGetValue(destination, out var lines) ? lines : Array.Empty<(string, string)>();
+
+    // CMU14 BugHelp: called from BugHelpSystem's round-restart handler, same lifetime as the
+    // report sequence.
+    public void ClearTranscripts() => _transcripts.Clear();
+
+    /// <summary>
+    /// CMU14 BugHelp: SERVER line in a conversation, the claim/unclaim direct-broadcast shape.
+    /// Deliberately not SendMentorMessage: that path relays created lines to Discord.
+    /// </summary>
+    public void SendServerLine(NetUserId destination, string text)
+    {
+        var destinationName = _player.TryGetPlayerData(destination, out var data)
+            ? data.UserName
+            : destination.ToString();
+
+        var mentorMsg = new MentorMessage(
+            destination,
+            destinationName,
+            null,
+            null,
+            text,
+            DateTime.Now,
+            true,
+            false,
+            true);
+        var messages = new List<MentorMessage> { mentorMsg };
+        var receive = new MentorMessagesReceivedMsg { Messages = messages };
+
+        var recipients = new HashSet<INetChannel>();
+        if (_player.TryGetSessionById(destination, out var session) && session.Channel.IsConnected)
+            recipients.Add(session.Channel);
+
+        foreach (var mentor in _activeMentors)
+        {
+            if (mentor.Channel.IsConnected)
+                recipients.Add(mentor.Channel);
+        }
+
+        foreach (var recipient in recipients)
+        {
+            try
+            {
+                _net.ServerSendMessage(receive, recipient);
+            }
+            catch (Exception e)
+            {
+                _log.RootSawmill.Error($"Error sending mentor help server line:\n{e}");
+            }
+        }
+    }
+    // CMU14 End
 
     public IEnumerable<ICommonSession> GetActiveMentors()
     {
@@ -430,14 +589,15 @@ public sealed partial class MentorManager : IPostInjectInit
         _activeMentors.Remove(session);
         SendMentorStatus(session);
 
-        if (_mentorClaims.TryGetValue(user.UserId, out var claims))
+        if (!_mentorClaims.TryGetValue(user.UserId, out var claims)) return;
+        foreach (var claim in claims.ToArray())
         {
-            foreach (var claim in claims)
-            {
-                Unclaim(user, claim, true);
-            }
+            Unclaim(user, claim, true);
         }
     }
+
+    // CMU14 Help Relay: superseded by cmu.help_relay_webhook(_mhelp).
+    //private void OnMentorHelpWebhookChanged(string url) => _mentorHelpWebhookUrl = url;
 
     void IPostInjectInit.PostInject()
     {
@@ -453,6 +613,7 @@ public sealed partial class MentorManager : IPostInjectInit
         _net.RegisterNetMessage<MentorClientUnclaimMsg>(OnClientUnclaim);
         _net.RegisterNetMessage<MentorClaimMsg>();
         _net.RegisterNetMessage<MentorUnclaimMsg>();
+        _net.RegisterNetMessage<MentorClientTeleportMsg>(OnMentorTeleport);
 
         _net.Connected += OnConnected;
         _net.Disconnect += OnDisconnected;
@@ -460,6 +621,12 @@ public sealed partial class MentorManager : IPostInjectInit
         _userDb.AddOnLoadPlayer(LoadData);
         _userDb.AddOnFinishLoad(FinishLoad);
         _userDb.AddOnPlayerDisconnect(ClientDisconnected);
+
+        // CMU14 Help Relay: superseded by cmu.help_relay_webhook(_mhelp).
+        //if (_config.IsCVarRegistered(CCVars.DiscordMentorHelpWebhook.Name))
+        //    _config.OnValueChanged(CCVars.DiscordMentorHelpWebhook, OnMentorHelpWebhookChanged, true);
+        //else
+        //    OnMentorHelpWebhookChanged(string.Empty);
 
         if (_config.IsCVarRegistered(RMCCVars.RMCMentorHelpRateLimitPeriod.Name) &&
             _config.IsCVarRegistered(RMCCVars.RMCMentorHelpRateLimitCount.Name))
@@ -476,4 +643,84 @@ public sealed partial class MentorManager : IPostInjectInit
 
         _player.PlayerStatusChanged += OnPlayerStatusChanged;
     }
+
+    // CMU14 Help Relay Begin: payload builder and webhook queue replaced by HelpRelayManager.Post.
+    //private WebhookPayload GenerateMentorHelpPayload(string destinationName, string? authorName, string text)
+    //{
+    //    var username = authorName != null ? $"{authorName} → {destinationName}" : $"System → {destinationName}";
+    //    var color = 0xFFA500;
+
+    // CMU14
+    //    _ticker ??= _entMan.System<GameTicker>();
+    //    var roundId = _ticker.RoundId;
+    //    var roundState = _ticker.RunLevel switch
+    //    {
+    //        GameRunLevel.PreRoundLobby => "Lobby",
+    //        GameRunLevel.InRound => $"Round {roundId}",
+    //        GameRunLevel.PostRound => $"Post-round {roundId}",
+    //        _ => "Unknown"
+    //    };
+    //    var footerText = $"Mentor Help – {roundState}";
+
+    // CMU14
+    //    return new WebhookPayload
+    //    {
+    //        Username = username,
+    //        Embeds =
+    //        [
+    //            new()
+    //            {
+    //                Description = text,
+    //                Color = color,
+    //                Footer = new WebhookEmbedFooter { Text = footerText }
+    //            }
+    //        ]
+    //    };
+    //}
+
+    // CMU14
+    //private async Task PostWebhook(WebhookPayload payload)
+    //{
+    //    var json = JsonSerializer.Serialize(payload);
+    //    var content = new StringContent(json, Encoding.UTF8, "application/json");
+    //    try
+    //    {
+    //        var response = await _httpClient.PostAsync(_mentorHelpWebhookUrl, content);
+    //        if (!response.IsSuccessStatusCode)
+    //        {
+    //            var body = await response.Content.ReadAsStringAsync();
+    //            _log.RootSawmill.Error($"MentorHelp webhook failed: {(int)response.StatusCode} {response.StatusCode}\n{body}");
+    //        }
+    //    }
+    //    catch (Exception e)
+    //    {
+    //        _log.RootSawmill.Error($"MentorHelp webhook error: {e}");
+    //    }
+    //}
+
+    // CMU14
+    //private void StartQueueProcessor()
+    //{
+    //    if (Interlocked.Exchange(ref _queueProcessorStarted, 1) == 1)
+    //        return;
+    //    Task.Run(ProcessQueueAsync);
+    //}
+
+    // CMU14
+    //private async Task ProcessQueueAsync()
+    //{
+    //    while (true)
+    //    {
+    //        while (_pendingPayloads.TryDequeue(out var payload))
+    //        {
+    //            await PostWebhook(payload);
+    //            await Task.Delay(1200);
+    //        }
+    //        _queueProcessorStarted = 0;
+
+    //        if (_pendingPayloads.IsEmpty || Interlocked.Exchange(ref _queueProcessorStarted, 1) == 1)
+    //            return;
+    //    }
+    //}
+    // CMU14 End
 }

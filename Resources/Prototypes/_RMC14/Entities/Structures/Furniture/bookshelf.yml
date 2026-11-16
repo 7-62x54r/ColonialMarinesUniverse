@@ -3,6 +3,8 @@
   id: RMCBookcase
   name: bookcase
   components:
+  - type: CMUReconFurniture
+    material: Bookcase
   - type: Sprite
     sprite: _RMC14/Structures/Furniture/bookshelf.rsi
     snapCardinals: true
@@ -14,6 +16,7 @@
     maxFillLevels: 5
     fillBaseName: book
   - type: Damageable
+  - type: Injurable
     damageContainer: Inorganic
   - type: Destructible
     thresholds:
@@ -37,6 +40,12 @@
   - type: Occluder
     enabled: false
   - type: RMCMesonsNonviewable
+  - type: Flamability
+    chance: 0.9
+    rate: 4.0
+    spread: 1.5
+    burnDurationMin: 70
+    burnDurationMax: 620
 
 - type: entity
   parent: RMCBookcase

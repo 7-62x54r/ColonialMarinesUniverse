@@ -4,13 +4,19 @@
 - type: accessLevel
   id: CMAccessRequisitions
   parent: RMCBaseCommandAccess
-  name: Requisitions
+  name: rmc-access-requisitions
 
 
 - type: accessLevel
   id: CMAccessKitchen
   parent: RMCBaseMarineAccess
   name: cm-job-name-messtech
+
+#vehicles
+- type: accessLevel
+  id: RMCAccessVehicleCrew
+  parent: RMCBaseMarineAccess
+  name: Vehicle Bay
 
 
 #engineering
@@ -67,4 +73,3 @@
   id: RMCAccessSynth
   parent: RMCBaseHidden
   name: rmc-job-name-synth
-

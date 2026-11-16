@@ -1,6 +1,8 @@
 using Content.Shared._RMC14.Xenonids.Charge;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Damage.Prototypes;
+using Content.Shared._RMC14.Armor; // CMU14
 using Content.Shared.Doors.Components;
 using Content.Shared.Weapons.Melee;
 using Robust.Shared.Prototypes;
@@ -26,6 +28,7 @@ public sealed partial class XenoClawsSystem : EntitySystem
 
         SubscribeLocalEvent<ReceiverXenoClawsComponent, DamageModifyEvent>(OnReceiverDamageModify);
         SubscribeLocalEvent<AirlockReceiverXenoClawsComponent, DamageModifyEvent>(OnAirlockReceiverDamageModify);
+        SubscribeLocalEvent<XenoClawsComponent, CMGetArmorPiercingEvent>(OnGetArmorPiercing); // CMU14 system for Xeno AP
     }
 
     /*
@@ -53,9 +56,6 @@ public sealed partial class XenoClawsSystem : EntitySystem
         var xeno = args.Tool;
         var receiver = ent.Comp;
 
-        if (!_xenoChargingQuery.HasComp(xeno))
-            return;
-
         if (!_meleeWeaponQuery.HasComp(xeno) || !_xenoClawsQuery.TryComp(xeno, out var claws))
             return;
 
@@ -70,6 +70,10 @@ public sealed partial class XenoClawsSystem : EntitySystem
 
         if (hasRequiredClaws || hasRequiredTier)
         {
+            // CMU14: preserve valid claw damage.
+            if (receiver.UseWeaponDamage)
+                return;
+
             args.Damage = new DamageSpecifier(_protoManager.Index(_clawsDamageGroup),
                                               receiver.MaxHealth / receiver.HitsToDestroy);
         }
@@ -79,13 +83,22 @@ public sealed partial class XenoClawsSystem : EntitySystem
         }
     }
 
+    public bool HasClawStrength(EntityUid uid, XenoClawType minimum)
+    {
+        return _xenoClawsQuery.TryComp(uid, out var claws) &&
+               claws.ClawType.CompareTo(minimum) >= 0;
+    }
+   
+    private void OnGetArmorPiercing(Entity<XenoClawsComponent> ent, ref CMGetArmorPiercingEvent args)  // CMU14
+    {
+        args.Piercing += ent.Comp.ArmorPiercing;  
+    }
+    
+    
     private void OnAirlockReceiverDamageModify(Entity<AirlockReceiverXenoClawsComponent> ent, ref DamageModifyEvent args)
     {
         var xeno = args.Tool;
         var receiver = ent.Comp;
-
-        if (!_xenoChargingQuery.HasComp(xeno))
-            return;
 
         if (!_meleeWeaponQuery.HasComp(xeno))
             return;

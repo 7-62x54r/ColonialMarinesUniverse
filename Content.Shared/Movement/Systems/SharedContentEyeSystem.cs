@@ -1,8 +1,9 @@
 using System.Numerics;
+using Content.Shared._ES.Camera;
 using Content.Shared.Administration;
 using Content.Shared.Administration.Managers;
 using Content.Shared.Camera;
-using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
 using Content.Shared.Input;
 using Content.Shared.Movement.Components;
 using Robust.Shared.Input.Binding;
@@ -105,7 +106,7 @@ public abstract partial class SharedContentEyeSystem : EntitySystem
         if (args.SenderSession.AttachedEntity is not { } player)
             return;
 
-        if (!HasComp<GhostComponent>(player) && !_admin.IsAdmin(player))
+        if (!HasComp<GhostComponent>(player) && !_admin.HasAdminFlag(player, AdminFlags.FreeZoom)) // cmu edit
             return;
 
         if (TryComp<EyeComponent>(player, out var eyeComp))
@@ -158,6 +159,18 @@ public abstract partial class SharedContentEyeSystem : EntitySystem
         RaiseLocalEvent(eye, ref evRelayed);
 
         _eye.SetOffset(eye, ev.Offset + evRelayed.Offset, eye);
+    }
+
+    public void UpdateEyeRotation(Entity<EyeComponent> eye)
+    {
+        var baseAngle = Angle.Zero;
+        if (TryComp<ContentEyeComponent>(eye, out var contentEye))
+            baseAngle = contentEye.BaseRotation;
+
+        var ev = new ESGetEyeRotationEvent();
+        RaiseLocalEvent(eye, ref ev);
+
+        _eye.SetRotation(eye, baseAngle + ev.Rotation, eye);
     }
 
     public void UpdatePvsScale(EntityUid uid, ContentEyeComponent? contentEye = null, EyeComponent? eye = null)

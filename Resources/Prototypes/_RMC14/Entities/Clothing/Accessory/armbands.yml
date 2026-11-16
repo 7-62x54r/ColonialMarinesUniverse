@@ -150,7 +150,7 @@
 - type: entity
   parent: RMCArmbandBase
   id: RMCCLFArmband
-  name: CLF armband
+  name: INSFOR armband
   description: A crudely sewn armband. It's dyed in the colors of the Colonial Liberation Front.
   components:
   - type: Sprite
@@ -162,6 +162,23 @@
       state: armband
   - type: JobTitleChanger
     jobTitle: CLF Fighter
+    override: true
+
+- type: entity
+  parent: RMCArmbandBase
+  id: RMCCLFCellLeaderArmband
+  name: INSFOR cell leader armband
+  description: A crudely sewn armband. It's dyed in the colors of the Colonial Liberation Front.
+  components:
+  - type: Sprite
+    sprite: _RMC14/Objects/Clothing/Accessory/Armbands/clf_armband.rsi
+    state: icon
+  - type: UniformAccessory
+    playerSprite:
+      sprite: _RMC14/Objects/Clothing/Accessory/Armbands/clf_armband.rsi
+      state: armband
+  - type: JobTitleChanger
+    jobTitle: CLF Cell Leader
     override: true
 
 # HEFA

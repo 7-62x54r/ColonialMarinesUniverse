@@ -16,6 +16,7 @@ using Content.Shared.CombatMode;
 using Content.Shared.Construction.Components;
 using Content.Shared.Containers.ItemSlots;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
 using Content.Shared.Examine;
@@ -86,6 +87,7 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
 
     public override void Initialize()
     {
+        InitializeDeletedWeaponCleanup(); // CMU14: clear replicated references when a mounted gun is deleted.
         SubscribeLocalEvent<WeaponMountComponent, InteractUsingEvent>(OnInteractUsing);
         SubscribeLocalEvent<WeaponMountComponent, FoldAttemptEvent>(OnFoldAttempt);
         SubscribeLocalEvent<WeaponMountComponent, AnchorAttemptEvent>(OnAnchorAttempt);
@@ -145,14 +147,18 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
             TryComp(args.Used, out BallisticAmmoProviderComponent? ballistic))
         {
             if (!TryComp(args.User, out HandsComponent? hands) ||
-                !_slots.CanInsert(ent.Comp.MountedEntity.Value, args.Used, args.User, itemSlot, true) ||
+                !_slots.CanInsert(ent.Comp.MountedEntity.Value, itemSlot, args.Used, args.User, true) ||
                 !_hands.TryDrop(args.User, args.Used))
                 return;
 
             if (itemSlot.Item != null)
                 _hands.TryPickupAnyHand(args.User, itemSlot.Item.Value, handsComp: hands);
 
-            _slots.TryInsert(ent.Comp.MountedEntity.Value, MagazineKey, args.Used, args.User, null, true);
+            _slots.TryInsert(ent.Comp.MountedEntity.Value,
+                MagazineKey,
+                args.Used,
+                args.User,
+                excludeUserAudio: true);
 
             var ammoSpriteKey = WeaponMountComponentVisualLayers.MountedAmmo;
             if (TryComp(ent, out FoldableComponent? foldableComp) && foldableComp.IsFolded)
@@ -214,6 +220,13 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
 
     private void OnFoldAttempt(Entity<WeaponMountComponent> ent, ref FoldAttemptEvent args)
     {
+        // CMU14: empty tripods must not bypass the gunship's complete-mount deployment restriction.
+        if (args.Comp.IsFolded && CMUBlocksEmplacementDeployment(Transform(ent).Coordinates))
+        {
+            args.Cancelled = true;
+            return;
+        }
+
         if (Transform(ent).Anchored || ent.Comp.MountedEntity != null)
         {
             args.Cancelled = true;
@@ -222,6 +235,13 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
 
     private void OnAnchorAttempt(Entity<WeaponMountComponent> ent, ref AnchorAttemptEvent args)
     {
+        // CMU14: also reject a tripod carried aboard after being unfolded elsewhere.
+        if (CMUBlocksEmplacementDeployment(Transform(ent).Coordinates))
+        {
+            args.Cancel();
+            return;
+        }
+
         if (TryComp(ent, out FoldableComponent? foldable) && foldable.IsFolded)
         {
             args.Cancel();
@@ -427,23 +447,28 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
         if (ent.Comp.Broken)
         {
             var msg = Loc.GetString("emplacement-mount-deploy-broken", ("mount", ent));
-            _popup.PopupClient(msg, user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
             return false;
         }
 
         var direction = rotation.GetCardinalDir();
         coordinates = coordinates.Offset(direction.ToVec());
-        if (_rmcMap.IsTileBlocked(coordinates, CollisionGroup.MidImpassable))
+        if (!CMUCanDeployEmplacement(user, coordinates)) // CMU14: gunships reserve mounted weapons for hardpoints.
+            return false;
+
+        // CMU14: barricades may share the deployment tile's edges.
+        // if (_rmcMap.IsTileBlocked(coordinates, CollisionGroup.MidImpassable))
+        if (!_rmcMap.CanDeployWeaponOn(coordinates, CollisionGroup.MidImpassable, checkStructures: false))
         {
             var msg = Loc.GetString("rmc-sentry-need-open-area", ("sentry", ent));
-            _popup.PopupClient(msg, user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
             return false;
         }
 
         if (_rmcMap.HasAnchoredEntityEnumerator<WeaponMountComponent>(coordinates))
         {
             var msg = Loc.GetString("rmc-sentry-need-open-area", ("sentry", ent));
-            _popup.PopupClient(msg, user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
             return false;
         }
 
@@ -465,10 +490,11 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
 
     private void OnInteractHand(Entity<WeaponMountComponent> ent, ref InteractHandEvent args)
     {
-        if (!_combatMode.IsInCombatMode(args.User))
-            return;
+        if (_combatMode.IsInCombatMode(args.User) && TryComp(ent, out FoldableComponent? foldable) && !foldable.IsFolded)
+            args.Handled = true;
 
-        args.Handled = true;
+        if (HasComp<XenoComponent>(args.User))
+            args.Handled = true;
     }
 
     private void OnStrapAttempt(Entity<WeaponMountComponent> ent, ref StrapAttemptEvent args)
@@ -498,7 +524,8 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
             _scope.StartScoping((weapon, scope), args.Buckle);
         }
 
-        _actions.AddAction(args.Buckle, ref ent.Comp.DismountActionEntity, ent.Comp.DismountAction, args.Buckle);
+        // The mount owns this reusable action; successive operators only receive it temporarily.
+        _actions.AddAction(args.Buckle, ref ent.Comp.DismountActionEntity, ent.Comp.DismountAction, ent.Owner);
     }
 
     private void OnUnStrapped(Entity<WeaponMountComponent> ent, ref UnstrappedEvent args)
@@ -605,15 +632,17 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
                 if (slot.EjectOnInteract || slot.DisableEject)
                     continue;
 
-                if (!_slots.CanEject(uid, args.User, slot))
+                if (!_slots.CanEject(uid, slot, args.User))
                     continue;
 
                 if (!_actionBlockerSystem.CanPickup(args.User, slot.Item!.Value))
                     continue;
 
-                var verbSubject = slot.Name != string.Empty
-                    ? Loc.GetString(slot.Name)
-                    : Comp<MetaDataComponent>(slot.Item.Value).EntityName;
+                var verbSubject = slot.Name;
+                if (slot.Name == string.Empty)
+                    verbSubject = Comp<MetaDataComponent>(slot.Item.Value).EntityName;
+                else if (Loc.TryGetString(slot.Name, out var localizedName))
+                    verbSubject = localizedName;
 
                 AlternativeVerb verb = new()
                 {
@@ -655,7 +684,7 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
 
         hasNearbyMounts = false;
 
-        if (checking.TryGetComponent(out WeaponMountComponent? mountComp, _componentFactory))
+        if (checking.TryComp(out WeaponMountComponent? mountComp, _componentFactory))
         {
             foreach (var mount in mounts)
             {
@@ -668,7 +697,7 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
             }
         }
 
-        if (checking.HasComponent<BarricadeComponent>())
+        if (checking.HasComp<BarricadeComponent>(_componentFactory))
         {
             foreach (var mount in mounts)
             {
@@ -706,6 +735,10 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
     private bool TryGetNearbyMounts(Entity<MapGridComponent> grid, EntityCoordinates coordinates, out List<Entity<WeaponMountComponent>> mounts, float range = 1.5f)
     {
         mounts = new List<Entity<WeaponMountComponent>>();
+        // CMU14: zero disables exclusion; it must not construct an inverted search box.
+        if (range <= 0)
+            return false;
+
         var position = _mapSystem.LocalToTile(grid, grid, coordinates);
         var checkArea = new Box2(position.X - range + 1, position.Y - range + 1, position.X + range, position.Y + range);
         var enumerable = _mapSystem.GetLocalAnchoredEntities(grid, grid, checkArea);
@@ -750,6 +783,10 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
     /// <param name="rotationDegrees">The rotation of the mount in degrees</param>
     public void RotateMount(Entity<WeaponMountComponent> ent, EntityUid? user, int rotationDegrees = 90)
     {
+        // CMU14: Auto-positioned door guns must stay facing out of the doorway.
+        if (ent.Comp.RotationLocked)
+            return;
+
         _transform.SetLocalRotation(ent, _transform.GetWorldRotation(ent) + Angle.FromDegrees(rotationDegrees));
         _audio.PlayPredicted(ent.Comp.RotateSound, ent, user);
 
@@ -896,7 +933,7 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
         _damage.TryChangeDamage(ent, args.Args.Damage);
         if (ent.Comp.MountedEntity != null)
         {
-            _popup.PopupClient(Loc.GetString("emplacement-mounted-weapon-overheated",
+            _popup.PopupEntity(Loc.GetString("emplacement-mounted-weapon-overheated",
                     ("weapon", ent.Comp.MountedEntity.Value)),
                 ent,
                 ent.Comp.User,
@@ -975,7 +1012,7 @@ public abstract partial class SharedWeaponMountSystem : EntitySystem
 
         if (popup)
         {
-            _popup.PopupClient(Loc.GetString("emplacement-mount-need-hands-free"),
+            _popup.PopupEntity(Loc.GetString("emplacement-mount-need-hands-free"),
                 mount,
                 user,
                 PopupType.MediumCaution);

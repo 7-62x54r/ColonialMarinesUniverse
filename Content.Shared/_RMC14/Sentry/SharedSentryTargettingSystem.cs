@@ -1,13 +1,21 @@
 using System.Collections.Generic;
 using System.Linq;
 using Content.Shared._RMC14.Weapons.Ranged.IFF;
-using Content.Shared.AU14.AllianceConsole;
+using Content.Shared._RMC14.Xenonids.Construction.FloorResin; // CMU14
+using Content.Shared._RMC14.Xenonids.Hive; // CMU14
+using Content.Shared._RMC14.Xenonids.Weeds; // CMU14
+using Content.Shared.CMU14.AllianceConsole;
 using Content.Shared.Inventory;
+using Content.Shared.Mobs; // CMU14
+using Content.Shared.Mobs.Components; // CMU14
 using Content.Shared.NPC.Components;
+using Content.Shared.NPC.Prototypes; // CMU14
 using Content.Shared.Weapons.Ranged.Components;
+using Robust.Shared.Containers;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
+using Robust.Shared.Physics; // CMU14
 using Robust.Shared.Prototypes;
 
 namespace Content.Shared._RMC14.Sentry;
@@ -17,7 +25,9 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
     [Dependency] private INetManager _net = default!;
     [Dependency] private EntityLookupSystem _lookup = default!;
     [Dependency] private GunIFFSystem _iff = default!;
+    [Dependency] private IPrototypeManager _prototypes = default!; // CMU14
     [Dependency] private SharedTransformSystem _xform = default!;
+    [Dependency] private SharedContainerSystem _container = default!;
 
     private const string SentryExcludedFaction = "RMCDumb";
 
@@ -27,7 +37,10 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         { "OPFOR", "OPFOR" },
         { "Colony", "AUColonist" },
         { "Bureau", "AUBureau" },
-        { "UPP", "AUUpp" }
+        { "UPP", "AUUpp" },
+        { "AUWeYu", "FactionWEYU" },
+        { "WeYa", "FactionWEYU" },
+        { "Prodigy", "FactionProdigy" },
     };
 
     public static readonly HashSet<string> SentryAllowedFactions = SentryFactionToIff.Keys.ToHashSet();
@@ -50,36 +63,42 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         if (TryComp<NpcFactionMemberComponent>(ent.Owner, out var factionMember) && factionMember.Factions.Count > 0)
             ent.Comp.OriginalFaction = factionMember.Factions.First();
 
+        RestoreLockedFriendlyFactions(ent, true);
+
         if (!HasComp<GunIFFComponent>(ent.Owner) && HasComp<GunComponent>(ent.Owner))
             _iff.EnableIntrinsicIFF(ent);
     }
 
     private void OnTargetingStartup(Entity<SentryTargetingComponent> ent, ref ComponentStartup args)
     {
-        // Sentries begin with no faction assigned — they must be configured via multitool.
-        // Only seed FriendlyFactions if the prototype explicitly pre-populated it (non-sentry use).
-        if (_net.IsServer)
+        // Most sentries begin unconfigured. A prototype may instead define an immutable whitelist.
+        if (!RestoreLockedFriendlyFactions(ent, true) && _net.IsServer)
             ApplyTargeting(ent);
     }
 
     public void ApplyDeployerFactions(EntityUid sentry, EntityUid deployer)
     {
         var targeting = EnsureComp<SentryTargetingComponent>(sentry);
+        if (RestoreLockedFriendlyFactions((sentry, targeting), true))
+            return;
+
         targeting.FriendlyFactions.Clear();
         targeting.HumanoidAdded.Clear();
 
-        var iffFactions = new HashSet<EntProtoId<IFFFactionComponent>>();
-        var ev = new GetIFFFactionEvent(SlotFlags.IDCARD | SlotFlags.BELT | SlotFlags.POCKET, iffFactions);
+        _targetIffBuffer.Clear();
+        var ev = new GetIFFFactionEvent(SlotFlags.IDCARD | SlotFlags.BELT | SlotFlags.POCKET, _targetIffBuffer);
         RaiseLocalEvent(deployer, ref ev);
 
-        if (iffFactions.Count > 0)
+        if (_targetIffBuffer.Count > 0)
         {
             foreach (var (sentryFaction, iffFaction) in SentryFactionToIff)
             {
-                if (iffFactions.Contains(iffFaction))
+                if (_targetIffBuffer.Contains(iffFaction))
                     targeting.FriendlyFactions.Add(sentryFaction);
             }
         }
+
+        _targetIffBuffer.Clear();
 
         // Fallback to NPC faction when IFF yielded nothing (no IFF at all, or IFF not in the standard map).
         if (targeting.FriendlyFactions.Count == 0 &&
@@ -104,25 +123,73 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         Dirty(sentry, targeting);
     }
 
+    public bool TryApplyDefaultFaction(EntityUid sentry, string? faction = null)
+    {
+        if (!TryComp<SentryTargetingComponent>(sentry, out var targeting))
+            return false;
+
+        // CMU14: locked IFF is never overwritten by deployer/grid defaults
+        if (RestoreLockedFriendlyFactions((sentry, targeting), true))
+            return true;
+
+        faction = string.IsNullOrWhiteSpace(faction) ? targeting.OriginalFaction : faction;
+        var sentryFaction = SentryAllowedFactions.FirstOrDefault(allowed =>
+            allowed.Equals(faction, StringComparison.OrdinalIgnoreCase));
+        if (sentryFaction == null)
+            return false;
+
+        targeting.OriginalFaction = sentryFaction;
+        targeting.FriendlyFactions.Clear();
+        targeting.FriendlyFactions.Add(sentryFaction);
+        targeting.DeployedFriendlyFactions.Clear();
+        targeting.DeployedFriendlyFactions.Add(sentryFaction);
+        targeting.HumanoidAdded.Clear();
+
+        if (_net.IsServer)
+            ApplyTargeting((sentry, targeting));
+
+        Dirty(sentry, targeting);
+
+        // Automatic dropship assignment must notify the alliance system just like
+        // manual multitool assignment does, so previously selected standings apply now.
+        if (_net.IsServer)
+        {
+            var ev = new SentryFactionAssignedEvent(sentry);
+            RaiseLocalEvent(sentry, ref ev);
+        }
+
+        return true;
+    }
+
     public void SetFriendlyFactions(Entity<SentryTargetingComponent> ent, HashSet<string> factions)
     {
+        if (RestoreLockedFriendlyFactions(ent, true))
+            return;
+
         ent.Comp.FriendlyFactions.Clear();
         ent.Comp.HumanoidAdded.Clear();
 
-        var friendly = factions
-            .Where(f => f != SentryExcludedFaction && f != "Humanoid" && SentryAllowedFactions.Contains(f))
-            .ToHashSet();
+        var includeHumanoid = false;
+        foreach (var faction in factions)
+        {
+            if (faction == "Humanoid")
+            {
+                includeHumanoid = true;
+                continue;
+            }
 
-        if (factions.Contains("Humanoid"))
+            if (faction != SentryExcludedFaction && SentryAllowedFactions.Contains(faction))
+                ent.Comp.FriendlyFactions.Add(faction);
+        }
+
+        if (includeHumanoid)
         {
             foreach (var faction in GetHumanoidFactions())
             {
-                if (friendly.Add(faction))
+                if (ent.Comp.FriendlyFactions.Add(faction))
                     ent.Comp.HumanoidAdded.Add(faction);
             }
         }
-
-        ent.Comp.FriendlyFactions.UnionWith(friendly);
 
         if (_net.IsServer)
             ApplyTargeting(ent);
@@ -132,6 +199,9 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
 
     public void ResetToDefault(Entity<SentryTargetingComponent> ent)
     {
+        if (RestoreLockedFriendlyFactions(ent, true))
+            return;
+
         ent.Comp.FriendlyFactions.Clear();
         ent.Comp.HumanoidAdded.Clear();
 
@@ -146,6 +216,9 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
 
     public void ToggleFaction(Entity<SentryTargetingComponent> ent, string faction, bool friendly)
     {
+        if (RestoreLockedFriendlyFactions(ent, true))
+            return;
+
         if (faction == SentryExcludedFaction)
             return;
 
@@ -171,6 +244,9 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
 
     public void ToggleHumanoid(Entity<SentryTargetingComponent> ent, bool friendly)
     {
+        if (RestoreLockedFriendlyFactions(ent, true))
+            return;
+
         if (friendly)
         {
             foreach (var faction in GetHumanoidFactions())
@@ -223,17 +299,24 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         if (sentry.Comp.FriendlyFactions.Count == 0)
             return false;
 
-        // NPC factions that should never be targeted: alliance-friendly + non-IFF-mapped FriendlyFactions
+        // CMU14: factions flagged sentryProtected are never valid targets
+        if (TryComp<NpcFactionMemberComponent>(target, out var validProtected) && IsSentryProtected(validProtected))
+            return false;
+
+        // A matching NPC faction is friendly even when that faction also has an IFF mapping.
+        // This covers corporate NPCs, synthetics, and other entities that do not carry an ID.
         if (TryComp<NpcFactionMemberComponent>(target, out var targetFaction))
         {
+            // CMU14: hidden factions (CLF) are invisible to sentries. A disguised insurgent
+            // must be judged exactly like the colonist they appear to be.
             foreach (var allianceFriendly in sentry.Comp.AllianceFriendlyNpcFactions)
             {
-                if (targetFaction.Factions.Contains(allianceFriendly))
+                if (HasVisibleFaction(targetFaction, allianceFriendly.Id))
                     return false;
             }
             foreach (var faction in sentry.Comp.FriendlyFactions)
             {
-                if (!SentryFactionToIff.ContainsKey(faction) && targetFaction.Factions.Contains(faction))
+                if (HasVisibleFaction(targetFaction, faction))
                     return false;
             }
         }
@@ -245,19 +328,45 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         return !friendly;
     }
 
+    private bool IsSentryProtected(NpcFactionMemberComponent member) // CMU14 Method
+    {
+        foreach (var faction in member.Factions)
+        {
+            if (_prototypes.TryIndex(faction, out NpcFactionPrototype? proto) && proto.SentryProtected)
+                return true;
+        }
+
+        return false;
+    }
+
+    // CMU14 Method: true only when the member holds the faction and that faction is
+    // not hidden. Unknown faction protos count as visible.
+    private bool HasVisibleFaction(NpcFactionMemberComponent member, string faction)
+    {
+        foreach (var f in member.Factions)
+        {
+            if (f.Id != faction)
+                continue;
+
+            return !_prototypes.TryIndex(f, out NpcFactionPrototype? proto) || !proto.Hidden;
+        }
+
+        return false;
+    }
+
     public IEnumerable<EntityUid> GetNearbyIffHostiles(Entity<SentryTargetingComponent> ent, float range)
     {
+        // CMU14: an unconfigured sentry targets no one, matching IsValidTarget
+        if (ent.Comp.FriendlyFactions.Count == 0)
+            yield break;
+
         BuildFriendlyIff(ent.Comp);
 
-        // Build a combined set of NPC factions that should never be targeted:
-        // 1) FriendlyFactions entries that have no IFF mapping (e.g. AUWeYu)
-        // 2) Alliance-friendly factions set by the alliance console
+        // Check every friendly NPC faction so entities without wearable IFF are still protected.
         _friendlyNpcFactionBuffer.Clear();
         foreach (var faction in ent.Comp.FriendlyFactions)
-        {
-            if (!SentryFactionToIff.ContainsKey(faction))
-                _friendlyNpcFactionBuffer.Add(faction);
-        }
+            _friendlyNpcFactionBuffer.Add(faction);
+
         foreach (var faction in ent.Comp.AllianceFriendlyNpcFactions)
             _friendlyNpcFactionBuffer.Add(faction.Id);
 
@@ -272,29 +381,73 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         foreach (var target in _factionLookupBuffer)
             _candidateLookupBuffer.Add(target.Owner);
 
+        // CMU14: with a living hostile mob in range, structures drop out of the set
+        // entirely so turrets never farm resin while a xeno closes in
+        var hostileMobNearby = false;
+        foreach (var candidate in _candidateLookupBuffer)
+        {
+            if (!IsFriendlyTarget(candidate)
+                && TryComp<MobStateComponent>(candidate, out var scanMob)
+                && scanMob.CurrentState != MobState.Dead)
+            {
+                hostileMobNearby = true;
+                break;
+            }
+        }
+
         foreach (var target in _candidateLookupBuffer)
         {
             if (target == ent.Owner)
                 continue;
 
-            if (IsFriendlyByIff(target))
+            if (_container.IsEntityInContainer(target))
                 continue;
 
-            if (_friendlyNpcFactionBuffer.Count > 0 &&
-                TryComp<NpcFactionMemberComponent>(target, out var targetNpc))
-            {
-                var isFriendly = false;
-                foreach (var f in targetNpc.Factions)
-                {
-                    if (_friendlyNpcFactionBuffer.Contains(f.Id))
-                    {
-                        isFriendly = true;
-                        break;
-                    }
-                }
-                if (isFriendly)
-                    continue;
-            }
+            // CMU14: invincible hive structures void all sentry damage
+            if (HasComp<InvincibleHiveStructureComponent>(target))
+                continue;
+
+            // CMU14: replaces the per-component weed and resin filters. Projectiles only
+            // collide with hard fixtures (SharedProjectileSystem), so entities without one
+            // are overflown by sentry fire and must never be locked as targets
+            //if (HasComp<XenoWeedsComponent>(target)
+            //    || HasComp<ResinSlowdownModifierComponent>(target)
+            //    || HasComp<ResinSpeedupModifierComponent>(target))
+            //    continue;
+
+            // CMU14: mobs are always eligible, structures need a fixture bullets can hit
+            if (!HasComp<MobStateComponent>(target) && !HasHardFixture(target))
+                continue;
+
+            // CMU14: factions flagged sentryProtected are never valid targets (e.g. Provost Office)
+            if (TryComp<NpcFactionMemberComponent>(target, out var protectedNpc) && IsSentryProtected(protectedNpc))
+                continue;
+
+            if (IsFriendlyTarget(target))
+                continue;
+
+            // CMU14: replaced by IsFriendlyTarget above.
+            //if (IsFriendlyByIff(target))
+            //    continue;
+            //if (_friendlyNpcFactionBuffer.Count > 0 &&
+            //    TryComp<NpcFactionMemberComponent>(target, out var targetNpc))
+            //{
+            //    var isFriendly = false;
+            //    foreach (var f in targetNpc.Factions)
+            //    {
+            //        if (_friendlyNpcFactionBuffer.Contains(f.Id))
+            //        {
+            //            isFriendly = true;
+            //            break;
+            //        }
+            //    }
+            //    if (isFriendly)
+            //        continue;
+            //}
+
+            // CMU14: mobs out-priority structures
+            if (hostileMobNearby && !HasComp<MobStateComponent>(target))
+                continue;
 
             yield return target;
         }
@@ -307,6 +460,41 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
         _friendlyNpcFactionBuffer.Clear();
     }
 
+    // CMU14 Method
+    private bool IsFriendlyTarget(EntityUid target)
+    {
+        if (IsFriendlyByIff(target))
+            return true;
+
+        if (_friendlyNpcFactionBuffer.Count > 0
+            && TryComp<NpcFactionMemberComponent>(target, out var targetNpc))
+        {
+            foreach (var f in targetNpc.Factions)
+            {
+                // CMU14: hidden membership can never make a target friendly to the sentry
+                if (_friendlyNpcFactionBuffer.Contains(f.Id) && HasVisibleFaction(targetNpc, f.Id))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // CMU14 Method
+    private bool HasHardFixture(EntityUid target)
+    {
+        if (!TryComp<FixturesComponent>(target, out var fixtures))
+            return false;
+
+        foreach (var fixture in fixtures.Fixtures.Values)
+        {
+            if (fixture.Hard)
+                return true;
+        }
+
+        return false;
+    }
+
     private void ApplyTargeting(Entity<SentryTargetingComponent> ent)
     {
         UpdateSentryIFF(ent);
@@ -314,10 +502,11 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
 
     private void UpdateSentryIFF(Entity<SentryTargetingComponent> ent)
     {
-        if (!TryComp<UserIFFComponent>(ent.Owner, out var userIff))
-            return;
+        EnsureComp<EntityIFFComponent>(ent.Owner);
+        var userIff = EnsureComp<UserIFFComponent>(ent.Owner);
 
-        _iff.ClearUserFactions((ent.Owner, userIff));
+        foreach (var managedIff in SentryFactionToIff.Values)
+            _iff.RemoveUserFaction((ent.Owner, userIff), managedIff);
 
         foreach (var faction in ent.Comp.FriendlyFactions)
         {
@@ -342,6 +531,9 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
     /// </summary>
     public void ApplyAllianceFactions(EntityUid sentryUid, SentryTargetingComponent targeting, IEnumerable<string> friendlyNpcFactions)
     {
+        if (RestoreLockedFriendlyFactions((sentryUid, targeting), true))
+            return;
+
         targeting.AllianceFriendlyNpcFactions.Clear();
         foreach (var f in friendlyNpcFactions)
             targeting.AllianceFriendlyNpcFactions.Add(f);
@@ -394,6 +586,9 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
     /// </summary>
     public void ClearFactionAssignment(Entity<SentryTargetingComponent> ent)
     {
+        if (RestoreLockedFriendlyFactions(ent, true))
+            return;
+
         ent.Comp.FriendlyFactions.Clear();
         ent.Comp.DeployedFriendlyFactions.Clear();
         ent.Comp.HumanoidAdded.Clear();
@@ -402,6 +597,32 @@ public abstract partial class SharedSentryTargetingSystem : EntitySystem
             ApplyTargeting(ent);
 
         Dirty(ent.Owner, ent.Comp);
+    }
+
+    /// <summary>
+    /// Restores a prototype-defined immutable faction whitelist.
+    /// </summary>
+    private bool RestoreLockedFriendlyFactions(Entity<SentryTargetingComponent> ent, bool updateDeployed)
+    {
+        if (ent.Comp.LockedFriendlyFactions.Count == 0)
+            return false;
+
+        ent.Comp.FriendlyFactions.Clear();
+        ent.Comp.FriendlyFactions.UnionWith(ent.Comp.LockedFriendlyFactions);
+        ent.Comp.HumanoidAdded.Clear();
+        ent.Comp.AllianceFriendlyNpcFactions.Clear();
+
+        if (updateDeployed)
+        {
+            ent.Comp.DeployedFriendlyFactions.Clear();
+            ent.Comp.DeployedFriendlyFactions.UnionWith(ent.Comp.LockedFriendlyFactions);
+        }
+
+        if (_net.IsServer)
+            ApplyTargeting(ent);
+
+        Dirty(ent.Owner, ent.Comp);
+        return true;
     }
 
     /// <summary>

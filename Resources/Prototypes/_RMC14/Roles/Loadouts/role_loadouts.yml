@@ -9,6 +9,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -18,7 +19,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -33,6 +34,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -42,7 +44,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -57,6 +59,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -66,7 +69,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -81,6 +84,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -90,7 +94,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -105,6 +109,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -114,7 +119,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -133,6 +138,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesCommandingOfficerRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -142,7 +148,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -157,6 +163,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesLiaisonRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -166,7 +173,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -181,6 +188,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -190,7 +198,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -206,6 +214,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -215,7 +224,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -230,6 +239,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -239,7 +249,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -254,6 +264,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -263,7 +274,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -279,6 +290,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -288,7 +300,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -303,6 +315,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -312,7 +325,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -327,6 +340,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -336,7 +350,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -351,6 +365,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -360,7 +375,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -375,6 +390,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -384,7 +400,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -399,6 +415,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -408,7 +425,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -423,6 +440,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -432,7 +450,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -448,6 +466,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -457,7 +476,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -472,6 +491,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -481,7 +501,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -505,7 +525,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
 
@@ -519,6 +539,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -528,7 +549,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -543,6 +564,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesLiaisonRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -552,7 +574,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -578,7 +600,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -594,6 +616,7 @@
   - ChiefMPRoleSpecificRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -603,7 +626,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -618,6 +641,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -627,7 +651,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -642,6 +666,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -651,7 +676,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -667,6 +692,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesLiaisonRMC
   - PaperworkRMC
   - RecreationalRMC
   - WeaponsRMC
@@ -675,7 +701,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -684,13 +710,14 @@
   id: JobCMLiaison
   points: 7
   groups:
-  - MarineLeatherBackpack
+  - LiaisonBackpackRMC
   - LiaisonRoleSpecificRMC
   - HeadwearRMC
   - EyewearRMC
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesLiaisonRMC
   - PaperworkRMC
   - RecreationalRMC
   - WeaponsRMC
@@ -699,7 +726,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -714,6 +741,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -723,7 +751,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -738,6 +766,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesCommandingOfficerRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -747,7 +776,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -762,13 +791,14 @@
   - SynthMasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesSynthRMC
   - SynthUniformRMC
   - SynthUniformAccessoriesRMC
   - SynthSuitsRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -784,6 +814,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -793,7 +824,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -808,6 +839,7 @@
   - MasksRMC
   - HelmetGarbsRMC
   - AccessoriesRMC
+  - WatchesBasicRMC
   - PaperworkRMC
   - RecreationalRMC
   - PlushiesRMC
@@ -817,7 +849,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -836,7 +868,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -854,7 +886,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -872,7 +904,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -890,7 +922,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -908,7 +940,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -926,7 +958,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -944,7 +976,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - CivilianOnlyRMC
@@ -962,7 +994,7 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC
   - MiscellaneousRMC
   - MeleeWeaponsRMC
@@ -981,7 +1013,7 @@
   - AccessoriesRMCPVE
   - PlushiesRMC
   - WeaponsRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
 
 - type: roleLoadout
   id: JobCMPVEHospitalCorpsman
@@ -995,7 +1027,7 @@
   - AccessoriesRMCPVE
   - PlushiesRMC
   - WeaponsRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
 
 - type: roleLoadout
   id: JobCMPVESmartGunOperator
@@ -1009,7 +1041,7 @@
   - AccessoriesRMCPVE
   - PlushiesRMC
   - WeaponsRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
 
 - type: roleLoadout
   id: JobCMPVESquadLeader
@@ -1023,7 +1055,7 @@
   - AccessoriesRMCPVE
   - PlushiesRMC
   - WeaponsRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
 
 - type: roleLoadout
   id: JobCMPVESectionSergeant
@@ -1037,7 +1069,7 @@
   - AccessoriesRMCPVE
   - PlushiesRMC
   - WeaponsRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
 
 - type: roleLoadout
   id: JobCMPVEPlatoonCommander
@@ -1050,10 +1082,10 @@
   - AccessoriesRMCPVE
   - PlushiesRMC
   - WeaponsRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
 
 - type: roleLoadout
-  id: AU14JobCiviliannspaConstable
+  id: AU14JobCivilianNSPAConstable
   points: 7
   groups:
   - EyewearRMC
@@ -1064,5 +1096,5 @@
   - FoodSweetsRMC
   - FoodPackagedRMC
   - FoodHealthyRMC
-  - RMCLoadoutGroupPins
+  # - RMCLoadoutGroupPins # CMU14: moved to CMUGlobalLoadout.
   - SmokablesRMC

@@ -8,6 +8,7 @@ using Content.Shared._RMC14.Xenonids.Crest;
 using Content.Shared._RMC14.Xenonids.Fortify;
 using Content.Shared.Coordinates;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Effects;
 using Content.Shared.FixedPoint;
 using Content.Shared.Interaction;
@@ -61,7 +62,7 @@ public sealed partial class XenoHeadbuttSystem : EntitySystem
 
         if (TryComp<XenoCrestComponent>(xeno, out var crest) && crest.Lowered && !_interaction.InRangeUnobstructed(xeno.Owner, args.Target))
         {
-            _popup.PopupClient(Loc.GetString("rmc-xeno-headbutt-too-far"), xeno, xeno, PopupType.SmallCaution);
+            _popup.PopupEntity(Loc.GetString("rmc-xeno-headbutt-too-far"), xeno, xeno, PopupType.SmallCaution);
             return;
         }
 
@@ -86,7 +87,15 @@ public sealed partial class XenoHeadbuttSystem : EntitySystem
         Dirty(xeno);
 
         _rmcObstacleSlamming.MakeImmune(xeno);
-        _throwing.TryThrow(xeno, diff);
+
+        if (TryComp<PhysicsComponent>(xeno, out var physics))
+        {
+            // Prevent headbutt from having longer/shorter range or skewed direction
+            // based on the xeno's movement when using it.
+            _physics.ResetDynamics(xeno, physics);
+        }
+
+        _throwing.TryThrow(xeno, diff, doSpin: false);
     }
 
     private void OnXenoHeadbuttHit(Entity<XenoHeadbuttComponent> xeno, ref ThrowDoHitEvent args)

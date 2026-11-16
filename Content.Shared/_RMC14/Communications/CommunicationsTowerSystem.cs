@@ -1,4 +1,5 @@
 using System.Linq;
+using Content.Shared.CMU14.ZLevels.Core.Components;
 using Content.Shared._RMC14.Dialog;
 using Content.Shared._RMC14.Intel;
 using Content.Shared._RMC14.Power;
@@ -7,12 +8,14 @@ using Content.Shared._RMC14.Weapons.Ranged.IFF;
 using Content.Shared._RMC14.Xenonids.ManageHive.Boons;
 using Content.Shared.Administration.Logs;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Database;
 using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
 using Content.Shared.Examine;
 using Content.Shared.FixedPoint;
 using Content.Shared.Interaction;
+using Content.Shared.Inventory;
 using Content.Shared.Popups;
 using Content.Shared.Power;
 using Content.Shared.Radio;
@@ -28,6 +31,7 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
     [Dependency] private ISharedAdminLogManager _adminLog = default!;
     [Dependency] private SharedAppearanceSystem _appearance = default!;
     [Dependency] private IComponentFactory _compFactory = default!;
+    [Dependency] private DamageableSystem _damageable = default!;
     [Dependency] private DialogSystem _dialog = default!;
     [Dependency] private SharedDoAfterSystem _doAfter = default!;
     [Dependency] private HiveBoonSystem _hiveBoon = default!;
@@ -40,7 +44,7 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
     [Dependency] private SharedRMCPowerSystem _rmcPower = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
 
-    private readonly Dictionary<EntProtoId, List<Entity<CommunicationsTowerSpawnerComponent>>> _spawners = new();
+    private readonly Dictionary<CommunicationsTowerSpawnerGroup, List<Entity<CommunicationsTowerSpawnerComponent>>> _spawners = new();
 
     public override void Initialize()
     {
@@ -63,7 +67,7 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
 
     private void OnTowerDamageChanged(Entity<CommunicationsTowerComponent> ent, ref DamageChangedEvent args)
     {
-        if (args.Damageable.TotalDamage > FixedPoint2.Zero)
+        if (_damageable.GetTotalDamage((ent, args.Damageable)) > FixedPoint2.Zero)
             return;
 
         if (ent.Comp.State != CommunicationsTowerState.Broken)
@@ -151,7 +155,7 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
 
         args.Handled = true;
         var msg = $"You wipe the preexisting frequencies from the {Name(ent)}.";
-        _popup.PopupClient(msg, ent, args.User, PopupType.Medium);
+        _popup.PopupEntity(msg, ent, args.User, PopupType.Medium);
         ent.Comp.Faction = string.Empty;
         ent.Comp.Channels.Clear();
     }
@@ -165,12 +169,12 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
             return;
 
         var factions = new HashSet<EntProtoId<IFFFactionComponent>>();
-        if (_gunIFF.TryGetFactions(args.User, factions))
+        if (_gunIFF.TryGetFactions(args.User, factions, SlotFlags.IDCARD | SlotFlags.EARS))
         {
             foreach (var faction in factions)
             {
                 if (_prototypes.TryIndex(faction, out var factionProto) &&
-                    factionProto.TryGetComponent(out FactionFrequenciesComponent? frequencies, _compFactory))
+                    factionProto.TryComp(out FactionFrequenciesComponent? frequencies, _compFactory))
                 {
                     ent.Comp.Channels.UnionWith(frequencies.Channels);
                 }
@@ -182,7 +186,7 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
 
         args.Handled = true;
         var msg = $"You add your faction's communication frequencies to the {Name(ent)}'s comm list.";
-        _popup.PopupClient(msg, ent, args.User, PopupType.Medium);
+        _popup.PopupEntity(msg, ent, args.User, PopupType.Medium);
         ent.Comp.Faction = factions.FirstOrDefault().ToString() ?? string.Empty;
     }
 
@@ -190,13 +194,13 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
     {
         if (ent.Comp.State == CommunicationsTowerState.Broken)
         {
-            _popup.PopupClient($"{Name(ent)} needs repairs to be turned back on!", ent, args.User, PopupType.MediumCaution);
+            _popup.PopupEntity($"{Name(ent)} needs repairs to be turned back on!", ent, args.User, PopupType.MediumCaution);
             return;
         }
 
         if (!_rmcPower.IsPowered(ent))
         {
-            _popup.PopupClient($"{Name(ent)} makes a small plaintful beep, and nothing happens. It seems to be out of power.", ent, args.User, PopupType.MediumCaution);
+            _popup.PopupEntity($"{Name(ent)} makes a small plaintful beep, and nothing happens. It seems to be out of power.", ent, args.User, PopupType.MediumCaution);
             return;
         }
 
@@ -262,13 +266,13 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
         UpdateAppearance(tower);
     }
 
-    public bool CanTransmit(ProtoId<RadioChannelPrototype> channel)
+    public bool CanTransmit(ProtoId<RadioChannelPrototype>? channel = null)
     {
         var towers = EntityQueryEnumerator<CommunicationsTowerComponent>();
         while (towers.MoveNext(out var tower))
         {
             if (tower.State != CommunicationsTowerState.On ||
-                !tower.Channels.Contains(channel))
+                channel != null && !tower.Channels.Contains(channel.Value))
             {
                 continue;
             }
@@ -284,6 +288,25 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
         _appearance.SetData(tower, CommunicationsTowerLayers.Layer, tower.Comp.State);
     }
 
+    private static bool TryGetSpawnerScope(EntityUid? mapUid, CMUZLevelMapComponent? zMap, out EntityUid scope)
+    {
+        scope = default;
+        if (mapUid is not { } map)
+            return false;
+
+        if (zMap == null)
+        {
+            scope = map;
+            return true;
+        }
+
+        if (!zMap.NetworkUid.IsValid())
+            return false;
+
+        scope = zMap.NetworkUid;
+        return true;
+    }
+
     public override void Update(float frameTime)
     {
         if (_net.IsClient)
@@ -296,8 +319,19 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
             if (TerminatingOrDeleted(uid) || EntityManager.IsQueuedForDeletion(uid))
                 continue;
 
+            var xform = Transform(uid);
+            CMUZLevelMapComponent? zMap = null;
+            if (xform.MapUid is { } mapUid)
+                TryComp(mapUid, out zMap);
+
+            if (!TryGetSpawnerScope(xform.MapUid, zMap, out var scope) ||
+                TerminatingOrDeleted(scope))
+            {
+                continue;
+            }
+
             QueueDel(uid);
-            _spawners.GetOrNew(spawner.Group).Add((uid, spawner));
+            _spawners.GetOrNew(new CommunicationsTowerSpawnerGroup(scope, spawner.Group)).Add((uid, spawner));
         }
 
         foreach (var spawners in _spawners.Values)
@@ -309,4 +343,6 @@ public sealed partial class CommunicationsTowerSystem : EntitySystem
             Spawn(spawner.Comp.Spawn, _transform.GetMoverCoordinates(spawner));
         }
     }
+
+    private readonly record struct CommunicationsTowerSpawnerGroup(EntityUid Scope, EntProtoId Group);
 }

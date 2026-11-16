@@ -1,5 +1,5 @@
 using Content.Shared._RMC14.Input;
-using Content.Shared._CMU14.Input;
+using Content.Shared.CMU14.Input;
 using Content.Shared.Input;
 using Robust.Shared.Input;
 
@@ -36,10 +36,14 @@ namespace Content.Client.Input
             common.AddFunction(ContentKeyFunctions.RotateStoredItem);
             common.AddFunction(ContentKeyFunctions.SaveItemLocation);
             common.AddFunction(ContentKeyFunctions.Point);
+            common.AddFunction(ContentKeyFunctions.RotateCameraWithMouse);
+            common.AddFunction(CMUKeyFunctions.CMUToggleFirstPersonMouse); // CMU14
             common.AddFunction(ContentKeyFunctions.ZoomOut);
             common.AddFunction(ContentKeyFunctions.ZoomIn);
             common.AddFunction(ContentKeyFunctions.ResetZoom);
             common.AddFunction(ContentKeyFunctions.InspectEntity);
+            common.AddFunction(ContentKeyFunctions.InspectServerComponent);
+            common.AddFunction(ContentKeyFunctions.InspectClientComponent);
             common.AddFunction(ContentKeyFunctions.ToggleRoundEndSummaryWindow);
 
             // Not in engine, because engine cannot check for sanbox/admin status before starting placement.
@@ -48,15 +52,13 @@ namespace Content.Client.Input
             // Not in engine because the engine doesn't understand what a flipped object is
             common.AddFunction(ContentKeyFunctions.EditorFlipObject);
 
-            // Not in engine so that the RCD can rotate objects
-            common.AddFunction(EngineKeyFunctions.EditorRotateObject);
-
             var human = contexts.GetContext("human");
             human.AddFunction(EngineKeyFunctions.MoveUp);
             human.AddFunction(EngineKeyFunctions.MoveDown);
             human.AddFunction(EngineKeyFunctions.MoveLeft);
             human.AddFunction(EngineKeyFunctions.MoveRight);
             human.AddFunction(EngineKeyFunctions.Walk);
+            // human.AddFunction(ContentKeyFunctions.ToggleKnockdown); // CMU14: vanilla prone removed
             human.AddFunction(ContentKeyFunctions.SwapHands);
             human.AddFunction(ContentKeyFunctions.SwapHandsReverse);
             human.AddFunction(ContentKeyFunctions.Drop);
@@ -74,9 +76,16 @@ namespace Content.Client.Input
             human.AddFunction(ContentKeyFunctions.OpenInventoryMenu);
             human.AddFunction(ContentKeyFunctions.SmartEquipBackpack);
             human.AddFunction(ContentKeyFunctions.SmartEquipBelt);
+            human.AddFunction(ContentKeyFunctions.SmartEquipPocket1);
+            human.AddFunction(ContentKeyFunctions.SmartEquipPocket2);
+            human.AddFunction(ContentKeyFunctions.SmartEquipSuitStorage);
+            // RMC14
+            human.AddFunction(ContentKeyFunctions.SmartEquipUniform);
+            human.AddFunction(ContentKeyFunctions.SmartEquipArmor);
+            human.AddFunction(ContentKeyFunctions.SmartEquipHelmet);
+            // RMC14
             human.AddFunction(ContentKeyFunctions.OpenBackpack);
             human.AddFunction(ContentKeyFunctions.OpenBelt);
-            human.AddFunction(ContentKeyFunctions.MouseMiddle);
             human.AddFunction(ContentKeyFunctions.RotateObjectClockwise);
             human.AddFunction(ContentKeyFunctions.RotateObjectCounterclockwise);
             human.AddFunction(ContentKeyFunctions.FlipObject);
@@ -128,7 +137,6 @@ namespace Content.Client.Input
             common.AddFunction(ContentKeyFunctions.OpenAdminMenu);
             common.AddFunction(ContentKeyFunctions.OpenGuidebook);
 
-
             CMFunctions(contexts);
         }
 
@@ -149,9 +157,35 @@ namespace Content.Client.Input
             human.AddFunction(CMKeyFunctions.RMCPickUpDroppedItems);
             human.AddFunction(CMKeyFunctions.RMCInteractWithOtherHand);
             human.AddFunction(CMKeyFunctions.RMCRest);
+            human.AddFunction(CMUKeyFunctions.CMUOpenWornStorage); // CMU14
             human.AddFunction(CMUKeyFunctions.CMUCycleBodyZoneTarget);
             human.AddFunction(CMUKeyFunctions.CMUCycleBodyZoneTargetReverse);
+            human.AddFunction(CMUKeyFunctions.CMUTargetBodyZoneHead);
+            human.AddFunction(CMUKeyFunctions.CMUTargetBodyZoneTorso);
+            human.AddFunction(CMUKeyFunctions.CMUTargetBodyZoneLeftArm);
+            human.AddFunction(CMUKeyFunctions.CMUTargetBodyZoneRightArm);
+            human.AddFunction(CMUKeyFunctions.CMUTargetBodyZoneLeftLeg);
+            human.AddFunction(CMUKeyFunctions.CMUTargetBodyZoneRightLeg);
+            human.AddFunction(CMUKeyFunctions.CMUOpenMedicalCraftingMenu);
             human.AddFunction(CMUKeyFunctions.CMUToggleShootDownZLevel);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipForward);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipBack);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipLeft);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipRight);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipRotateLeft);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipRotateRight);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipAscend);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipDescend);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipCycleCamera);
+            human.AddFunction(CMUKeyFunctions.CMUGunshipTogglePanning);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot1);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot2);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot3);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot4);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot5);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot6);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot7);
+            human.AddFunction(CMUKeyFunctions.CMUEmoteSlot8);
 
             //Xenonid
             var xenonid = contexts.New("xenonid", "human");

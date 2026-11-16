@@ -20,7 +20,7 @@ namespace Content.Client.Changelog
         [Dependency] private IConfigurationManager _configManager = default!;
 
         private const string SawmillName = "changelog";
-        public const string MainChangelogName = "Changelog";
+        public const string MainChangelogName = "CMU";
 
         private ISawmill _sawmill = default!;
 
@@ -43,7 +43,7 @@ namespace Content.Client.Changelog
             NewChangelogEntries = false;
             NewChangelogEntriesChanged?.Invoke();
 
-            using var sw = _resource.UserData.OpenWriteText(new ($"/changelog_last_seen_{_configManager.GetCVar(CCVars.ServerId)}"));
+            using var sw = _resource.UserData.OpenWriteText(new($"/changelog_last_seen_{_configManager.GetCVar(CCVars.ServerId)}"));
 
             sw.Write(MaxId.ToString());
         }
@@ -53,6 +53,7 @@ namespace Content.Client.Changelog
             // Open changelog purely to compare to the last viewed date.
             var changelogs = await LoadChangelog();
             UpdateChangelogs(changelogs);
+            _configManager.OnValueChanged(CCVars.ServerId, OnServerIdCVarChanged);
         }
 
         private void UpdateChangelogs(List<Changelog> changelogs)
@@ -82,6 +83,11 @@ namespace Content.Client.Changelog
 
             MaxId = changelog.Entries.Max(c => c.Id);
 
+            CheckLastSeenEntry();
+        }
+
+        private void CheckLastSeenEntry()
+        {
             var path = new ResPath($"/changelog_last_seen_{_configManager.GetCVar(CCVars.ServerId)}");
             if (_resource.UserData.TryReadAllText(path, out var lastReadIdText))
             {
@@ -93,15 +99,25 @@ namespace Content.Client.Changelog
             NewChangelogEntriesChanged?.Invoke();
         }
 
+        private void OnServerIdCVarChanged(string newValue)
+        {
+            CheckLastSeenEntry();
+        }
+
         public Task<List<Changelog>> LoadChangelog()
         {
             return Task.Run(() =>
             {
                 var changelogs = new List<Changelog>();
                 var directory = new ResPath("/Changelog");
+                var excludedFiles = new HashSet<string>() { "Admin", "Changelog", "Maps", "RMC14" };
                 foreach (var file in _resource.ContentFindFiles(new ResPath("/Changelog/")))
                 {
                     if (file.Directory != directory || file.Extension != "yml")
+                        continue;
+
+                    // CMU exclude upstream stale data
+                    if (excludedFiles.Contains(file.FilenameWithoutExtension))
                         continue;
 
                     var yamlData = _resource.ContentFileReadYaml(file);
@@ -185,17 +201,23 @@ namespace Content.Client.Changelog
         [DataDefinition]
         public sealed partial class ChangelogEntry
         {
-            [DataField("id")]
+            [DataField]
             public int Id { get; private set; }
 
-            [DataField("author")]
+            [DataField]
             public string Author { get; private set; } = "";
 
             [DataField]
             public DateTime Time { get; private set; }
 
-            [DataField("changes")]
+            [DataField]
             public List<ChangelogChange> Changes { get; private set; } = default!;
+
+            /// <summary>
+            ///     Labels attached to the related PR, passed on via the SS14.Changelog parser.
+            /// </summary>
+            [DataField]
+            public List<string> Labels { get; private set; } = [];
         }
 
         [DataDefinition]

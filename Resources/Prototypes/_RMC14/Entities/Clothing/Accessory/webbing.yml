@@ -584,6 +584,7 @@
       - RMCNailgunTactical
       - RMCSynthResetKey
       - RodMetal1
+      - LightReplacer
       components:
       - Welder
       - PowerCell
@@ -655,7 +656,7 @@
     - id: CMWrench
     - id: RMCWelderIndustrial
     - id: CMCrowbar
-    - id: RMCCableCoil30
+    - id: CMUCableThinLVStack # CMU14: replaces RMCCableCoil30, thin LV cable
     - id: CMMultitool
 
 - type: entity
@@ -732,7 +733,7 @@
     - id: CMWelder
     - id: CMCrowbar
     - id: CMWirecutter
-    - id: RMCCableCoil30
+    - id: CMUCableThinLVStack # CMU14: replaces RMCCableCoil30, thin LV cable
     - id: CMMultitool
 
 - type: entity
@@ -942,28 +943,28 @@
     - type: Storage
       maxItemSize: Small
       grid:
-      - 0,0,13,3 # 14 slots
+      - 0,0,15,3 # CMU14: 16 slots so the cast fits
       whitelist:
         tags:
         - CMTraumaKit
-        - CMBurnKit
+        - CMBurnKit # CMU14
         - CMSurgicalLine
         - CMSynthGraft
-        - CMUCastItem
+        - CMUCastItem # CMU14
         components:
         - CMSurgeryTool
     - type: FixedItemSizeStorage
   - type: Storage
     maxItemSize: Small
     grid:
-    - 0,0,13,3 # 14 slots
+    - 0,0,15,3 # CMU14: 16 slots so the cast fits
     whitelist:
       tags:
       - CMTraumaKit
-      - CMBurnKit
+      - CMBurnKit # CMU14
       - CMSurgicalLine
       - CMSynthGraft
-      - CMUCastItem
+      - CMUCastItem # CMU14
       components:
       - CMSurgeryTool
   - type: FixedItemSizeStorage
@@ -979,10 +980,11 @@
     - id: CMBoneGel
     - id: CMBonesetter
     - id: CMUBoneGraftItem
+    - id: CMUFixOVein
     - id: CMUOrganClampItem
     - id: CMSurgicalLine
     - id: CMSynthGraft
-    - id: CMUCastItem
+    - id: CMUCastItem # CMU14
 - type: entity
   parent: CMWebbingBase
   id: CMWebbingSurgicalBlue
@@ -998,28 +1000,28 @@
     - type: Storage
       maxItemSize: Small
       grid:
-      - 0,0,13,3 # 14 slots
+      - 0,0,15,3 # CMU14: 16 slots so the cast fits
       whitelist:
         tags:
         - CMTraumaKit
-        - CMBurnKit
+        - CMBurnKit # CMU14
         - CMSurgicalLine
         - CMSynthGraft
-        - CMUCastItem
+        - CMUCastItem # CMU14
         components:
         - CMSurgeryTool
     - type: FixedItemSizeStorage
   - type: Storage
     maxItemSize: Small
     grid:
-    - 0,0,13,3 # 14 slots
+    - 0,0,15,3 # CMU14: 16 slots so the cast fits
     whitelist:
       tags:
       - CMTraumaKit
-      - CMBurnKit
+      - CMBurnKit # CMU14
       - CMSurgicalLine
       - CMSynthGraft
-      - CMUCastItem
+      - CMUCastItem # CMU14
       components:
       - CMSurgeryTool
   - type: FixedItemSizeStorage
@@ -1035,10 +1037,11 @@
     - id: CMBoneGel
     - id: CMBonesetter
     - id: CMUBoneGraftItem
+    - id: CMUFixOVein
     - id: CMUOrganClampItem
     - id: CMSurgicalLine
     - id: CMSynthGraft
-    - id: CMUCastItem
+    - id: CMUCastItem # CMU14
 - type: entity
   parent: RMCWebbingDropPouch
   id: RMCToolDropPouchFilled
@@ -1068,7 +1071,7 @@
     - id: CMWelder
     - id: CMCrowbar
     - id: CMWirecutter
-    - id: RMCCableCoil30
+    - id: CMUCableThinLVStack # CMU14: replaces RMCCableCoil30, thin LV cable
     - id: CMMultitool
 
 - type: entity
@@ -1125,6 +1128,7 @@
     - id: CMBoneGel
     - id: CMBonesetter
     - id: CMUBoneGraftItem
+    - id: CMUFixOVein
     - id: CMUOrganClampItem
     - id: CMSurgicalLine
     - id: CMSynthGraft

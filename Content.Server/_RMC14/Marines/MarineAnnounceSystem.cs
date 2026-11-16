@@ -5,6 +5,8 @@ using Content.Server.Chat.Managers;
 using Content.Server.Radio.EntitySystems;
 using Content.Shared._RMC14.AlertLevel;
 using Content.Shared._RMC14.Announce;
+using Content.Shared._RMC14.ARES;
+using Content.Shared._RMC14.ARES.Logs;
 using Content.Shared._RMC14.Dropship;
 using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Marines.Announce;
@@ -13,7 +15,7 @@ using Content.Shared._RMC14.Rules;
 using Content.Shared._RMC14.Survivor;
 using Content.Shared.Chat;
 using Content.Shared.Database;
-using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
 using Content.Shared.Radio;
 using Robust.Server.Audio;
 using Robust.Shared.Audio;
@@ -29,12 +31,15 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
     [Dependency] private IAdminLogManager _adminLogs = default!;
     [Dependency] private AudioSystem _audio = default!;
     [Dependency] private IChatManager _chatManager = default!;
+    [Dependency] private ARESCoreSystem _core = default!;
     [Dependency] private CMDistressSignalRuleSystem _distressSignal = default!;
     [Dependency] private SharedDropshipSystem _dropship = default!;
     [Dependency] private GeneralAnnounceSystem _generalAnnounce = default!;
     [Dependency] private RadioSystem _radio = default!;
     [Dependency] private SquadSystem _squad = default!;
     [Dependency] private SharedUserInterfaceSystem _ui = default!;
+
+    private static readonly EntProtoId<ARESLogTypeComponent> LogCat = "ARESTabAnnouncementLogs";
 
     public override void Initialize()
     {
@@ -86,6 +91,7 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
             _dropship.SetFactionController(lz.Value, computer.Comp.Faction!.ToLowerInvariant());
 
         _dropship.TryDesignatePrimaryLZ(user, lz.Value);
+        _core.CreateARESLog(computer, LogCat, (string) $"{Name(args.Actor)} designated Primary LZ as: {Name(lz.Value)}");
     }
 
     private void UpdatePlanetMap(Entity<MarineCommunicationsComputerComponent> computer)
@@ -109,7 +115,9 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
 
         landingZones.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.Ordinal));
 
-        var state = new MarineCommunicationsComputerBuiState(planet, operation, landingZones);
+        // CMU14: Force on Force roles, hijacking, announcements and identification.
+        var forceOnForce = EntityManager.System<Content.Server.GameTicking.GameTicker>().CurrentPreset?.ID.Equals("ForceOnForce", StringComparison.OrdinalIgnoreCase) == true;
+        var state = new MarineCommunicationsComputerBuiState(planet, operation, landingZones, forceOnForce);
         _ui.SetUiState(computer.Owner, MarineCommunicationsComputerUI.Key, state);
     }
 
@@ -122,12 +130,14 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
     {
         if (filter == null)
         {
-            var targetFaction = string.IsNullOrWhiteSpace(faction) ? "govfor" : faction.ToLowerInvariant();
+            var targetFaction = ResolveAnnouncementFaction(faction);
             filter = Filter.Empty().AddWhereAttachedEntity(e =>
             {
+                if (IsCMUAnnouncementExcluded(e)) // CMU14
+                    return false;
+
                 if (TryComp<MarineComponent>(e, out var marine))
-                    return !string.IsNullOrWhiteSpace(marine.Faction) &&
-                           string.Equals(marine.Faction, targetFaction, StringComparison.OrdinalIgnoreCase);
+                    return IsMarineAnnouncementRecipient(marine.Faction, targetFaction);
 
                 return HasComp<GhostComponent>(e);
             });
@@ -166,11 +176,12 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
         string message,
         SoundSpecifier? sound = null,
         LocId? announcement = null,
-        string? faction = null)
+        string? faction = null,
+        string? ship = null) // CMU14: header name for the ares-map announcement
     {
-        base.AnnounceARESStaging(source, message, sound, announcement, faction);
+        base.AnnounceARESStaging(source, message, sound, announcement, faction, ship);
 
-        message = FormatARESStaging(announcement, message);
+        message = FormatARESStaging(announcement, message, ship);
 
         var filter = string.IsNullOrWhiteSpace(faction)
             ? BuildAllMarineAnnouncementFilter()
@@ -242,12 +253,14 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
 
     private Filter BuildMarineAnnouncementFilter(string? faction)
     {
-        var targetFaction = string.IsNullOrWhiteSpace(faction) ? "govfor" : faction.ToLowerInvariant();
+        var targetFaction = ResolveAnnouncementFaction(faction);
         return Filter.Empty().AddWhereAttachedEntity(e =>
         {
+            if (IsCMUAnnouncementExcluded(e)) // CMU14
+                return false;
+
             if (TryComp<MarineComponent>(e, out var marine))
-                return !string.IsNullOrWhiteSpace(marine.Faction) &&
-                       string.Equals(marine.Faction, targetFaction, StringComparison.OrdinalIgnoreCase);
+                return IsMarineAnnouncementRecipient(marine.Faction, targetFaction);
 
             return HasComp<GhostComponent>(e);
         });
@@ -336,6 +349,7 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
             RMCAlertLevels.Green => Color.LawnGreen,
             RMCAlertLevels.Blue => Color.DodgerBlue,
             RMCAlertLevels.Red => Color.Red,
+            RMCAlertLevels.Black => Color.DimGray, // CMU14: darkened ship
             RMCAlertLevels.Delta => Color.DarkRed,
             _ => Color.White
         };
@@ -345,6 +359,7 @@ public sealed partial class MarineAnnounceSystem : SharedMarineAnnounceSystem
             RMCAlertLevels.Green => null,
             RMCAlertLevels.Blue => "bluealert",
             RMCAlertLevels.Red => "redalert",
+            RMCAlertLevels.Black => "redalert", // CMU14: darkened ship rides the red decal
             RMCAlertLevels.Delta => "evac",
             _ => "default"
         };

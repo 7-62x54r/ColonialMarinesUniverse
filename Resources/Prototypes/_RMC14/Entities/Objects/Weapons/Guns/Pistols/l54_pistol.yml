@@ -14,7 +14,7 @@
     sprite: _RMC14/Objects/Weapons/Guns/Pistols/l54.rsi
   - type: Gun
     soundGunshot:
-      path: /Audio/_RMC14/Weapons/Guns/Gunshots/gun_mk80.ogg
+      collection: AU14L54FireSound
   - type: ItemSlots
     slots:
       gun_magazine:
@@ -68,7 +68,9 @@
       map: ["enum.GunVisualLayers.Mag"]
   - type: MagazineVisuals
     magState: mag
-
+  - type: RefillableByBulletBox
+    bulletType: CMUBoxBulletsPistol9MM
+    
 - type: Tag
   id: RMCWeaponPistolL54
 

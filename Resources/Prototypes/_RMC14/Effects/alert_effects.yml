@@ -1,4 +1,4 @@
-﻿- type: entity
+- type: entity
   id: RMCEffectAlert
   categories: [ HideSpawnMenu ]
   components:
@@ -11,6 +11,18 @@
   - type: Tag
     tags:
     - HideContextMenu
+
+- type: entity
+  parent: RMCEffectAlert
+  id: RMCHijackPipeExplosionWarning
+  name: explosive warning
+  components:
+  # CMU14: queued pipes own their warnings, including barrages that take multiple ticks.
+  # - type: TimedDespawn
+  #   lifetime: 5
+  - type: Sprite
+    state: alert_greyscale
+    color: "#ff0000"
 
 - type: entity
   id: RMCActiveAlertEffect

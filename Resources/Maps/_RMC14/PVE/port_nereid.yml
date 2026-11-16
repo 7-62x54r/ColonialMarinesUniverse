@@ -153082,7 +153082,7 @@ entities:
           showEnts: False
           occludes: True
           ent: null
-- proto: RMCCableCoil20
+- proto: CMUCableThinLVStack20 # CMU14: replaced RMCCableCoil20, thin LV cable
   entities:
   - uid: 1902
     components:
@@ -153327,7 +153327,7 @@ entities:
     - type: Transform
       pos: -28.5,107.5
       parent: 1
-- proto: RMCCanisterRedWhite
+- proto: CMUCanisterNitrousOxide
   entities:
   - uid: 1020
     components:
@@ -188128,7 +188128,7 @@ entities:
     - type: Transform
       pos: 47.5,160.5
       parent: 1
-- proto: RMCPickaxe
+- proto: AU14ToolPickaxe
   entities:
   - uid: 224
     components:
@@ -194422,7 +194422,7 @@ entities:
     - type: Transform
       pos: -11.374214,49.387154
       parent: 1
-- proto: RMCShovel
+- proto: AU14ToolShovel
   entities:
   - uid: 225
     components:
@@ -196335,7 +196335,7 @@ entities:
       rot: -1.5707963267948966 rad
       pos: 76.5,134.5
       parent: 1
-- proto: RMCTacticalMapTableLargeRotated
+- proto: CMUTacticalMapTableLargeRotatedGovfor
   entities:
   - uid: 18319
     components:

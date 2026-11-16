@@ -1,4 +1,4 @@
-﻿using Lidgren.Network;
+using Lidgren.Network;
 using Robust.Shared.Network;
 using Robust.Shared.Serialization;
 
@@ -13,12 +13,15 @@ public sealed class RMCPatronListMsg : NetMessage
     public override void ReadFromBuffer(NetIncomingMessage buffer, IRobustSerializer serializer)
     {
         var count = buffer.ReadVariableInt32();
+        // CMU14: validate the minimum encoded size before allocation.
+        buffer.AssertAtLeastSize(count * (2 * NetMessageExt.MinSizeOfString + NetMessageExt.MinSizeOfVariableInt));
         Patrons = new List<SharedRMCPatron>(count);
         for (var i = 0; i < count; i++)
         {
             var name = buffer.ReadString();
             var tier = buffer.ReadString();
-            Patrons.Add(new SharedRMCPatron(name, tier));
+            var priority = buffer.ReadVariableInt32();
+            Patrons.Add(new SharedRMCPatron(name, tier, priority));
         }
     }
 
@@ -29,6 +32,7 @@ public sealed class RMCPatronListMsg : NetMessage
         {
             buffer.Write(patron.Name);
             buffer.Write(patron.Tier);
+            buffer.WriteVariableInt32(patron.Priority);
         }
     }
 }

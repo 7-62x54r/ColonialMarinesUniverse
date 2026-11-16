@@ -82,7 +82,7 @@
         shader: unshaded
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 100
@@ -96,11 +96,11 @@
     soundHit:
       collection: GenericHit
   - type: RefillableSolution
-    solution: Welder
+    solution: welder
   - type: Tool
     useSound:
       collection: Welder
-    qualities: Welding
+    qualities: [ Welding ]
   - type: Welder
     fuelConsumption: 0.06 # TODO RMC14 change this when welders are fixed
     fuelLitCost: 0
@@ -129,6 +129,10 @@
     materialComposition:
       CMSteel: 70
       CMGlass: 30
+  - type: InteractedBlacklist
+    blacklist:
+      components:
+      - Xeno
 
 - type: entity
   parent: RMCWelderBase
@@ -137,7 +141,7 @@
   - type: RequiresEyeProtection
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 100
@@ -151,7 +155,7 @@
   - type: RequiresEyeProtection
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents: []
         maxVol: 100 # TODO RMC14 40 when welders are fixed
 
@@ -164,7 +168,7 @@
   components:
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 500
@@ -176,13 +180,14 @@
   name: ME3 hand welder
   description: A compact, handheld welding torch used by the Marines for cutting and welding jobs on the field. Due to the small size and slow strength, its function is limited compared to a full-sized technician's blowtorch.
   components:
+  - type: RequiresEyeProtection # CMU14
   - type: Sprite
     sprite: _RMC14/Objects/Tools/welder_hand.rsi
   - type: Item
     sprite: _RMC14/Objects/Tools/welder_hand.rsi
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 12.5
@@ -207,7 +212,7 @@
   - type: RequiresEyeProtection
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 150
@@ -221,12 +226,12 @@
   parent: RMCWelderBase
   id: RMCWelderPVE
   name: modified blowtorch
-  description: A more 'advanced' version of the standard UNMC Blowtorch, this blowtorch has a welding shield for eye protection affixed to it. Seems the eye shield was ripped off of a standard ME3 hand welder and then crudely affixed.
-  suffix: PVE, DO NOT MAP
+  description: A more 'advanced' version of the standard Blowtorch, this blowtorch has a welding shield for eye protection affixed to it. Seems the eye shield was ripped off of a standard ME3 hand welder and then crudely affixed.
+  suffix: Eye Protection
   components:
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 100
@@ -244,13 +249,13 @@
     sprite: _RMC14/Objects/Tools/welder_industrial.rsi
   - type: SolutionContainerManager
     solutions:
-      Welder:
+      welder:
         reagents:
         - ReagentId: WeldingFuel
           Quantity: 200
         maxVol: 200
   - type: RMCSelfRechargingSolution
-    solutionId: Welder
+    solutionId: welder
     reagent: WeldingFuel
     rechargeAmount: 1
     rechargeEvery: 1

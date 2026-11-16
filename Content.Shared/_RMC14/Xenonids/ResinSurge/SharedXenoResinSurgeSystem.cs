@@ -14,6 +14,7 @@ using Content.Shared.Doors.Components;
 using Content.Shared.Examine;
 using Content.Shared.Maps;
 using Content.Shared.Popups;
+using Content.Shared.Spawning;
 using Robust.Shared.Map;
 using Robust.Shared.Map.Components;
 using Robust.Shared.Network;
@@ -22,7 +23,6 @@ namespace Content.Shared._RMC14.Xenonids.ResinSurge;
 
 public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
 {
-    [Dependency] private IMapManager _map = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private SharedActionsSystem _actions = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
@@ -49,9 +49,9 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
         if (!target.IsValid(EntityManager))
             return;
 
-        if (_net.IsServer)
+        if (PredictedSpawnAtPosition(xeno.Comp.UnstableWallId, target) is { } wall &&
+            _net.IsServer)
         {
-            var wall = Spawn(xeno.Comp.UnstableWallId, target);
             _hive.SetSameHive(xeno.Owner, wall);
         }
     }
@@ -61,9 +61,9 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
         if (!target.IsValid(EntityManager))
             return;
 
-        if (_net.IsServer)
+        if (PredictedSpawnAtPosition(xeno.Comp.StickyResinId, target) is { } resin &&
+            _net.IsServer)
         {
-            var resin = SpawnAtPosition(xeno.Comp.StickyResinId, target);
             _hive.SetSameHive(xeno.Owner, resin);
         }
     }
@@ -98,20 +98,20 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
         if (args.Handled)
             return;
 
+        var target = args.Target.SnapToGrid(EntityManager);
+
         // Check if target on grid
-        if (_transform.GetGrid(args.Target) is not { } gridId ||
+        if (_transform.GetGrid(target) is not { } gridId ||
             !TryComp(gridId, out MapGridComponent? grid))
             return;
 
-        if (!_examine.InRangeUnOccluded(xeno.Owner, args.Target, xeno.Comp.Range))
+        if (!_examine.InRangeUnOccluded(xeno.Owner, target, xeno.Comp.Range))
         {
-            _popup.PopupClient(Loc.GetString("rmc-xeno-resin-surge-see-fail"), xeno, xeno);
+            _popup.PopupEntity(Loc.GetString("rmc-xeno-resin-surge-see-fail"), xeno, xeno);
             return;
         }
 
         args.Handled = true;
-
-        var target = args.Target.SnapToGrid(EntityManager, _map);
 
         // Check if user has enough plasma
         if (xeno.Comp.ResinDoafter != null || !_xenoPlasma.TryRemovePlasmaPopup((xeno.Owner, null), args.PlasmaCost))
@@ -126,7 +126,7 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
                 if (HasComp<XenoConstructReinforceComponent>(entity))
                 {
                     // If yes, display popup, and start half-cooldown
-                    _popup.PopupClient(Loc.GetString("rmc-xeno-resin-surge-shield-fail", ("target", entity)), xeno, xeno);
+                    _popup.PopupEntity(Loc.GetString("rmc-xeno-resin-surge-shield-fail", ("target", entity)), xeno, xeno);
                     ReduceSurgeCooldown(xeno);
                     // This is here so SharedActionsSystem doesn't start the cooldown itself
                     args.Handled = false;
@@ -136,16 +136,14 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
                 // If no, buff structure
                 var popupSelf = Loc.GetString("rmc-xeno-resin-surge-shield-self", ("target", entity));
                 var popupOthers = Loc.GetString("rmc-xeno-resin-surge-shield-others", ("xeno", xeno), ("target", entity));
-                _popup.PopupPredicted(popupSelf, popupOthers, xeno, xeno);
+                _popup.PopupEntity(popupSelf, popupOthers, xeno, xeno);
 
                 _xenoReinforce.Reinforce(entity, xeno.Comp.ReinforceAmount, xeno.Comp.ReinforceDuration);
-                if (_net.IsServer)
-                {
-                    if (HasComp<DoorComponent>(entity))
-                        SpawnAttachedTo(xeno.Comp.SurgeDoorEffect, entity.ToCoordinates());
-                    else
-                        SpawnAttachedTo(xeno.Comp.SurgeWallEffect, entity.ToCoordinates());
-                }
+
+                if (HasComp<DoorComponent>(entity))
+                    PredictedSpawnAttachedTo(xeno.Comp.SurgeDoorEffect, entity.ToCoordinates());
+                else
+                    PredictedSpawnAttachedTo(xeno.Comp.SurgeWallEffect, entity.ToCoordinates());
                 return;
             }
 
@@ -155,14 +153,14 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
                 // Check if fruit mature, try to fasten its growth if not
                 if (!_xenoFruit.TrySpeedupGrowth((entity, fruit), xeno.Comp.FruitGrowth))
                 {
-                    _popup.PopupClient(Loc.GetString("rmc-xeno-resin-surge-fruit-fail", ("target", entity)), xeno, xeno);
+                    _popup.PopupEntity(Loc.GetString("rmc-xeno-resin-surge-fruit-fail", ("target", entity)), xeno, xeno);
                     ReduceSurgeCooldown(xeno);
                     // This is here so SharedActionsSystem doesn't start the cooldown itself
                     args.Handled = false;
                     return;
                 }
 
-                _popup.PopupClient(Loc.GetString("rmc-xeno-resin-surge-fruit", ("target", entity)), xeno, xeno);
+                _popup.PopupEntity(Loc.GetString("rmc-xeno-resin-surge-fruit", ("target", entity)), xeno, xeno);
                 args.Handled = false;
                 var cooldownTimeMult = (fruit.GrowTime.TotalSeconds - (fruit.GrowTime / xeno.Comp.FruitCooldownDivisor)) * 0.1;
                 ReduceSurgeCooldown(xeno, cooldownTimeMult);
@@ -188,7 +186,7 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
                 {
                     var popupSelf = Loc.GetString("rmc-xeno-resin-surge-wall-self");
                     var popupOthers = Loc.GetString("rmc-xeno-resin-surge-wall-others", ("xeno", xeno));
-                    _popup.PopupPredicted(popupSelf, popupOthers, xeno, xeno);
+                    _popup.PopupEntity(popupSelf, popupOthers, xeno, xeno);
 
                     SurgeUnstableWall(xeno, target);
                     return;
@@ -219,7 +217,7 @@ public sealed partial class SharedXenoResinSurgeSystem : EntitySystem
 
         var popupSelf = Loc.GetString("rmc-xeno-resin-surge-sticky-self");
         var popupOthers = Loc.GetString("rmc-xeno-resin-surge-sticky-others", ("xeno", xeno));
-        _popup.PopupPredicted(popupSelf, popupOthers, xeno, xeno);
+        _popup.PopupEntity(popupSelf, popupOthers, xeno, xeno);
 
         if (_net.IsServer)
         {

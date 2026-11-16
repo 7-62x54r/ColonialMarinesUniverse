@@ -21,6 +21,7 @@ jobs:
   labels:
     name: Sync and apply labels
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Sync labels and apply event labels
         uses: actions/github-script@v9.0.0
@@ -30,10 +31,6 @@ jobs:
               'S: Awaiting Changes': { color: 'd93f0b', description: 'Changes requested by review.' },
               'S: Approved': { color: '0e8a16', description: 'Approved by a trusted reviewer.' },
               'S: Merge Conflict': { color: 'b60205', description: 'Pull request has merge conflicts.' },
-              'S: Required Checks Passed': { color: '0e8a16', description: 'Required CI checks passed for the current pull request head.' },
-              'S: Required Checks Failed': { color: 'd93f0b', description: 'Required CI checks failed for the current pull request head.' },
-              'S: Integration Tests Passed': { color: '0e8a16', description: 'Integration tests passed for the current pull request head.' },
-              'S: Integration Tests Failed': { color: 'd93f0b', description: 'Integration tests failed for the current pull request head.' },
               'Branch: Stable': { color: '5319e7', description: 'Targets the stable branch.' },
               'Branch: Staging': { color: '1d76db', description: 'Targets the staging branch.' },
               'Changes: Sprites': { color: 'c5def5', description: 'Changes sprite image assets.' },
@@ -53,32 +50,46 @@ jobs:
               'W: Backlog': { color: 'cfd3d7', description: 'Backlog item.' },
               'W: Next': { color: '0e8a16', description: 'Prioritized next work.' },
               'Toolshed': { color: '006b75', description: 'Toolshed-related issue or PR.' },
+              'Dependencies': { color: '0366d6', description: 'Automated dependency updates.' },
             };
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const existing = new Map((await github.paginate(github.rest.issues.listLabelsForRepo, {
-              owner,
-              repo,
-              per_page: 100,
-            })).map(label => [label.name, label]));
-            const deletedLabels = ['S: Untriaged', 'S: Needs Review'];
+            const deletedLabels = [
+              'S: Untriaged',
+              'S: Needs Review',
+              'S: Required Checks Passed',
+              'S: Required Checks Failed',
+              'S: Integration Tests Passed',
+              'S: Integration Tests Failed',
+            ];
+            const syncLabels =
+              context.eventName === 'issues' ||
+              (context.eventName === 'pull_request_target' && ['opened', 'reopened'].includes(context.payload.action));
 
-            for (const [name, config] of Object.entries(labels)) {
-              const current = existing.get(name);
-              if (!current) {
-                await github.rest.issues.createLabel({ owner, repo, name, ...config });
-                continue;
+            if (syncLabels) {
+              const existing = new Map((await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner,
+                repo,
+                per_page: 100,
+              })).map(label => [label.name, label]));
+
+              for (const [name, config] of Object.entries(labels)) {
+                const current = existing.get(name);
+                if (!current) {
+                  await github.rest.issues.createLabel({ owner, repo, name, ...config });
+                  continue;
+                }
+
+                if (current.color.toLowerCase() !== config.color || (current.description || '') !== config.description) {
+                  await github.rest.issues.updateLabel({ owner, repo, name, new_name: name, ...config });
+                }
               }
 
-              if (current.color.toLowerCase() !== config.color || (current.description || '') !== config.description) {
-                await github.rest.issues.updateLabel({ owner, repo, name, new_name: name, ...config });
-              }
-            }
-
-            for (const name of deletedLabels) {
-              if (existing.has(name)) {
-                await github.rest.issues.deleteLabel({ owner, repo, name });
+              for (const name of deletedLabels) {
+                if (existing.has(name)) {
+                  await github.rest.issues.deleteLabel({ owner, repo, name });
+                }
               }
             }
 
@@ -118,8 +129,23 @@ jobs:
               });
               const changed = files.reduce((sum, file) => sum + file.additions + file.deletions, 0);
               const size = changed >= 5000 ? 'XL' : changed >= 1000 ? 'L' : changed >= 100 ? 'M' : changed >= 10 ? 'S' : 'XS';
-              await remove(pr.number, ['XS', 'S', 'M', 'L', 'XL']);
-              await add(pr.number, [size]);
+              const sizeLabels = ['XS', 'S', 'M', 'L', 'XL'];
+              const current = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+                owner,
+                repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+              const currentNames = new Set(current.map(label => label.name));
+              const staleSizes = sizeLabels.filter(label => label !== size && currentNames.has(label));
+
+              if (staleSizes.length > 0) {
+                await remove(pr.number, staleSizes);
+              }
+
+              if (!currentNames.has(size)) {
+                await add(pr.number, [size]);
+              }
             }
 
             async function applyMergeConflict(pr) {
@@ -166,13 +192,11 @@ jobs:
               }
 
               if (context.payload.action === 'synchronize') {
+                // CMU14: a new push invalidates CI failure state the same as review state
                 await remove(pr.number, [
                   'S: Approved',
                   'S: Awaiting Changes',
-                  'S: Required Checks Passed',
-                  'S: Required Checks Failed',
-                  'S: Integration Tests Passed',
-                  'S: Integration Tests Failed',
+                  'CI Failure',
                 ]);
               }
 
@@ -189,6 +213,15 @@ jobs:
               } else if (review.state === 'changes_requested' && trusted) {
                 await add(pullNumber, ['S: Awaiting Changes']);
                 await remove(pullNumber, ['S: Approved']);
+                // CMU14: re-request the reviewer so they see the author's response
+                if (pr && review.user.login !== pr.user.login) {
+                  await github.rest.pulls.requestReviewers({
+                    owner,
+                    repo,
+                    pull_number: pullNumber,
+                    reviewers: [review.user.login],
+                  });
+                }
               }
             }
 
@@ -197,12 +230,13 @@ jobs:
     if: github.event_name == 'pull_request_target'
     needs: labels
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/labeler@v6.1.0
+      - uses: actions/labeler@v7.0.0
         with:
           repo-token: ${{ github.token }}
           configuration-path: .github/labeler.yml

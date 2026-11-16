@@ -209,7 +209,9 @@ entities:
     - type: GridTree
     - type: Broadphase
     - type: OccluderTree
-    - type: Almayer
+    # CMU14: AlmayerComponent renamed to WarshipComponent
+    # - type: Almayer
+    - type: Warship
     - type: MapGrid
       chunks:
         0,0:
@@ -57165,14 +57167,14 @@ entities:
     - type: Transform
       pos: -30.5,11.5
       parent: 1
-- proto: GasOutletInjector
+- proto: CMUOutletInjector
   entities:
   - uid: 3816
     components:
     - type: Transform
       pos: 86.5,26.5
       parent: 1
-- proto: GasPassiveVent
+- proto: CMUPassiveVent
   entities:
   - uid: 636
     components:
@@ -58695,7 +58697,7 @@ entities:
     - type: Transform
       pos: -39.5,7.5
       parent: 1
-- proto: RMCCableCoil10
+- proto: CMUCableThinLVStack10 # CMU14: replaced RMCCableCoil10, thin LV cable
   entities:
   - uid: 7241
     components:
@@ -58712,7 +58714,7 @@ entities:
     - type: Transform
       pos: 91.61086,5.392135
       parent: 1
-- proto: RMCCableCoil20
+- proto: CMUCableThinLVStack20 # CMU14: replaced RMCCableCoil20, thin LV cable
   entities:
   - uid: 7242
     components:
@@ -81086,7 +81088,7 @@ entities:
     - type: Transform
       pos: 44.5,15.5
       parent: 1
-- proto: RMCTacticalMapTable
+- proto: CMUTacticalMapTableGovfor
   entities:
   - uid: 29
     components:
@@ -81098,7 +81100,7 @@ entities:
     - type: Transform
       pos: -36.5,-25.5
       parent: 1
-- proto: RMCTacticalMapTableLargeRotated
+- proto: CMUTacticalMapTableLargeRotatedGovfor
   entities:
   - uid: 4265
     components:

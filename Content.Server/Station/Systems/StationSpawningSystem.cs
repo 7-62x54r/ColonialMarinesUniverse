@@ -1,36 +1,51 @@
+using System.Collections.Frozen;
 using System.Linq;
 using Content.Server.Access.Systems;
-using Content.Server.AU14.Round;
+using Content.Server.CMU14.Roles;
+using Content.Server.CMU14.Diagnostics.Performance; // CMU14
+using Content.Server.CMU14.Round;
 using Content.Server.Humanoid;
-using Content.Server.IdentityManagement;
 using Content.Server.Jobs;
 using Content.Server.Mind.Commands;
+using Content.Server.Mind;
 using Content.Server.PDA;
 using Content.Server.Station.Components;
+using Content.Server.CMU14.Yautja;
 using Content.Shared._RMC14.Marines;
+using Content.Shared.CMU14.Yautja;
 using Content.Shared._RMC14.Marines.Squads;
 using Content.Shared._RMC14.Weapons.Ranged.IFF;
 using Content.Shared.Access;
 using Content.Shared.Access.Components;
 using Content.Shared.Access.Systems;
+using Content.Shared.Administration.Logs;
+using Content.Shared.CMU14.CharacterDescription;
+using Content.Shared.CMU14.Medical.Blood; // CMU14
+using Content.Shared.Body;
 using Content.Shared.CCVar;
 using Content.Shared.Clothing;
+using Content.Shared.Database;
 using Content.Shared.DetailExaminable;
 using Content.Shared.Humanoid;
+using Content.Shared.Humanoid.Markings;
 using Content.Shared.Humanoid.Prototypes;
+using Content.Shared.IdentityManagement;
 using Content.Shared.PDA;
 using Content.Shared.Preferences;
 using Content.Shared.Preferences.Loadouts;
 using Content.Shared.Roles;
 using Content.Shared.Station;
+using Content.Shared.CMU14.Round.Roles;
+using Content.Shared.Traits;
 using JetBrains.Annotations;
 using Robust.Shared.Configuration;
 using Robust.Shared.Map;
 using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Utility;
-using Content.Shared.AU14.util;
+using Content.Shared.CMU14.util;
 using Content.Shared.NPC.Components;
+using Content.Shared.NPC.Prototypes;
 using Content.Shared.NPC.Systems;
 
 namespace Content.Server.Station.Systems;
@@ -42,38 +57,116 @@ namespace Content.Server.Station.Systems;
 [PublicAPI]
 public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
 {
+    private static readonly ProtoId<NpcFactionPrototype> GovforNpcFaction = new("GOVFOR");
+    private static readonly ProtoId<NpcFactionPrototype> OpforNpcFaction = new("OPFOR");
+
     [Dependency] private SharedAccessSystem _accessSystem = default!;
+
+    [Dependency] private CMUIdBloodTypeSystem _cmuIdBloodType = default!; // CMU14
     [Dependency] private ActorSystem _actors = default!;
     [Dependency] private IdCardSystem _cardSystem = default!;
     [Dependency] private IConfigurationManager _configurationManager = default!;
-    [Dependency] private HumanoidAppearanceSystem _humanoidSystem = default!;
+    [Dependency] private HumanoidOrganAppearanceSystem _humanoidAppearance = default!;
+    [Dependency] private HumanoidProfileSystem _humanoidProfile = default!;
+    [Dependency] private SharedVisualBodySystem _visualBody = default!;
     [Dependency] private IdentitySystem _identity = default!;
     [Dependency] private MetaDataSystem _metaSystem = default!;
+    [Dependency] private RoundJobProfileSystem _roundJobProfiles = default!;
     [Dependency] private PdaSystem _pdaSystem = default!;
     [Dependency] private IPrototypeManager _prototypeManager = default!;
     [Dependency] private PlatoonSpawnRuleSystem _platoonSpawnRuleSystem = default!;
     [Dependency] private SquadSystem _squadSystem = default!;
     [Dependency] private NpcFactionSystem _npcFaction = default!;
+    [Dependency] private MarkingManager _markingManager = default!;
+    [Dependency] private YautjaProfileApplySystem _yautjaProfile = default!;
+    [Dependency] private ISharedAdminLogManager _adminLog = default!;
+    [Dependency] private MindSystem _mindSystem = default!;
+    [Dependency] private ICMUServerPerformanceDiagnostics _performance = default!; // CMU14
+
+    private static readonly PlatoonJobClass[] PlatoonJobClasses = Enum.GetValues<PlatoonJobClass>();
+    private static readonly FrozenDictionary<PlatoonJobClass, string> PlatoonJobClassNames =
+        PlatoonJobClasses.ToFrozenDictionary(v => v, v => v.ToString());
 
     // Round-robin rotation indices for squads per side
     private readonly string[] _govforSquads = { "SquadGovfor", "SquadGovforBravo", "SquadGovforCharlie" };
     private readonly string[] _opforSquads = { "SquadOpfor", "SquadOpforBravo", "SquadOpforCharlie" };
-    private int _govforNextSquadIndex;
-    private int _opforNextSquadIndex;
+    // cmu edit start: replaced by CMUPickSquad
+    // private int _govforNextSquadIndex;
+    // private int _opforNextSquadIndex;
+    // cmu edit end
+    private static readonly ProtoId<NpcFactionPrototype> YautjaBadBloodFaction = "CMUYautjaBadBlood";
 
-    // Job roles with this substring in the ID will not be part of a squad
-    private static readonly HashSet<string> NoSquadRoles = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> NoSquadRoundRoles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "dcc",
-        "pilot",
-        "platco",
-        "policeman",
-        "militarydoctor"
+        // cmu edit start: moved to AuxiliarySquadRoundRoles
+        // "Advisor",
+        // "DropshipCrewChief",
+        // "DropshipPilot",
+        // "MilitaryDoctor",
+        // "MilitaryPolice",
+        // "PlatoonCommander",
+        // "ExecutiveOfficer",
+        // "CMO",
+        // "ChiefMP",
+        // "LogisticsOfficer",
+        // "EngineeringOfficer",
+        // cmu edit end
+        "AdjutantDress",
+        "BrigadierGeneral",
+        "VipEscort"
     };
-    private static readonly HashSet<string> AuxiliaryRoles = new(StringComparer.OrdinalIgnoreCase)
+
+    private static readonly HashSet<string> AuxiliarySquadRoundRoles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AuxSupportSynth",
+        "AuxTech",
+        "CombatCorrespondent",
+        "DroneOperator",
+        "EngineeringTech",
+        "IntelOfficer",
+        "JuniorOfficer",
+        "Nurse",
+        "WorkingJoe",
+        "VehicleCommander",
+        "VehicleCrewman",
+        // cmu edit start: staff officers, aircrew, medical and police join the auxiliary squad
+        "Advisor",
+        "DropshipCrewChief",
+        "DropshipPilot",
+        "MilitaryDoctor",
+        "MilitaryPolice",
+        "CMO",
+        "ChiefMP",
+        "LogisticsOfficer",
+        "EngineeringOfficer",
+        "PlatoonCommander",
+        "ExecutiveOfficer",
+        // cmu edit end
+    };
+
+    // Legacy fallback for jobs that have not been migrated to roundRole yet.
+    private static readonly HashSet<string> NoSquadJobIdFragments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // cmu edit start: moved to AuxiliarySquadJobIdFragments
+        // "dcc",
+        // "pilot",
+        // "platco",
+        // "policeman",
+        // "militarydoctor"
+        // cmu edit end
+    };
+
+    private static readonly HashSet<string> AuxiliarySquadJobIdFragments = new(StringComparer.OrdinalIgnoreCase)
     {
         "synth",
-        "platop"
+        "platop",
+        // cmu edit start
+        "dcc",
+        "pilot",
+        "policeman",
+        "militarydoctor",
+        "platco",
+        // cmu edit end
     };
 
     /// <summary>
@@ -88,14 +181,29 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
     /// <remarks>
     /// This only spawns the character, and does none of the mind-related setup you'd need for it to be playable.
     /// </remarks>
-    public EntityUid? SpawnPlayerCharacterOnStation(EntityUid? station, ProtoId<JobPrototype>? job, HumanoidCharacterProfile? profile, StationSpawningComponent? stationSpawning = null)
+    public EntityUid? SpawnPlayerCharacterOnStation(
+        EntityUid? station,
+        ProtoId<JobPrototype>? job,
+        HumanoidCharacterProfile? profile,
+        StationSpawningComponent? stationSpawning = null,
+        ICommonSession? player = null)
     {
         if (station != null && !Resolve(station.Value, ref stationSpawning))
             throw new ArgumentException("Tried to use a non-station entity as a station!", nameof(station));
 
-        var ev = new PlayerSpawningEvent(job, profile, station);
+        var ev = new PlayerSpawningEvent(job, profile, station, player);
 
-        RaiseLocalEvent(ev);
+        // cmu edit start: squad assignment needs to know who is spawning
+        _cmuSpawningPlayer = player;
+        try
+        {
+            RaiseLocalEvent(ev);
+        }
+        finally
+        {
+            _cmuSpawningPlayer = null;
+        }
+        // cmu edit end
         DebugTools.Assert(ev.SpawnResult is { Valid: true } or null);
 
         return ev.SpawnResult;
@@ -119,66 +227,75 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
         ProtoId<JobPrototype>? job,
         HumanoidCharacterProfile? profile,
         EntityUid? station,
-        EntityUid? entity = null)
+        EntityUid? entity = null,
+        YautjaRank? authoritativeYautjaRank = null,
+        YautjaProfileCapabilities? authoritativeYautjaCapabilities = null)
     {
         // --- Platoon job override logic start ---
+        using var operation = _performance.MeasureOperation("player-spawn", job?.Id); // CMU14: retain slow spawn attribution.
         string? jobId = job?.ToString();
         var originalJob = job;
+        _prototypeManager.Resolve(originalJob, out JobPrototype? originalPrototype);
+        var originalSide = _roundJobProfiles.GetRoundSide(originalPrototype, jobId);
+        var team = GetTeamForSide(originalSide);
         if (!string.IsNullOrEmpty(jobId))
         {
-            PlatoonPrototype? platoon = null;
-            if (jobId.Contains("GOVFOR", StringComparison.OrdinalIgnoreCase))
-                platoon = _platoonSpawnRuleSystem.SelectedGovforPlatoon;
-            else if (jobId.Contains("OPFOR", StringComparison.OrdinalIgnoreCase))
-                platoon = _platoonSpawnRuleSystem.SelectedOpforPlatoon;
+            var platoon = originalSide switch
+            {
+                RoundJobSide.Govfor => _platoonSpawnRuleSystem.SelectedGovforPlatoon,
+                RoundJobSide.Opfor => _platoonSpawnRuleSystem.SelectedOpforPlatoon,
+                _ => null,
+            };
 
             // --- JobClassOverride logic: match by suffix ---
             if (platoon != null)
             {
-                foreach (var kvp in platoon.JobClassOverride)
+                if (TryGetPlatoonJobClass(originalPrototype, jobId, out var jobClass) &&
+                    platoon.JobClassOverride.TryGetValue(jobClass, out var overrideJob))
                 {
-                    // If the jobId ends with the enum name (e.g., AU14JobGOVFORSquadRifleman ends with SquadRifleman)
-                    if (jobId.EndsWith(kvp.Key.ToString(), StringComparison.OrdinalIgnoreCase))
+                    job = overrideJob;
+                }
+                else
+                {
+                    foreach (var kvp in platoon.JobClassOverride)
                     {
-                        job = kvp.Value;
-                        break;
+                        // If the jobId ends with the enum name (e.g., AU14JobGOVFORSquadRifleman ends with SquadRifleman)
+                        if (jobId.EndsWith(PlatoonJobClassNames[kvp.Key], StringComparison.OrdinalIgnoreCase))
+                        {
+                            job = kvp.Value;
+                            break;
+                        }
                     }
                 }
             }
         }
         // --- Platoon job override logic end ---
 
+        // cmu edit start: the platoon's own versions of starting gear and loadout equipment
+        using var cmuGearOverrides = CMUPushGearOverrides(originalSide);
+        // cmu edit end
+
         _prototypeManager.Resolve(job, out var prototype);
         // Get the original job prototype for access/faction/ID
-        _prototypeManager.Resolve(originalJob, out var originalPrototype);
         RoleLoadout? loadout = null;
+        RoleLoadoutPrototype? loadoutProto = null;
+        string? loadoutKey = null;
+
+        if (prototype?.ID is { } id)
+            (loadoutKey, loadoutProto) = LoadoutSystem.GetJobLoadoutInfo(id, _prototypeManager);
 
         // Need to get the loadout up-front to handle names if we use an entity spawn override.
-        var jobLoadout = LoadoutSystem.GetJobPrototype(prototype?.ID);
-        if (_prototypeManager.TryIndex(jobLoadout, out RoleLoadoutPrototype? roleProto))
-        {
-            profile?.Loadouts.TryGetValue(jobLoadout, out loadout);
-
-            // Set to default if not present
-            if (loadout == null)
-            {
-                loadout = new RoleLoadout(jobLoadout);
-                loadout.SetDefault(profile, _actors.GetSession(entity), _prototypeManager);
-            }
-        }
+        if (loadoutProto != null && loadoutKey != null)
+            loadout = profile?.GetLoadoutOrDefault(loadoutKey, _actors.GetSession(entity), profile.Species, EntityManager, _prototypeManager);
 
         // RMC14 UseLoadoutOfJob
         if (prototype?.UseLoadoutOfJob != null && _prototypeManager.Resolve(prototype.UseLoadoutOfJob, out var usedPrototype))
         {
-            var newJobLoadout = LoadoutSystem.GetJobPrototype(usedPrototype.ID);
-
-            if (_prototypeManager.TryIndex(newJobLoadout, out RoleLoadoutPrototype? newRoleProto))
+            var (newKey, newProto) = LoadoutSystem.GetJobLoadoutInfo(usedPrototype.ID, _prototypeManager);
+            if (newProto != null && newKey != null && profile != null)
             {
-                if (profile != null && profile.Loadouts.TryGetValue(newJobLoadout, out var newLoadout))
-                {
-                    roleProto = newRoleProto;
-                    loadout = newLoadout;
-                }
+                loadout = profile.GetLoadoutOrDefault(newKey, _actors.GetSession(entity), profile.Species, EntityManager, _prototypeManager);
+                loadoutProto = newProto;
             }
         }
 
@@ -188,32 +305,67 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
         {
             DebugTools.Assert(entity is null);
             var jobEntity = Spawn(prototype.JobEntity, coordinates);
-            MakeSentientCommand.MakeSentient(jobEntity, EntityManager);
+            _mindSystem.MakeSentient(jobEntity);
 
-            if (profile != null && prototype is not { UsePlayerProfile: false } && TryComp(jobEntity, out HumanoidAppearanceComponent? humanoid))
+            if (profile != null &&
+                prototype is not { UsePlayerProfile: false } &&
+                TryComp(jobEntity, out HumanoidProfileComponent? humanoid))
             {
-                _humanoidSystem.LoadProfile(jobEntity, profile.WithSpecies(humanoid.Species), humanoid);
+                var jobProfile = profile.WithSpecies(humanoid.Species);
+                _visualBody.ApplyProfileTo(jobEntity, jobProfile);
+                _humanoidProfile.ApplyProfileTo(jobEntity, jobProfile);
                 _metaSystem.SetEntityName(jobEntity, profile.Name);
 
                 if (profile.FlavorText != "" && _configurationManager.GetCVar(CCVars.FlavorText))
                     AddComp<DetailExaminableComponent>(jobEntity).Content = profile.FlavorText;
+
+                ApplyProfileBloodType(jobEntity, profile); // CMU14
+
+                if (_configurationManager.GetCVar(CCVars.CharacterDescription))
+                    BakeCharacterDescription(jobEntity, profile, prototype?.ID); // cmu edit
             }
 
             // Make sure custom names get handled, what is gameticker control flow whoopy.
-            if (loadout != null)
-                EquipRoleName(jobEntity, loadout, roleProto!);
+            if (loadout != null && loadoutProto != null)
+            {
+                // CMU14: custom job bodies also receive their selected equipment.
+                EquipRoleLoadout(jobEntity, loadout, loadoutProto, applyEffects: false);
+                EquipRoleName(jobEntity, loadout, loadoutProto);
+            }
 
             DoJobSpecials(job, jobEntity);
+            EquipGlobalLoadout(jobEntity, profile); // CMU14: apply after the job has equipped its storage.
+            if (loadout != null && loadoutProto != null)
+                ApplyRoleLoadoutEffects(jobEntity, loadout, loadoutProto);
+
+            ApplyRegulationAppearance(jobEntity, profile);
+            ApplyTeamFaction(jobEntity, team);
+
+            if (HasComp<YautjaComponent>(jobEntity) &&
+                !IsBadBloodFactionMember(jobEntity))
+            {
+                if (profile != null)
+                    _yautjaProfile.ApplyProfile(
+                        jobEntity,
+                        profile.YautjaProfile,
+                        authoritativeYautjaRank,
+                        authoritativeYautjaCapabilities,
+                        equipProfileGear: false);
+            }
 
             // Use originalPrototype for access, ID, and faction
             _identity.QueueIdentityUpdate(jobEntity);
             if (originalPrototype != null && TryComp(jobEntity, out MetaDataComponent? metaDataJobEntity))
                 SetPdaAndIdCardData(jobEntity, metaDataJobEntity.EntityName, originalPrototype, station);
 
+            // cmu edit start
+            AssignRoundStartSquad(jobEntity, coordinates, job, originalPrototype, jobId, team, profile, station); // CMU14
+            // cmu edit end
             return jobEntity;
         }
 
-        string speciesId = profile != null ? profile.Species : SharedHumanoidAppearanceSystem.DefaultSpecies;
+        string speciesId = profile != null ? profile.Species : HumanoidCharacterProfile.DefaultSpecies;
+
         if (!_prototypeManager.TryIndex<SpeciesPrototype>(speciesId, out var species))
             throw new ArgumentException($"Invalid species prototype was used: {speciesId}");
 
@@ -221,19 +373,27 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
 
         if (profile != null && prototype is not { UsePlayerProfile: false })
         {
-            _humanoidSystem.LoadProfile(entity.Value, profile);
+            _visualBody.ApplyProfileTo(entity.Value, profile);
+            _humanoidProfile.ApplyProfileTo(entity.Value, profile);
             _metaSystem.SetEntityName(entity.Value, profile.Name);
 
             if (profile.FlavorText != "" && _configurationManager.GetCVar(CCVars.FlavorText))
                 AddComp<DetailExaminableComponent>(entity.Value).Content = profile.FlavorText;
+
+            ApplyProfileBloodType(entity.Value, profile); // CMU14
+
+            if (_configurationManager.GetCVar(CCVars.CharacterDescription))
+                BakeCharacterDescription(entity.Value, profile, prototype?.ID); // cmu edit
         }
 
-        if (loadout != null)
-            EquipRoleLoadout(entity.Value, loadout, roleProto!);
+        if (loadout != null && loadoutProto != null)
+            EquipRoleLoadout(entity.Value, loadout, loadoutProto, applyEffects: false);
 
         if (prototype?.StartingGear != null)
         {
-            var startingGear = _prototypeManager.Index<StartingGearPrototype>(prototype.StartingGear);
+            // cmu edit start: the platoon's own starting gear for this job, if it has one
+            var startingGear = ProtoMan.Index<StartingGearPrototype>(CMUPlatoonStartingGear(originalSide, prototype.ID, prototype.StartingGear.Value));
+            // cmu edit end
             EquipStartingGear(entity.Value, startingGear, raiseEvent: false);
         }
 
@@ -311,187 +471,252 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
             SetPdaAndIdCardDataWithSplitJob(entity.Value, metaDataEntity.EntityName, prototype, originalPrototype ?? prototype, station);
 
         DoJobSpecials(job, entity.Value);
+        ApplySyntheticGeneration(entity.Value, prototype, profile); // CMU14: job setup must not overwrite generation mechanics.
+
+        EquipGlobalLoadout(entity.Value, profile); // CMU14: apply once, after job gear and specials.
+
+        // Job profiles establish the base skill preset, so loadout upgrades must run afterwards.
+        if (loadout != null && loadoutProto != null)
+            ApplyRoleLoadoutEffects(entity.Value, loadout, loadoutProto);
+
+        ApplyRegulationAppearance(entity.Value, profile);
         _identity.QueueIdentityUpdate(entity.Value);
 
-        string? team = null;
-        string? teamCheckJobId = originalJob?.ToString();
+        // cmu edit start
+        AssignRoundStartSquad(entity.Value, coordinates, job, originalPrototype, jobId, team, profile, station); // CMU14
+        // cmu edit end
 
-        // hardcoding until I fix overwatch - EG
-        if (!string.IsNullOrEmpty(teamCheckJobId))
-        {
-            if (teamCheckJobId.Contains("GOVFOR", StringComparison.OrdinalIgnoreCase))
-                team = "govfor";
-            else if (teamCheckJobId.Contains("Opfor", StringComparison.OrdinalIgnoreCase))
-                team = "opfor";
-        }
-
-        bool assignToSquad = team != null && !NoSquadRoles.Any(s => teamCheckJobId!.Contains(s, StringComparison.OrdinalIgnoreCase));
-        if (assignToSquad)
-        {
-            string protoId;
-            var jobIdLower = jobId?.ToLowerInvariant() ?? string.Empty;
-
-            // Roles that should go into the intel/auxiliary squad
-            if (AuxiliaryRoles.Any(s => jobIdLower.Contains(s, StringComparison.OrdinalIgnoreCase)))
-                protoId = team == "govfor" ? "SquadGovforIntel" : "SquadOpforIntel";
-            else
-            {
-                var candidates = team == "govfor" ? _govforSquads : _opforSquads;
-
-                // New: prioritize distributing Sergeants, Automatic Riflemen, and Radio Telephone Operators
-                var isSergeant = jobIdLower.Contains("sergeant");
-                var isAutomaticRifleman = jobIdLower.Contains("automaticrifleman") || jobIdLower.Contains("autora") || jobIdLower.Contains("auto") || jobIdLower.Contains("afn") || jobIdLower.EndsWith("squadautomaticrifleman", StringComparison.OrdinalIgnoreCase);
-                var isRadioTelephone = jobIdLower.Contains("radiotelephoneoperator") || jobIdLower.Contains("radio") || jobIdLower.Contains("rto") || jobIdLower.EndsWith("radiotelephoneoperator", StringComparison.OrdinalIgnoreCase);
-
-                // Sergeants: try to place into a squad without a leader where possible (existing behavior)
-                if (isSergeant)
-                {
-                    string? chosen = null;
-                    foreach (var cand in candidates)
-                    {
-                        if (_squadSystem.TryEnsureSquad(cand, out var s) && !_squadSystem.TryGetSquadLeader(s, out _))
-                        {
-                            chosen = cand;
-                            break;
-                        }
-                    }
-
-                    if (chosen != null)
-                    {
-                        protoId = chosen;
-                    }
-                    else
-                    {
-                        // all squads already have leaders, fall back to round-robin
-                        if (team == "govfor")
-                        {
-                            protoId = candidates[_govforNextSquadIndex % candidates.Length];
-                            _govforNextSquadIndex = (_govforNextSquadIndex + 1) % candidates.Length;
-                        }
-                        else
-                        {
-                            protoId = candidates[_opforNextSquadIndex % candidates.Length];
-                            _opforNextSquadIndex = (_opforNextSquadIndex + 1) % candidates.Length;
-                        }
-                    }
-                }
-                // Automatic riflemen and radio telephone operators: try to evenly distribute so each squad gets one of each
-                else if (isAutomaticRifleman || isRadioTelephone)
-                {
-                    string? chosen = null;
-                    // Prefer squads that exist and don't yet have this role
-                    foreach (var cand in candidates)
-                    {
-                        if (_squadSystem.TryEnsureSquad(cand, out var s))
-                        {
-                            // If job is available as a ProtoId, check the role count in the squad.
-                            if (job != null)
-                            {
-                                s.Comp.Roles.TryGetValue(job.Value, out var existingCount);
-                                if (existingCount == 0)
-                                {
-                                    chosen = cand;
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                // If we don't have a proto id for the job for whatever reason,
-                                // prefer squads that exist but currently have fewer members (heuristic)
-                                if (_squadSystem.GetSquadMembersAlive(s) == 0)
-                                {
-                                    chosen = cand;
-                                    break;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Squad doesn't exist yet, so it definitely has none of the role
-                            chosen = cand;
-                            break;
-                        }
-                    }
-
-                    if (chosen != null)
-                    {
-                        protoId = chosen;
-                    }
-                    else
-                    {
-                        // Fallback to round-robin distribution when every squad already has the role
-                        if (team == "govfor")
-                        {
-                            protoId = candidates[_govforNextSquadIndex % candidates.Length];
-                            _govforNextSquadIndex = (_govforNextSquadIndex + 1) % candidates.Length;
-                        }
-                        else
-                        {
-                            protoId = candidates[_opforNextSquadIndex % candidates.Length];
-                            _opforNextSquadIndex = (_opforNextSquadIndex + 1) % candidates.Length;
-                        }
-                    }
-                }
-                else
-                {
-                    // Default distribution (round-robin)
-                    // Sergeants already handled above; everyone else falls through here.
-                    if (team == "govfor")
-                    {
-                        protoId = candidates[_govforNextSquadIndex % candidates.Length];
-                        _govforNextSquadIndex = (_govforNextSquadIndex + 1) % candidates.Length;
-                    }
-                    else
-                    {
-                        protoId = candidates[_opforNextSquadIndex % candidates.Length];
-                        _opforNextSquadIndex = (_opforNextSquadIndex + 1) % candidates.Length;
-                    }
-                }
-            }
-
-            if (!_squadSystem.TryEnsureSquad(protoId, out Entity<SquadTeamComponent> ensured))
-            {
-                // Fallback: spawn a new entity with SquadTeamComponent
-                var squadEnt = Spawn(protoId, coordinates);
-                var squadComp = EnsureComp<SquadTeamComponent>(squadEnt);
-                ensured = (squadEnt, squadComp);
-            }
-
-            _squadSystem.AssignSquad(entity.Value, (ensured.Owner, (SquadTeamComponent?)ensured.Comp), job);
-
-            // If this is the sergeant, set as squad leader
-            if (jobId != null && jobId.ToLowerInvariant().Contains("sergeant"))
-            {
-                var memberComp = EnsureComp<SquadMemberComponent>(entity.Value);
-                var leaderIcon = ensured.Comp.LeaderIcon;
-                _squadSystem.PromoteSquadLeader((entity.Value, memberComp), entity.Value, leaderIcon);
-            }
-        }
-
-        // --- Add opfor/govfor faction after player is spawned ---
-        if (team == "govfor" || team == "opfor")
-        {
-            // var faction = team.ToUpperInvariant(); // *nods
-            // if (!HasComp<NpcFactionMemberComponent>(entity.Value))
-            //     EnsureComp<NpcFactionMemberComponent>(entity.Value); // *blinks
-            // _npcFaction.AddFaction((entity.Value, CompOrNull<NpcFactionMemberComponent>(entity.Value)), faction); // *stares
-            _npcFaction.AddFaction((entity.Value, default), team.ToUpperInvariant());
-
-            // Add additional factions from platoon if present
-            PlatoonPrototype? selectedPlatoon = team == "govfor"
-                ? _platoonSpawnRuleSystem.SelectedGovforPlatoon
-                : _platoonSpawnRuleSystem.SelectedOpforPlatoon;
-
-            if (selectedPlatoon != null)
-            {
-                foreach (var addFaction in selectedPlatoon.Factions)
-                    _npcFaction.AddFaction((entity.Value, default), addFaction);
-
-                if (selectedPlatoon.NpcFaction is { } platoonNpcFaction)
-                    _npcFaction.AddFaction((entity.Value, default), platoonNpcFaction);
-            }
-        }
+        ApplyTeamFaction(entity.Value, team);
         return entity.Value;
+    }
+
+    private void AssignRoundStartSquad(
+        EntityUid entity,
+        EntityCoordinates coordinates,
+        ProtoId<JobPrototype>? job,
+        JobPrototype? originalPrototype,
+        string? originalJobId,
+        string? team,
+        // cmu edit start
+        HumanoidCharacterProfile? profile, // CMU14
+        EntityUid? station) // CMU14
+        // cmu edit end
+    {
+        if (team == null || !ShouldAssignToSquad(originalPrototype, originalJobId))
+            return;
+
+        string protoId;
+
+        // Roles that should go into the intel/auxiliary squad
+        if (IsAuxiliarySquadRole(originalPrototype, originalJobId))
+            protoId = team == "govfor" ? "SquadGovforIntel" : "SquadOpforIntel";
+        else
+        {
+            // cmu edit start: one squad leader per squad, special roles spread evenly, riflemen fill the smallest squad
+            var candidates = team == "govfor" ? _govforSquads : _opforSquads;
+            var isSergeant = IsSquadLeaderRole(originalPrototype, originalJobId);
+
+            // Squad preference is no longer offered, so it is ignored here.
+            protoId = CMUPickSquad(candidates, job, originalPrototype, originalJobId, isSergeant);
+            // cmu edit end
+
+            // cmu edit start: reserved Foxtrot squad slots
+            if (CMUTryPickFoxtrotSquad(station, originalJobId, profile, out var foxtrotSquad))
+                protoId = foxtrotSquad;
+            // cmu edit end
+        }
+
+        if (!_squadSystem.TryEnsureSquad(protoId, out Entity<SquadTeamComponent> ensured))
+        {
+            // Fallback: spawn a new entity with SquadTeamComponent
+            var squadEnt = Spawn(protoId, coordinates);
+            var squadComp = EnsureComp<SquadTeamComponent>(squadEnt);
+            ensured = (squadEnt, squadComp);
+        }
+
+        _squadSystem.AssignSquad(entity, (ensured.Owner, (SquadTeamComponent?) ensured.Comp), job);
+
+        // If this is the sergeant, set as squad leader
+        if (IsSquadLeaderRole(originalPrototype, originalJobId))
+        {
+            var memberComp = EnsureComp<SquadMemberComponent>(entity);
+            var leaderIcon = ensured.Comp.LeaderIcon;
+            _squadSystem.PromoteSquadLeader((entity, memberComp), entity, leaderIcon);
+        }
+
+        // cmu edit start
+        CMUApplyFoxtrotSquadPerks(entity, ensured, originalPrototype);
+        // cmu edit end
+    }
+
+    private static string? GetTeamForSide(RoundJobSide side)
+    {
+        return side switch
+        {
+            RoundJobSide.Govfor => "govfor",
+            RoundJobSide.Opfor => "opfor",
+            _ => null,
+        };
+    }
+
+    private void ApplyTeamFaction(EntityUid entity, string? team)
+    {
+        if (team != "govfor" && team != "opfor")
+            return;
+
+        if (TryComp<MarineComponent>(entity, out var marine))
+        {
+            marine.Faction = team;
+            Dirty(entity, marine);
+        }
+
+        var faction = team == "govfor" ? GovforNpcFaction : OpforNpcFaction;
+        _npcFaction.AddFaction((entity, default), faction);
+
+        PlatoonPrototype? selectedPlatoon = team == "govfor"
+            ? _platoonSpawnRuleSystem.SelectedGovforPlatoon
+            : _platoonSpawnRuleSystem.SelectedOpforPlatoon;
+
+        if (selectedPlatoon == null)
+            return;
+
+        foreach (var addFaction in selectedPlatoon.Factions)
+            _npcFaction.AddFaction((entity, default), addFaction);
+
+        if (selectedPlatoon.NpcFaction is { } platoonNpcFaction)
+            _npcFaction.AddFaction((entity, default), platoonNpcFaction);
+    }
+
+    private static bool ShouldAssignToSquad(JobPrototype? job, string? fallbackJobId)
+    {
+        if (job?.RoundRole is { } roundRole)
+            return !NoSquadRoundRoles.Contains(roundRole);
+
+        if (string.IsNullOrEmpty(fallbackJobId))
+            return false;
+
+        foreach (var fragment in NoSquadJobIdFragments)
+        {
+            if (fallbackJobId.Contains(fragment, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsAuxiliarySquadRole(JobPrototype? job, string? fallbackJobId)
+    {
+        if (job?.RoundRole is { } roundRole)
+            return AuxiliarySquadRoundRoles.Contains(roundRole);
+
+        if (string.IsNullOrEmpty(fallbackJobId))
+            return false;
+
+        foreach (var fragment in AuxiliarySquadJobIdFragments)
+        {
+            if (fallbackJobId.Contains(fragment, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsSquadLeaderRole(JobPrototype? job, string? fallbackJobId)
+    {
+        if (IsRoundRole(job, "SectionSergeant", "SquadSergeant"))
+            return true;
+
+        return fallbackJobId?.Contains("sergeant", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsRoundRole(JobPrototype? job, string expectedRoundRole)
+    {
+        if (job?.RoundRole is not { } roundRole)
+            return false;
+
+        return roundRole.Equals(expectedRoundRole, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRoundRole(JobPrototype? job, string firstRoundRole, string secondRoundRole)
+    {
+        if (job?.RoundRole is not { } roundRole)
+            return false;
+
+        return roundRole.Equals(firstRoundRole, StringComparison.OrdinalIgnoreCase) ||
+               roundRole.Equals(secondRoundRole, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryGetPlatoonJobClass(
+        JobPrototype? job,
+        string fallbackJobId,
+        out PlatoonJobClass jobClass)
+    {
+        if (job?.RoundRole is { } roundRole &&
+            TryMapRoundRoleToPlatoonJobClass(roundRole, out jobClass))
+        {
+            return true;
+        }
+
+        foreach (var value in PlatoonJobClasses)
+        {
+            if (!fallbackJobId.EndsWith(PlatoonJobClassNames[value], StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            jobClass = value;
+            return true;
+        }
+
+        jobClass = default;
+        return false;
+    }
+
+    private static bool TryMapRoundRoleToPlatoonJobClass(string roundRole, out PlatoonJobClass jobClass)
+    {
+        switch (roundRole)
+        {
+            case "AuxSupportSynth":
+                jobClass = PlatoonJobClass.SupportSynth;
+                return true;
+            case "DropshipCrewChief":
+                jobClass = PlatoonJobClass.DCC;
+                return true;
+            case "DropshipPilot":
+                jobClass = PlatoonJobClass.DSPilot;
+                return true;
+            case "VehicleCrewman":
+                jobClass = PlatoonJobClass.VehicleCrewman;
+                return true;
+            case "JuniorOfficer":
+                jobClass = PlatoonJobClass.PlatOp;
+                return true;
+            case "PlatoonCommander":
+                jobClass = PlatoonJobClass.PlatCo;
+                return true;
+            case "PlatoonCorpsman":
+                jobClass = PlatoonJobClass.PlatoonCorpsman;
+                return true;
+            case "RadioTelephoneOperator":
+                jobClass = PlatoonJobClass.RadioTelephoneOperator;
+                return true;
+            case "SectionSergeant":
+                jobClass = PlatoonJobClass.SectionSergeant;
+                return true;
+            case "SquadAutomaticRifleman":
+                jobClass = PlatoonJobClass.SquadAutomaticRifleman;
+                return true;
+            case "SquadCombatTech":
+                jobClass = PlatoonJobClass.SquadCombatTech;
+                return true;
+            case "SquadRifleman":
+                jobClass = PlatoonJobClass.SquadRifleman;
+                return true;
+            case "SquadSergeant":
+                jobClass = PlatoonJobClass.SquadSergeant;
+                return true;
+            default:
+                jobClass = default;
+                return false;
+        }
     }
 
     private void DoJobSpecials(ProtoId<JobPrototype>? job, EntityUid entity)
@@ -503,6 +728,132 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
         {
             jobSpecial.AfterEquip(entity);
         }
+
+        _roundJobProfiles.ApplyJobProfile(entity, prototype);
+    }
+
+    private const string DisabilitiesTraitCategory = "Disabilities";
+    private const string DrugAllergyTraitId = "RandomDrugAllergy";
+    // cmu edit start
+    private const string DrugAllergiesTraitCategory = "CMUDrugAllergies";
+    // cmu edit end
+
+    // CMU14: blood type from the profile, applied whether or not character descriptions are on
+    private void ApplyProfileBloodType(EntityUid uid, HumanoidCharacterProfile profile)
+    {
+        var bloodType = EnsureComp<CMUBloodTypeComponent>(uid);
+        bloodType.Type = profile.BloodType;
+        Dirty(uid, bloodType);
+    }
+
+    // cmu edit start: the job, so traits it leaves off aren't listed
+    private void BakeCharacterDescription(EntityUid uid, HumanoidCharacterProfile profile, string? job = null)
+    // cmu edit end
+    {
+        var comp = AddComp<CharacterDescriptionComponent>(uid);
+        comp.ShortExamine = profile.ShortExamine;
+        comp.FullDescription = profile.FullDescription;
+        comp.MedicalRecord = profile.MedicalRecord;
+        comp.CriminalRecord = profile.CriminalRecord;
+        comp.GeneralRecord = profile.GeneralRecord;
+        comp.Height = profile.Height;
+        comp.Weight = profile.Weight;
+        comp.Build = profile.Build;
+        comp.Age = profile.Age;
+        comp.Allegiance = profile.Allegiance;
+        comp.Origin = profile.Origin;
+        // cmu edit start
+        comp.Religion = profile.Religion;
+        // cmu edit end
+        comp.HideMetaInformation = profile.HideMetaInformation;
+
+        foreach (var traitId in profile.TraitPreferences)
+        {
+            if (!_prototypeManager.TryIndex(traitId, out TraitPrototype? traitProto))
+                continue;
+
+            // cmu edit start: drug allergies have their own section but still show as a disability
+            if (traitProto.Category is not { } category ||
+                category.Id != DisabilitiesTraitCategory && category.Id != DrugAllergiesTraitCategory)
+            {
+                continue;
+            }
+            // cmu edit end
+
+            // cmu edit start
+            if (EntityManager.System<Content.Shared.CMU14.Traits.AutoIgnore.CMUAutoIgnoreTraitsSystem>()
+                .IsIgnored(profile, job, traitId))
+            {
+                continue;
+            }
+            // cmu edit end
+
+            comp.DisabilityTraitNames.Add(Loc.GetString(traitProto.Name));
+
+            // cmu edit start: any drug allergy, random or picked
+            if (traitId.Id == DrugAllergyTraitId || category.Id == DrugAllergiesTraitCategory)
+                comp.HasDrugAllergyTrait = true;
+            // cmu edit end
+        }
+
+        Dirty(uid, comp);
+
+        _adminLog.Add(LogType.RMCCharacterDescription,
+            $"{ToPrettyString(uid):player} has skin tone {NamedColorHelper.NearestColorName(profile.Appearance.SkinColor)}");
+    }
+
+    /// <summary>
+    /// Overrides the spawned mob's hairstyle/color and facial hair/color with the player's
+    /// Regulation Appearance selections, if the job (via <see cref="RoundJobProfileSystem"/>)
+    /// attached a <see cref="RegulationAppearanceComponent"/> to it. The player's normal civilian
+    /// selections in their saved profile are left untouched.
+    /// </summary>
+    private void ApplyRegulationAppearance(EntityUid uid, HumanoidCharacterProfile? profile)
+    {
+        if (profile == null || !HasComp<RegulationAppearanceComponent>(uid))
+            return;
+
+        if (!TryComp<HumanoidProfileComponent>(uid, out var humanoid))
+            return;
+
+        var appearance = profile.Appearance;
+        ApplyRegulationHairLayer(uid, humanoid, HumanoidVisualLayers.Hair,
+            appearance.RegulationHairStyleId, appearance.RegulationHairColor);
+        ApplyRegulationHairLayer(uid, humanoid, HumanoidVisualLayers.FacialHair,
+            appearance.RegulationFacialHairStyleId, appearance.RegulationFacialHairColor);
+    }
+
+    private void ApplyRegulationHairLayer(
+        EntityUid uid,
+        HumanoidProfileComponent humanoid,
+        HumanoidVisualLayers layer,
+        string styleId,
+        Color color)
+    {
+        if (!_humanoidAppearance.TryGetMarkings(uid, layer, out var organ, out var markingData, out _))
+            return;
+
+        List<Marking> markings = [];
+        if (styleId == HairStyles.DefaultHairStyle.Id || styleId == HairStyles.DefaultFacialHairStyle.Id)
+        {
+            _humanoidAppearance.SetMarkings(uid, organ, layer, markings);
+            return;
+        }
+
+        if (_prototypeManager.TryIndex<MarkingPrototype>(styleId, out var prototype) &&
+            prototype.BodyPart == layer &&
+            _markingManager.CanBeApplied(markingData.Group, humanoid.Sex, prototype))
+        {
+            markings.Add(prototype.AsMarking().WithColor(color));
+        }
+
+        _humanoidAppearance.SetMarkings(uid, organ, layer, markings);
+    }
+
+    private bool IsBadBloodFactionMember(EntityUid uid)
+    {
+        return TryComp(uid, out NpcFactionMemberComponent? faction) &&
+               faction.Factions.Contains(YautjaBadBloodFaction);
     }
 
     /// <summary>
@@ -525,6 +876,7 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
             return;
 
         _cardSystem.TryChangeFullName(cardId, characterName, card);
+        _cmuIdBloodType.Stamp(cardId, entity); // CMU14: print the blood type on the ID
 
         // Respect cards with a prototype-defined title (e.g. fixed-role/faction IDs).
         if (card.JobTitle == null)
@@ -543,6 +895,8 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
         }
 
         _accessSystem.SetAccessToJob(cardId, jobPrototype, extendedAccess);
+        // CMU14: side-specific specialist access.
+        SetWeaponsSpecialistAccess(cardId, jobPrototype, jobPrototype);
 
         if (pdaComponent != null)
             _pdaSystem.SetOwner(idUid.Value, pdaComponent, entity, characterName);
@@ -570,6 +924,7 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
 
         // Set name and (unless fixed by prototype) job title/icon from the selected job.
         _cardSystem.TryChangeFullName(cardId, characterName, card);
+        _cmuIdBloodType.Stamp(cardId, entity); // CMU14: print the blood type on the ID
         if (card.JobTitle == null)
         {
             _cardSystem.TryChangeJobTitle(cardId, titleJobPrototype.LocalizedName, card);
@@ -591,10 +946,27 @@ public sealed partial class StationSpawningSystem : SharedStationSpawningSystem
             _accessSystem.SetAccessToJob(cardId, accessJobPrototype, extendedAccess);
         }
 
+        // CMU14: side-specific specialist access.
+        SetWeaponsSpecialistAccess(cardId, titleJobPrototype, accessJobPrototype);
         if (pdaComponent != null)
             _pdaSystem.SetOwner(idUid.Value, pdaComponent, entity, characterName);
     }
 
+    private void SetWeaponsSpecialistAccess(EntityUid card, JobPrototype role, JobPrototype sideJob)
+    {
+        var specialist = role.RoundRole == "WeaponsSpecialist" || sideJob.RoundRole == "WeaponsSpecialist";
+        foreach (var job in new[] { role, sideJob })
+        foreach (var group in job.AccessGroups)
+            specialist |= group.Id is "AU14GovforWeaponsSpecialist" or "AU14OpforWeaponsSpecialist";
+        if (!specialist || !TryComp(card, out AccessComponent? access)) return;
+        var side = _roundJobProfiles.GetRoundSide(sideJob);
+        if (side is not (RoundJobSide.Govfor or RoundJobSide.Opfor)) return;
+        // Platoon equipment jobs can inherit the GOVFOR specialist base even when selected for OPFOR.
+        var tags = new HashSet<ProtoId<AccessLevelPrototype>>(access.Tags);
+        tags.Remove(side == RoundJobSide.Opfor ? "AU14AccessGovforSquadWeaponsSpecialist" : "AU14AccessOpforSquadWeaponsSpecialist");
+        tags.Add(side == RoundJobSide.Opfor ? "AU14AccessOpforSquadWeaponsSpecialist" : "AU14AccessGovforSquadWeaponsSpecialist");
+        _accessSystem.TrySetTags(card, tags, access);
+    }
 
     #endregion Player spawning helpers
 }
@@ -624,11 +996,17 @@ public sealed partial class PlayerSpawningEvent : EntityEventArgs
     /// The target station, if any.
     /// </summary>
     public readonly EntityUid? Station;
+    public readonly ICommonSession? PlayerSession;
 
-    public PlayerSpawningEvent(ProtoId<JobPrototype>? job, HumanoidCharacterProfile? humanoidCharacterProfile, EntityUid? station)
+    public PlayerSpawningEvent(
+        ProtoId<JobPrototype>? job,
+        HumanoidCharacterProfile? humanoidCharacterProfile,
+        EntityUid? station,
+        ICommonSession? playerSession = null)
     {
         Job = job;
         HumanoidCharacterProfile = humanoidCharacterProfile;
         Station = station;
+        PlayerSession = playerSession;
     }
 }

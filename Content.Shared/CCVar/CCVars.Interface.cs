@@ -1,4 +1,4 @@
-﻿using Robust.Shared.Configuration;
+using Robust.Shared.Configuration;
 
 namespace Content.Shared.CCVar;
 
@@ -20,7 +20,32 @@ public sealed partial class CCVars
     /// The layout style of the UI
     /// </summary>
     public static readonly CVarDef<string> UILayout =
-        CVarDef.Create("ui.layout", "Default", CVar.CLIENTONLY | CVar.ARCHIVE);
+        // cmu edit start
+        // CVarDef.Create("ui.layout", "Default", CVar.CLIENTONLY | CVar.ARCHIVE);
+        CVarDef.Create("ui.layout", "Separated", CVar.CLIENTONLY | CVar.ARCHIVE);
+        // cmu edit end
+
+    /// <summary>
+    /// If true, uses the improved Gmod-style construction menu instead of the classic one.
+    /// Defaults to true. Takes effect when gameplay is next entered.
+    /// </summary>
+    public static readonly CVarDef<bool> ConstructionMenuImproved =
+        CVarDef.Create("ui.construction_menu_improved", true, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+    /// <summary>
+    /// Default material (construction graph material stack id, e.g. "CMSteel") used when an admin adds
+    /// an item to the construction menu in-game via the world right-click verb. Must be a CM material
+    /// stack id (CMSteel, CMPlasteel, CMGlass, RMCWood, …) — that is what the held sheets provide.
+    /// </summary>
+    public static readonly CVarDef<string> ConstructionMenuAddDefaultMaterial =
+        CVarDef.Create("construction.menu_add_default_material", "CMSteel", CVar.SERVERONLY);
+
+    /// <summary>
+    /// Default amount of <see cref="ConstructionMenuAddDefaultMaterial"/> required to build an
+    /// item added to the construction menu in-game.
+    /// </summary>
+    public static readonly CVarDef<int> ConstructionMenuAddDefaultAmount =
+        CVarDef.Create("construction.menu_add_default_amount", 1, CVar.SERVERONLY);
 
     /// <summary>
     /// The dimensions for the chat window in Default UI mode
@@ -120,4 +145,16 @@ public sealed partial class CCVars
     /// </summary>
     public static readonly CVarDef<int> AdminOverlayStackMax =
         CVarDef.Create("ui.admin_overlay_stack_max", 3, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+    /// <summary>
+    /// The default state for showing admin overlays in the strip menu.
+    /// </summary>
+    public static readonly CVarDef<bool> AdminStripMenuOverlayDefault =
+        CVarDef.Create("ui.admin_strip_menu_overlay_default", true, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+    /// <summary>
+    /// If true, ghosts will see an "(F)" button next to chat messages, which can be used to follow the sender.
+    /// </summary>
+    public static readonly CVarDef<bool> InterfaceChatFollowButton =
+        CVarDef.Create("ui.chat_follow_button", true, CVar.CLIENT | CVar.REPLICATED | CVar.ARCHIVE);
 }

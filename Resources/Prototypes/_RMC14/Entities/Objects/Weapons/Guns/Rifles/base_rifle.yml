@@ -128,6 +128,10 @@
   - type: Clothing
     slots:
     - suitStorage
+  - type: InteractedBlacklist
+    blacklist:
+      components:
+      - Xeno
   - type: CargoSellBlacklist
 
 - type: entity
@@ -137,7 +141,7 @@
   abstract: true
   components:
   - type: CartridgeAmmo
-    deleteOnSpawn: true
+    deleteOnSpawn: false # CMU14: spent casings eject instead of despawning
 
 - type: Tag
   id: CMMagazineRifle

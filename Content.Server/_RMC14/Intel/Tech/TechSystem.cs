@@ -1,10 +1,11 @@
+using Content.Server.CMU14.Ops.ThirdParty;
 using Content.Server.GameTicking.Events;
 using Content.Server.Ghost.Roles.Components;
 using Content.Server.Humanoid.Components;
 using Content.Server.Spawners.Components;
 using Content.Shared._RMC14.Intel.Tech;
-using Content.Shared.AU14.Threats;
-using Content.Shared.AU14.Util;
+using Content.Shared.CMU14.Threats;
+using Content.Shared.CMU14.Util;
 using Content.Shared.Humanoid.Prototypes;
 using Robust.Server.GameObjects;
 using Robust.Shared.Prototypes;
@@ -18,7 +19,7 @@ public sealed partial class ServerTechSystem : EntitySystem
     [Dependency] private IComponentFactory _componentFactory = default!;
     [Dependency] private TransformSystem _transform = default!;
     [Dependency] private IPrototypeManager _proto = default!;
-    [Dependency] private Content.Server.AU14.ThirdParty.AuThirdPartySystem _thirdParty = default!;
+    [Dependency] private ThirdPartySystem _thirdParty = default!;
     private static readonly EntProtoId CombatTechProto = "RMCRandomHumanoidFoxtrotCombatTech";
     private static readonly EntProtoId FireteamLeaderProto = "RMCRandomHumanoidFoxtrotFireteamLeader";
     private static readonly EntProtoId HospitalCorpsmanProto = "RMCRandomHumanoidFoxtrotHospitalCorpsman";
@@ -75,14 +76,14 @@ public sealed partial class ServerTechSystem : EntitySystem
             }
 
             // Call the server system to spawn the third party using resolved spawnProto.
-            _thirdParty.SpawnThirdParty(proto, spawnProto, false);
+            _thirdParty.SpawnThirdParty(proto, spawnProto, false, summoningFaction: ev.Team); // cmu edit: held to the buying faction's ship pad
         });
     }
 
     private void SpawnCryo(EntProtoId spawnerId, uint amount)
     {
         if (!_proto.TryIndex(spawnerId, out var spawner) ||
-            !spawner.TryGetComponent<RandomHumanoidSpawnerComponent>(out var human, _componentFactory) ||
+            !spawner.TryComp<RandomHumanoidSpawnerComponent>(out var human, _componentFactory) ||
             human.SettingsPrototypeId is null ||
             !_proto.TryIndex<RandomHumanoidSettingsPrototype>(human.SettingsPrototypeId, out var settings) ||
             settings.Components is null ||

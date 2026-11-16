@@ -18,3 +18,9 @@ ui-escape-status-unknown = Unknown
 ui-escape-status-no-ship = No ship
 ui-escape-status-not-started = Not started
 
+
+ui-escape-feedback = Feedback
+
+ui-escape-remarks = Admin Remarks
+
+ui-escape-remarks-button-disabled = This functionality has been disabled by the server.

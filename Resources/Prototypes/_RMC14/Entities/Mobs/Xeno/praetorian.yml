@@ -11,10 +11,15 @@
   name: Praetorian
   description: A huge, looming beast of an alien.
   components:
+  - type: FiremanCarriable # CMU14: Yautja can aggressively grab, carry and throw this caste
+    canThrow: true
+    carrierWhitelist:
+      components:
+      - Yautja
   - type: GhostRole
-    name: cm-job-name-xeno-praetorian
+    name: cmu-job-name-xeno-unknown
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Praetorian/praetorian.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Praetorian/praetorian.rsi # AU14-Edit
   - type: MobState
     allowedStates:
     - Alive
@@ -48,6 +53,28 @@
     - CMXenoSpitter
   - type: XenoAcid
   - type: XenoDevour
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoRoyalBlood
+        Quantity: 200
+      - ReagentId: CMUXenoPlasmaPhero
+        Quantity: 200
+      - ReagentId: CMUXenoPlasmaNeuro
+        Quantity: 200
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoRoyalBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaPhero
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaNeuro
+        Quantity: 1
   - type: XenoPlasma
     plasma: 800
     maxPlasma: 800
@@ -57,12 +84,16 @@
     explosionArmor: 40
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 40
+      types:
+        Blunt: 13.33
+        Slash: 13.33
+        Piercing: 13.34
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 48
+      types:
+        Blunt: 16
+        Slash: 16
+        Piercing: 16
   - type: Tackle
     chance: 0.45
   - type: Fixtures
@@ -117,7 +148,7 @@
   - type: IntelRecoverCorpseObjectiveOnDeath
     value: 0.7
   - type: FixedIdentity
-    name: cm-job-name-xeno-praetorian
+    name: cmu-job-name-xeno-unknown
   - type: RMCSurgeryXenoHeart
     item: RMCOrganXenoHeartT3
 
@@ -162,7 +193,7 @@
     guides:
     - RMCGuideRoleValkyrie
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Praetorian/valkyrie_praetorian.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Praetorian/valkyrie_praetorian.rsi # AU14-Edit
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -178,6 +209,7 @@
     - ActionXenoDevolve
   - type: XenoStrain
     name: rmc-xeno-valkyrie-name
+    baseCaste: CMXenoPraetorian # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-valkyrie-description
     popup: rmc-xeno-valkyrie-popup
   - type: XenoPheromones
@@ -221,10 +253,14 @@
     - type: RMCSuperSlowdown
     - type: RMCRooted
   - type: XenoHighGallop
+    # CMU14 cmss13 pred slow timing
+    yautjaSlow:
+      effect: 2.5
   - type: XenoHidden
   - type: AcidTrap
   - type: RMCActionOrder
     id: RMCXenoPraetorianValkyrie
+  - type: CMUXenoZJump
 
 - type: entity
   parent: CMXenoPraetorianBase
@@ -232,7 +268,7 @@
   suffix: Dancer
   components:
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Praetorian/dancer_praetorian.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Praetorian/dancer_praetorian.rsi # AU14-Edit
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -245,6 +281,7 @@
     - ActionXenoDevolve
   - type: XenoStrain
     name: rmc-xeno-dancer-name
+    baseCaste: CMXenoPraetorian # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-dancer-description
     popup: rmc-xeno-dancer-popup
   - type: CMArmor
@@ -256,12 +293,18 @@
   - type: XenoDodge
   - type: XenoImpale
     damage:
-      groups:
-        Brute: 60
+      types:
+        Blunt: 20
+        Slash: 20
+        Piercing: 20
   - type: XenoTailTrip
+    # CMU14 cmss13 pred slow timing
+    yautjaSlow:
+      effect: 0.3
   - type: XenoHidden
   - type: RMCActionOrder
     id: RMCXenoPraetorianDancer
+  - type: CMUXenoZJump
 
 - type: entity
   parent: CMXenoPraetorianBase
@@ -272,7 +315,7 @@
     guides:
     - RMCGuideRoleVanguard
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Praetorian/vanguard_praetorian.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Praetorian/vanguard_praetorian.rsi # AU14-Edit
   - type: MobThresholds
     thresholds:
       0: Alive
@@ -291,6 +334,7 @@
     - ActionXenoDevolve
   - type: XenoStrain
     name: rmc-xeno-vanguard-name
+    baseCaste: CMXenoPraetorian # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-vanguard-description
     popup: rmc-xeno-vanguard-popup
   - type: XenoClaws
@@ -299,8 +343,10 @@
   - type: VanguardShield
   - type: XenoPierce
     damage:
-      groups:
-        Brute: 45
+      types:
+        Blunt: 15
+        Slash: 15
+        Piercing: 15
   - type: XenoLeap
     plasmaCost: 50
     delay: 0
@@ -309,8 +355,10 @@
     moveDelayTime: 0
   - type: XenoBlitz
     damage:
-      groups:
-        Brute: 40
+      types:
+        Blunt: 13.33
+        Slash: 13.33
+        Piercing: 13.34
   - type: XenoCleave
   - type: XenoHidden
   - type: RMCActionOrder
@@ -325,7 +373,7 @@
     guides:
     - RMCGuideRoleOppressor
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Praetorian/oppressor_praetorian.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Praetorian/oppressor_praetorian.rsi # AU14-Edit
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -338,10 +386,13 @@
     - ActionXenoDevolve
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: XenoStrain
     name: rmc-xeno-oppressor-name
+    baseCaste: CMXenoPraetorian # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-oppressor-description
     popup: rmc-xeno-oppressor-popup
   - type: MovementSpeedModifier
@@ -371,15 +422,26 @@
   - type: XenoHook
   - type: XenoTailSeize
   - type: XenoAbduct
+    # CMU14 cmss13 pred slow timing
+    yautjaSlow:
+      ticks: 1
+      effect: 2.5
   - type: XenoTailLash
+    # CMU14 cmss13 pred slow timing
+    yautjaSlow:
+      effect: 2.5
   - type: XenoDislocate
     damage:
-      groups:
-        Brute: 20
+      types:
+        Blunt: 6.66
+        Slash: 6.67
+        Piercing: 6.67
   - type: XenoSmackdown
     damage:
-      groups:
-        Brute: 15
+      types:
+        Blunt: 5
+        Slash: 5
+        Piercing: 5
   - type: XenoHidden
   - type: RMCActionOrder
     id: RMCXenoPraetorianOppressor

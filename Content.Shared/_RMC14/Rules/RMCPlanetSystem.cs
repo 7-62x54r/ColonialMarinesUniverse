@@ -1,8 +1,10 @@
 using System.Collections.Immutable;
 using System.Linq;
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Power;
 using Content.Shared._RMC14.TacticalMap;
+using Content.Shared._RMC14.Vehicle;
 using Robust.Shared.Audio.Components;
 using Robust.Shared.Audio.Systems;
 using Robust.Shared.Configuration;
@@ -21,6 +23,7 @@ public sealed partial class RMCPlanetSystem : EntitySystem
 {
     [Dependency] private IComponentFactory _compFactory = default!;
     [Dependency] private IConfigurationManager _config = default!;
+    [Dependency] private SharedMapSystem _maps = default!;
     [Dependency] private MapLoaderSystem _mapLoader = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private ISharedPlayerManager _player = default!;
@@ -28,6 +31,7 @@ public sealed partial class RMCPlanetSystem : EntitySystem
     [Dependency] private IRobustRandom _random = default!;
     [Dependency] private SharedRMCPowerSystem _rmcPower = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
 
     private int _coordinateVariance;
     private float _hijackSongGain;
@@ -97,10 +101,14 @@ public sealed partial class RMCPlanetSystem : EntitySystem
 
     public bool IsOnPlanet(EntityCoordinates coordinates)
     {
-        if (_rmcPlanetQuery.HasComp(_transform.GetGrid(coordinates)))
+        var grid = _transform.GetGrid(coordinates);
+        var map = _transform.GetMap(coordinates);
+        (grid, map) = ResolveOutdoor(grid, map);
+
+        if (_rmcPlanetQuery.HasComp(grid))
             return true;
 
-        if (_rmcPlanetQuery.HasComp(_transform.GetMap(coordinates)))
+        if (_rmcPlanetQuery.HasComp(map))
             return true;
 
         return false;
@@ -108,23 +116,83 @@ public sealed partial class RMCPlanetSystem : EntitySystem
 
     public bool IsOnPlanet(TransformComponent xform)
     {
-        if (_rmcPlanetQuery.HasComp(xform.GridUid))
+        var (grid, map) = ResolveOutdoor(xform.GridUid, xform.MapUid);
+
+        if (_rmcPlanetQuery.HasComp(grid))
             return true;
 
-        if (_rmcPlanetQuery.HasComp(xform.MapUid))
+        if (_rmcPlanetQuery.HasComp(map))
             return true;
 
         return false;
     }
 
+    // Vehicle interiors
+    private (EntityUid? Grid, EntityUid? Map) ResolveOutdoor(EntityUid? grid, EntityUid? map)
+    {
+        for (var i = 0; i < 8; i++)
+        {
+            if (map is not { } mapId || !TryComp(mapId, out VehicleInteriorLinkComponent? link))
+                break;
+
+            if (!TryComp(link.Vehicle, out TransformComponent? vehicleXform))
+                break;
+
+            grid = vehicleXform.GridUid;
+            map = vehicleXform.MapUid;
+        }
+
+        return (grid, map);
+    }
+
     public bool IsOnPlanet(MapCoordinates coordinates)
     {
-        return IsOnPlanet(_transform.ToCoordinates(coordinates));
+        // CMU14 Begin
+        return IsOnPlanet(_maps.TryFindGridAt(coordinates, out var grid, out _)
+            ? _transform.ToCoordinates(grid, coordinates)
+            : _transform.ToCoordinates(coordinates));
+        // CMU14 End
+    }
+
+    // CMU14: endgame cleanup includes underground and elevated planet levels.
+    public bool IsOnPlanetLevel(TransformComponent xform)
+        => IsOnPlanet(xform) || TryGetPlanetSurfaceCoordinates(_transform.GetMapCoordinates(xform), out _);
+
+    /// <summary>
+    /// Resolves coordinates on a connected Z-level to the depth-zero planet map.
+    /// Coordinates already on a planet map or grid are returned unchanged.
+    /// </summary>
+    public bool TryGetPlanetSurfaceCoordinates(MapCoordinates coordinates, out MapCoordinates planetCoordinates)
+    {
+        planetCoordinates = coordinates;
+        if (IsOnPlanet(coordinates))
+            return true;
+
+        var entityCoordinates = _transform.ToCoordinates(coordinates);
+        if (_transform.GetMap(entityCoordinates) is not { } mapUid ||
+            !_zLevels.TryGetZNetwork(mapUid, out var network) ||
+            !_zLevels.TryGetMapAtDepth(network.Value, 0, out var planetMap) ||
+            !_zLevels.TryGetMapCoordinates(planetMap, coordinates.Position, out planetCoordinates) ||
+            !IsOnPlanet(planetCoordinates))
+        {
+            planetCoordinates = default;
+            return false;
+        }
+
+        return true;
     }
 
     public bool TryGetOffset(MapCoordinates coordinates, out Vector2i offset)
     {
-        var entCoords = _transform.ToCoordinates(coordinates);
+        // All connected planet levels use the surface's targeting coordinate offset.
+        if (TryGetPlanetSurfaceCoordinates(coordinates, out var surfaceCoordinates))
+            coordinates = surfaceCoordinates;
+
+        // CMU14 Begin
+        var entCoords = _maps.TryFindGridAt(coordinates, out var grid, out _)
+            ? _transform.ToCoordinates(grid, coordinates)
+            : _transform.ToCoordinates(coordinates);
+        // CMU14 End
         if (_transform.GetGrid(entCoords) is { } gridId &&
             TryComp(gridId, out RMCPlanetComponent? gridPlanet))
         {
@@ -143,12 +211,17 @@ public sealed partial class RMCPlanetSystem : EntitySystem
         return false;
     }
 
-    public bool TryPlanetToCoordinates(Vector2i coordinates, out MapCoordinates mapCoordinates)
+    // CMU14: allow aircraft reports to resolve the offset on their specific target map.
+    public bool TryPlanetToCoordinates(Vector2i coordinates, out MapCoordinates mapCoordinates, MapId? targetMap = null)
     {
         var planets = EntityQueryEnumerator<RMCPlanetComponent>();
         while (planets.MoveNext(out var uid, out var comp))
         {
             var mapId = _transform.GetMapId(uid);
+            // CMU14 Begin
+            if (targetMap != null && mapId != targetMap)
+                continue;
+            // CMU14 End
             mapCoordinates = new MapCoordinates(coordinates - comp.Offset, mapId);
             return true;
         }
@@ -162,7 +235,7 @@ public sealed partial class RMCPlanetSystem : EntitySystem
         var planetPaths = new Dictionary<string, EntProtoId<RMCPlanetMapPrototypeComponent>>();
         foreach (var entity in _prototypes.EnumeratePrototypes<EntityPrototype>())
         {
-            if (!entity.TryGetComponent(out RMCPlanetMapPrototypeComponent? planetMapPrototype, _compFactory))
+            if (!entity.TryComp(out RMCPlanetMapPrototypeComponent? planetMapPrototype, _compFactory))
                 continue;
 
             // Use the entity ID as the key to allow multiple planets with the same map path

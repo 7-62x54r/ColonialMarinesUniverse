@@ -31,6 +31,7 @@
       tags:
       - Flare
       - RMCShellShotgun
+      - RMCShellShotgunHDSG
       - CMMagazinePistol
       - RMCMagazineRevolver
       - CMMagazineRifle
@@ -50,6 +51,7 @@
       tags:
       - CMMagazineRifle
       - RMCMagazineShotgun
+      - RMCShellShotgunHDSG
       - CMMagazineSmg
   - type: FixedItemSizeStorage
   - type: ItemCamouflage
@@ -208,6 +210,10 @@
       - RMCNailgunTactical
       - RMCCircuitboard
       - RMCSynthResetKey
+      - MaintenanceJack
+      # CMU14: the hand saw and the hammer go into the belt
+      - RUMCHandSaw
+      - RUMCHammer
       components:
       - Welder
       - PowerCell
@@ -316,9 +322,13 @@
       - PowerCell
       - CMFireExtinguisherPortable
       - RMCShellShotgun
+      - RMCShellShotgunHDSG
       - RMCNailgunCompact
       - RMCNailgunTactical
       - RMCSynthResetKey
+      # CMU14: the hand saw and the hammer go into the belt
+      - RUMCHandSaw
+      - RUMCHammer
       #      - # TODO analyzer
       components:
       - Welder
@@ -369,73 +379,100 @@
       Urban: _RMC14/Objects/Clothing/Belt/knife/snow-desert-urban.rsi
       Classic: _RMC14/Objects/Clothing/Belt/knife/jungle-classic.rsi
 
-- type: entity
-  parent: CMBeltBaseStorage
-  id: CMBeltMedical
-  name: M276 pattern medical storage rig
-  description: The M276 is the standard load-bearing equipment of the USCM. It consists of a modular belt with various clips. This version is a less common configuration, designed to transport bulkier medical supplies.
-  components:
-  - type: Sprite
-    sprite: _RMC14/Objects/Clothing/Belt/medical.rsi
-  - type: Clothing
-    sprite: _RMC14/Objects/Clothing/Belt/medical.rsi
-  - type: Storage
-    maxItemSize: Normal
-    grid:
-    - 0,0,13,3 # 14 slots
-    whitelist:
-      tags:
-      - DiscreteHealthAnalyzer
-      - Dropper
-      - GlassBeaker
-      - Bottle
-      - PillPacket
-      - PillCanister
-      - Syringe
-      - CMSurgicalLine
-      - CMSynthGraft
-      - Brutepack
-      - CMBloodPack
-      - Gauze
-      - Ointment
-      - CMOintment
-      - CMTraumaKit
-      - CMBurnKit
-      - CMAutoInjector
-      - CMRollerItem
-      - BodyBag
-      - RMCGlovesLatex
-      - SterileMask
-      - Hypospray
-      - CigPack
-      - RMCPenlight
-      - Flare
-      - RMCMiniTank
-      # New Med
-      - CMBoneSaw
-      - CMSurgicalDrill
-      - CMCautery
-      - RMCScalpel
-      - CMBoneSetter
-      - CMRetractor
-      - CMUCastItem
-      - CMUOrganClamp
-      - CMHemostat
-      - CMUSplintItem
-      - CMUBoneGraft
-      - CMBoneGel
-      components:
-      - Hypospray
-      - Defibrillator
-      - Pill
-      - CMUSplintItem
-      - RMCHandLabeler
-      - RMCStethoscope
-      - RMCLighter
-  - type: FixedItemSizeStorage
-  - type: Tag
-    tags:
-    - RMCBeltMedical
+# You're probably looking for: Content.CMU/Resources/Prototypes/CMU14/Entities/Clothing/Universal/medical_storage.yml
+# CMU14: moved to Content.CMU/Resources/Prototypes/CMU14/Entities/Clothing/Universal/medical_storage.yml, do not restore
+# - type: entity
+#   parent: CMBeltBaseStorage
+#   id: CMBeltMedical
+#   name: M276 pattern medical storage rig # TODO: differentiate from pattern lifesaver
+#   # CMU14: also carries magazines, differentiates from the lifesaver bag
+#   description: The M276 is standard load-bearing equipment. It consists of a modular belt with various clips. This version is a less common configuration, designed to transport bulkier medical supplies and spare ammunition magazines.
+#   components:
+#   - type: Sprite
+#     sprite: _RMC14/Objects/Clothing/Belt/medical.rsi
+#   - type: Clothing
+#     sprite: _RMC14/Objects/Clothing/Belt/medical.rsi
+#   - type: Storage
+#     maxItemSize: Normal
+#     grid:
+#     - 0,0,13,3 # 14 slots
+#     whitelist:
+#       tags:
+#       - DiscreteHealthAnalyzer
+#       - Dropper
+#       - GlassBeaker
+#       - Bottle
+#       - PillPacket
+#       - PillCanister
+#       - Syringe
+#       - CMSurgicalLine
+#       - CMSynthGraft
+#       - Brutepack
+#       - CMBloodPack
+#       - Gauze
+#       - Ointment
+#       - CMOintment
+#       - CMTraumaKit
+#       - CMBurnKit
+#       - CMAutoInjector
+#       - CMRollerItem
+#       - BodyBag
+#       - RMCGlovesLatex
+#       - SterileMask
+#       - Hypospray
+#       - CigPack
+#       - RMCPenlight
+#       - Flare
+#       - RMCMiniTank
+#       # New Med
+#       # - CMRetractor
+#       # - CMHemostat
+#       # - CMBoneSaw
+#       # - CMCautery
+#       # - CMSurgicalDrill
+#       # - RMCScalpel
+#       # - CMBoneSetter
+#       # - CMBoneGel
+#       - CMUBoneGraft
+#       - CMUCastItem
+#       - CMUOrganClamp
+#       - CMUSplintItem
+#       - CMUCPRMask
+#       # CMU14: magazines and shells, see description
+#       - CMMagazinePistol
+#       - RMCMagazineRevolver
+#       - CMMagazineRifle
+#       - RMCMagazineShotgun
+#       - CMMagazineSmg
+#       - CMMagazineSniper
+#       - RMCShellShotgun
+#       - RMCShellShotgunHDSG
+#       components:
+#       - CMSurgeryTool # catch-all for above commented out NewMed tags
+#       - Hypospray
+#       - Defibrillator
+#       - Pill
+#       - RMCHandLabeler
+#       - RMCStethoscope
+#       - RMCLighter
+#       # CMU14: speed loaders and other ammo providers
+#       - BallisticAmmoProvider
+#     # CMU14: underbarrel attachments are ammo providers too
+#     blacklist:
+#       tags:
+#       - RMCAttachmentUnderbarrel
+#   # CMU14: large magazine variants bypass the size limit, mirrors CMBeltMarine
+#   - type: IgnoreContentsSize
+#     items:
+#       tags:
+#       - CMMagazineRifle
+#       - RMCMagazineShotgun
+#       - RMCShellShotgunHDSG
+#       - CMMagazineSmg
+#   - type: FixedItemSizeStorage
+#   - type: Tag
+#     tags:
+#     - RMCBeltMedical
 
 - type: entity
   parent: CMBeltBaseStorage
@@ -515,6 +552,7 @@
       - CMMagazineSniper
       - RMCMagazineSmartGun
       - RMCShellShotgun
+      - RMCShellShotgunHDSG
       - Flare
   - type: FixedItemSizeStorage
   - type: IgnoreContentsSize
@@ -654,6 +692,29 @@
       tags:
       - Grenade
   - type: FixedItemSizeStorage
+
+- type: entity
+  parent: CMBeltMarine
+  id: RMCBeltSharp
+  name: M103 pattern SHARP magazine belt
+  description: A modified M103 pattern rig designed to hold P9 SHARP rifle magazines.
+  components:
+  - type: Sprite
+    sprite: _RMC14/Objects/Clothing/Belt/tankbelt.rsi
+  - type: Clothing
+    slots:
+    - belt
+    sprite: _RMC14/Objects/Clothing/Belt/tankbelt.rsi
+  - type: Storage
+    maxItemSize: Normal
+    grid:
+    - 0,0,15,1 # 8 slots
+    whitelist:
+      tags:
+      - RMCMagazineRifleSharp
+  - type: FixedItemSizeStorage
+  - type: ItemCamouflage
+    camouflageVariations: { }
 
 - type: entity
   parent: CMBeltMarine
@@ -1425,6 +1486,7 @@
       - RMCWeaponShotgunXM51
       - RMCMagazineShotgunXM51
       - RMCShellShotgun # TODO RMC14 bullet handfuls
+      - RMCShellShotgunHDSG
   - type: FixedItemSizeStorage
   - type: CMHolster
     whitelist:
@@ -1929,6 +1991,7 @@
       - CMFireExtinguisherPortable
       - RMCMagazineML66D
       - RMCMagazineM2C
+      - AU14MagazineM2CTracter
       - CableCoil
       - Multitool
       - RMCExplosiveBreachingCharge
@@ -2002,6 +2065,32 @@
           - Defibrillator
           - Pill
           - RMCLighter
+
+- type: entity
+  parent: RMCMedicalL75RCM
+  id: RMCMedicalL75RCMFilled
+  suffix: RCM, Filled
+  components:
+  - type: StorageFill
+    contents:
+    - id: CMPillCanisterBicaridine
+    - id: CMPillCanisterBicaridine
+    - id: CMPillCanisterKelotane
+    - id: CMPillCanisterKelotane
+    # - id: CMPillCanisterTramadol
+    # - id: CMPillCanisterTramadol
+    - id: CMPillCanisterDylovene
+    # - id: CMPillCanisterPeridaxon
+    - id: CMPillCanisterDexalin
+    # - id: CMPillCanisterAlkysine
+    - id: RMCPillCanisterImidazoline
+    - id: CMTraumaKit10
+      amount: 3
+    - id: CMBurnKit10
+      amount: 3
+    # - id: RMCSplint
+    - id: CMDexalinPlusAutoInjector
+    - id: CMHealthAnalyzer
 
 - type: entity
   parent: RMCMedicalL75RCM
@@ -2322,6 +2411,178 @@
         tags:
           - CMFirstAidKit
           - RMCEngineerKit
+
+- type: entity
+  parent: CMBeltBaseStorage
+  id: RMCBeltL49
+  name: L28-pattern shotgun shell rig
+  suffix: PVE, RCM
+  description: "An L28-pattern shotgun holster rig, equipped with loops to hold loose 12ga shells and featuring a holster on the back capable of holding an L49 assault shotgun.\nShotguns equipped with magnetic harnesses or slings can be strapped directly to the belt, preventing them from being dropped."
+  components:
+  - type: ContainerContainer
+    containers:
+      storagebase: !type:Container
+        ents: []
+        showEnts: False
+        occludes: True
+      item: !type:ContainerSlot
+        ent: null
+        showEnts: False
+        occludes: True
+  - type: Sprite
+    sprite: _RMC14/Objects/Clothing/Belt/l49.rsi
+    layers:
+    - state: icon
+    - state: l49
+      map: [ "enum.CMHolsterLayers.Fill" ]
+      offset: 0, 0
+      visible: false
+    - state: icon-front
+    - state: full
+      visible: false
+    - state: high
+      visible: false
+    - state: medium
+      visible: false
+    - state: low
+      visible: false
+  - type: Clothing
+    slots:
+    - belt
+    - suitStorage
+    sprite: _RMC14/Objects/Clothing/Belt/l49.rsi
+  - type: Storage
+    maxItemSize: Huge
+    grid:
+    - 0,0,19,1 # 10 slots
+    whitelist:
+      tags:
+      - RMCShellShotgun
+      - RMCShellShotgunHDSG
+  - type: FixedItemSizeStorage
+  - type: CMHolster
+  - type: LimitedStorage
+    limits:
+    - popup: rmc-storage-limit-one-gun
+      whitelist:
+        components:
+        - Gun
+  - type: CMStorageVisualizer
+    storageClosed: null
+    storageOpen: null
+  - type: ItemSlots
+    slots:
+      item:
+        name: L49 assault shotgun
+        insertVerbText: sheath-insert-verb
+        ejectVerbText: sheath-eject-verb
+        insertSound: /Audio/_RMC14/Weapons/Guns/gun_rifle_draw.ogg
+        ejectSound: /Audio/_RMC14/Weapons/Guns/gun_rifle_draw.ogg
+        whitelist:
+          tags:
+          - RMCWeaponShotgunL49
+  - type: RMCMagneticItemReceiver
+  - type: ItemMapper
+    mapLayers:
+      low:
+        minCount: 1
+        whitelist:
+          tags:
+          - RMCShellShotgun
+      medium:
+        minCount: 4
+        whitelist:
+          tags:
+          - RMCShellShotgun
+      high:
+        minCount: 7
+        whitelist:
+          tags:
+          - RMCShellShotgun
+      full:
+        minCount: 10
+        whitelist:
+          tags:
+          - RMCShellShotgun
+  - type: CMItemSlots
+  - type: Tag
+    tags:
+    - RMCXM51Holster
+    - RMCL49Holster
+
+- type: entity
+  parent: CMBeltBaseStorage
+  id: RMCBeltBrowne
+  name: M276 'Sam Browne' duty belt
+  description: The M276 'Sam Browne' duty belt is an alternative piece of load-bearing equipment offered to senior officers, military police, and senior enlisted advisors. It consists of a leather belt, a supporting strap worn over the right shoulder, a holster for a sidearm, and a small pouch capable of holding binoculars, a megaphone, policing tools, and other miscellaneous items - even a command tablet.
+  components:
+  - type: Sprite
+    sprite: _RMC14/Objects/Clothing/Belt/browne.rsi
+    layers:
+    - state: icon
+    - sprite: _RMC14/Objects/Weapons/Guns/gun_underlays.rsi
+      state: m1984 # TODO RMC14 per-gun underlay
+      map: [ "enum.CMHolsterLayers.Fill" ]
+    - sprite: _RMC14/Objects/Clothing/Belt/browne.rsi
+      state: icon-front
+      map: [ "holstered" ]
+    - state: half
+      map: [ "openLayer" ]
+    - state: full
+      map: [ "closedLayer" ]
+  - type: Clothing
+    sprite: _RMC14/Objects/Clothing/Belt/browne.rsi
+  - type: Storage
+    maxItemSize: Normal
+    grid:
+    - 0,0,11,1 # 6 slots
+    whitelist:
+      tags:
+      - Stunbaton
+      - SecBeltEquip
+      - Taser
+      - Flashlight
+      - CMMagazinePistol
+      - RMCShellShotgun
+      - RMCShellShotgunHDSG
+      - RMCMagazineRevolver
+      - Donut
+      - RMCGrenadeFlashBang
+      - Radio
+      - Binoculars
+      - CommandTablet
+      components:
+      - Handcuff
+      - Flash
+      - FlashOnTrigger
+      - ForensicScanner
+      - MeleeWeapon
+      - Gun
+      - RMCLighter
+      - RMCMegaphone
+  - type: FixedItemSizeStorage
+  - type: LimitedStorage
+    limits:
+    - popup: rmc-storage-limit-two-guns
+      count: 2
+      whitelist:
+        components:
+        - Gun
+  - type: CMHolster
+    whitelist:
+      components:
+      - Gun
+  - type: ItemMapper
+    spriteLayers:
+    - holstered
+    mapLayers:
+      holstered:
+        whitelist:
+          tags:
+          - Sidearm
+
+- type: Tag
+  id: RMCL49Holster
 
 - type: Tag
   id: RMCNailgunHolster

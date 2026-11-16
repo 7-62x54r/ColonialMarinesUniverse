@@ -1,8 +1,6 @@
-﻿using System.Linq;
 using Content.Client.PDA;
 using Content.Shared.Clothing.Components;
 using Content.Shared.Clothing.EntitySystems;
-using Content.Shared.Inventory;
 using Robust.Client.GameObjects;
 using Robust.Shared.Map;
 using Robust.Shared.Prototypes;
@@ -38,7 +36,7 @@ public sealed partial class ChameleonClothingSystem : SharedChameleonClothingSys
     {
         base.UpdateSprite(uid, proto);
         if (TryComp(uid, out SpriteComponent? sprite)
-            && proto.TryGetComponent(out SpriteComponent? _, Factory))
+            && proto.TryComp(out SpriteComponent? _, Factory))
         {
             var dummy = Spawn(proto.ID, MapCoordinates.Nullspace);
             if (TryComp(dummy, out SpriteComponent? otherSprite))
@@ -48,7 +46,7 @@ public sealed partial class ChameleonClothingSystem : SharedChameleonClothingSys
 
         // Edgecase for PDAs to include visuals when UI is open
         if (TryComp(uid, out PdaBorderColorComponent? borderColor)
-            && proto.TryGetComponent(out PdaBorderColorComponent? otherBorderColor, Factory))
+            && proto.TryComp(out PdaBorderColorComponent? otherBorderColor, Factory))
         {
             borderColor.BorderColor = otherBorderColor.BorderColor;
             borderColor.AccentHColor = otherBorderColor.AccentHColor;

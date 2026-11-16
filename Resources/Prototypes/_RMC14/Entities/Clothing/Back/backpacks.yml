@@ -42,7 +42,9 @@
     maxItemSize: Normal
     grid:
     - 0,0,20,1
-    blacklist: {}
+    blacklist:
+      tags:
+        - Backpack
   - type: ContainerContainer
     containers:
       storagebase: !type:Container
@@ -136,6 +138,16 @@
   components:
   - type: Sprite
     sprite: _RMC14/Objects/Clothing/Back/Backpacks/Marines/standard/jungle-desert-classic.rsi
+  - type: CMUBackpackRocketAttachment
+  - type: AttachableHolder
+    slots:
+      cmu-aslot-backpack:
+        whitelist:
+          components:
+          - CMUBackpackRocketLauncher
+  - type: AttachableHolderVisuals
+    offsets:
+      cmu-aslot-backpack: 0, 0
   - type: ItemCamouflage
     camouflageVariations:
       Jungle: _RMC14/Objects/Clothing/Back/Backpacks/Marines/standard/jungle-desert-classic.rsi
@@ -284,6 +296,7 @@
       components:
       - EmptySandbag
       - FullSandbag
+      - RMCFoldingBarricadeStack
   - type: CMStorageVisualizer
     storageClosed: null
     storageOpen: null
@@ -305,6 +318,7 @@
       components:
       - EmptySandbag
       - FullSandbag
+      - RMCFoldingBarricadeStack
       - MortarShell
 
 - type: entity
@@ -391,7 +405,7 @@
     - 0,0,17,1
   - type: StorageCloseOnMove
     skipInHand: true
-    
+
 - type: entity
   parent: RMCBackpackRCMMedium
   id: RMCBackpackRCMMediumPVP
@@ -424,7 +438,7 @@
     maxItemSize: Normal
     grid:
     - 0,0,23,1
-      
+
 - type: entity
   parent: RMCBackpackRCMLarge
   id: RMCBackpackRCMLargePVP
@@ -492,7 +506,7 @@
     - 0,0,23,1 # 24 Slots
 
 - type: entity
-  parent: RMCBackpackRCMMedicPVP 
+  parent: RMCBackpackRCMMedicPVP
   id: RMCBackpackRCMMedicPVPFilledParaMedic
   suffix: Filled, Paramarine Medic
   components:
@@ -501,5 +515,5 @@
         - id: RMCRadioHandheldColony
         - id: RMCHeadRoyalL1HelmetBallistic
         - id: CMFireExtinguisherPortable
-        - id: CMDefibrillator
+        - id: AU14CMDefibrillator # cmu edit: was CMDefibrillator
         - id: CMHealthAnalyzer

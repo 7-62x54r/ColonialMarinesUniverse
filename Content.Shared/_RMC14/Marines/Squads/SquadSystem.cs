@@ -1,15 +1,13 @@
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Content.Shared._RMC14.Admin;
 using Content.Shared._RMC14.Chat;
-using Content.Shared._RMC14.Commendations;
-using Content.Shared._RMC14.Recommendation;
 using Content.Shared._RMC14.Cryostorage;
 using Content.Shared._RMC14.Inventory;
 using Content.Shared._RMC14.Marines.Announce;
 using Content.Shared._RMC14.Marines.Orders;
 using Content.Shared._RMC14.Pointing;
+using Content.Shared._RMC14.Recommendation;
 using Content.Shared._RMC14.Roles;
 using Content.Shared._RMC14.Tracker;
 using Content.Shared.Access.Components;
@@ -19,6 +17,7 @@ using Content.Shared.Clothing;
 using Content.Shared.Clothing.Components;
 using Content.Shared.Clothing.EntitySystems;
 using Content.Shared.Dataset;
+using Content.Shared.GameTicking;
 using Content.Shared.Hands.EntitySystems;
 using Content.Shared.Inventory;
 using Content.Shared.Mind;
@@ -32,13 +31,12 @@ using Content.Shared.Radio.EntitySystems;
 using Content.Shared.Roles;
 using Content.Shared.Roles.Jobs;
 using Content.Shared.Storage;
-using Content.Shared.GameTicking;
 using Content.Shared.Whitelist;
-using Robust.Client.GameObjects;
 using Robust.Shared.Network;
 using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Utility;
+using Content.Shared.CMU14.Squads; // cmu edit
 
 namespace Content.Shared._RMC14.Marines.Squads;
 
@@ -68,6 +66,15 @@ public sealed partial class SquadSystem : EntitySystem
     private static readonly ProtoId<JobPrototype> SquadLeaderJob = "CMSquadLeader";
     private static readonly ProtoId<JobPrototype> IntelOfficerJob = "CMIntelOfficer";
     public static readonly EntProtoId<SquadTeamComponent> EchoSquadId = "SquadEcho";
+
+    private static readonly Dictionary<string, HashSet<ProtoId<RadioChannelPrototype>>>
+        LeaderChannels = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["GOVFOR"] = new() { "radioGovforJTAC", "radioGovforCommand" },
+            ["OPFOR"] = new() { "radioOpforJTAC", "radioOpforCommand" }
+        };
+    private static readonly HashSet<ProtoId<RadioChannelPrototype>> DefaultLeaderChannels =
+        new() { "MarineJTAC", "MarineCommand" }; // apply unusable/legacy channels on failure
 
     public ImmutableArray<EntityPrototype> SquadPrototypes { get; private set; }
     public ImmutableArray<JobPrototype> SquadRolePrototypes { get; private set; }
@@ -200,7 +207,11 @@ public sealed partial class SquadSystem : EntitySystem
 
     private void OnSquadRoleGetName(Entity<SquadMemberComponent> member, ref GetMarineSquadNameEvent args)
     {
-        if (TryGetMemberSquad(member.Owner, out var squadTeam))
+        // cmu edit start: some squads, like Auxiliary, are left off ID titles
+        // if (TryGetMemberSquad(member.Owner, out var squadTeam))
+        if (TryGetMemberSquad(member.Owner, out var squadTeam) &&
+            !HasComp<CMUAuxiliarySquadComponent>(squadTeam))
+        // cmu edit end
             args.SquadName = Name(squadTeam);
 
         var jobId = _originalRoleQuery.CompOrNull(member)?.Job;
@@ -218,17 +229,22 @@ public sealed partial class SquadSystem : EntitySystem
 
     private void OnSquadMemberEnteredCryo(Entity<SquadMemberComponent> ent, ref EnteredCryostorageEvent args)
     {
-        if (!_originalRoleQuery.TryComp(ent, out var role) || role.Job is not { } jobId)
-            return;
-
-        if (!_squadTeamQuery.TryComp(ent.Comp.Squad, out var squad) ||
-            !squad.Roles.TryGetValue(jobId, out var roles) ||
-            roles <= 0)
-        {
-            return;
-        }
-
-        squad.Roles[jobId] = roles - 1;
+        // CMU14: cryo leaves the body alive on the paused map, so only refunding the slot left cryoed marines
+        // on the squad info manifest. RemoveSquad also refunds the slot, and is the CM13 behavior for cryo.
+        RemoveSquad(ent, null);
+        // CMU14 Begin
+        //if (!_originalRoleQuery.TryComp(ent, out var role) || role.Job is not { } jobId)
+        //    return;
+        //
+        //if (!_squadTeamQuery.TryComp(ent.Comp.Squad, out var squad) ||
+        //    !squad.Roles.TryGetValue(jobId, out var roles) ||
+        //    roles <= 0)
+        //{
+        //    return;
+        //}
+        //
+        //squad.Roles[jobId] = roles - 1;
+        // CMU14 End
     }
 
     private void OnSquadMemberLeftCryo(Entity<SquadMemberComponent> ent, ref LeftCryostorageEvent args)
@@ -259,11 +275,19 @@ public sealed partial class SquadSystem : EntitySystem
 
     private void OnSquadLeaderGetMarineIcon(Entity<SquadLeaderComponent> ent, ref GetMarineIconEvent args)
     {
+        // cmu edit start: auxiliary squad leaders keep their job icon
+        if (HasComp<CMUKeepJobIconComponent>(ent))
+            return;
+        // cmu edit end
+
         args.Icon = ent.Comp.Icon;
     }
 
     private void OnSquadLeaderHeadsetChannelsChanged(Entity<SquadLeaderHeadsetComponent> ent, ref EncryptionChannelsChangedEvent args)
     {
+        if (TerminatingOrDeleted(ent) || args.Component == null)
+            return;
+
         foreach (var channel in ent.Comp.Channels)
         {
             args.Component.Channels.Add(channel);
@@ -401,7 +425,7 @@ public sealed partial class SquadSystem : EntitySystem
         var entBuilder = ImmutableArray.CreateBuilder<EntityPrototype>();
         foreach (var entity in _prototypes.EnumeratePrototypes<EntityPrototype>())
         {
-            if (entity.HasComponent<SquadTeamComponent>())
+            if (entity.HasComp<SquadTeamComponent>(_compFactory))
                 entBuilder.Add(entity);
         }
 
@@ -469,7 +493,7 @@ public sealed partial class SquadSystem : EntitySystem
     public bool TryEnsureSquad(EntProtoId id, out Entity<SquadTeamComponent> squad)
     {
         if (!_prototypes.TryIndex(id, out var prototype) ||
-            !prototype.HasComponent<SquadTeamComponent>(_compFactory))
+            !prototype.HasComp<SquadTeamComponent>(_compFactory))
         {
             squad = default;
             return false;
@@ -507,6 +531,8 @@ public sealed partial class SquadSystem : EntitySystem
         if (!Resolve(team, ref team.Comp))
             return;
 
+        DemoteSquadLeader(marine); // clean up old Squad Leader data
+
         var member = EnsureComp<SquadMemberComponent>(marine);
         var oldSquadId = member.Squad;
         var role = job ?? _originalRoleQuery.CompOrNull(marine)?.Job;
@@ -517,14 +543,10 @@ public sealed partial class SquadSystem : EntitySystem
         {
             oldSquadCheck.Members.Remove(marine);
 
-            if (role != null)
-            {
-                if (oldSquadCheck.Roles.TryGetValue(role.Value, out var oldJobs) &&
-                    oldJobs > 0)
-                {
-                    oldSquadCheck.Roles[role.Value] = oldJobs - 1;
-                }
-            }
+            if (role != null
+                && oldSquadCheck.Roles.TryGetValue(role.Value, out var oldJobs)
+                && oldJobs > 0)
+                oldSquadCheck.Roles[role.Value] = oldJobs - 1;
         }
 
         member.Squad = team;
@@ -538,14 +560,10 @@ public sealed partial class SquadSystem : EntitySystem
         grant.AccessLevels = team.Comp.AccessLevels;
 
         if (_prototypes.TryIndex(job, out var jobProto))
-        {
             grant.RoleName = $"{Name(team)} {jobProto.LocalizedName}";
-        }
-        else if (_mind.TryGetMind(marine, out var mindId, out _) &&
-                 _job.MindTryGetJobName(mindId, out var name))
-        {
+        else if (_mind.TryGetMind(marine, out var mindId, out _)
+            && _job.MindTryGetJobName(mindId, out var name))
             MarineSetTitle(marine, $"{Name(team)} {name}");
-        }
 
         Dirty(marine, grant);
 
@@ -582,7 +600,6 @@ public sealed partial class SquadSystem : EntitySystem
         AdjustCommonKeyForMember(marine, oldRadio, newRadio);
     }
 
-
     private void AdjustCommonKeyForMember(EntityUid marine, ProtoId<RadioChannelPrototype>? removeRadio, ProtoId<RadioChannelPrototype>? addRadio)
     {
         var slots = _inventory.GetSlotEnumerator(marine, SlotFlags.EARS);
@@ -614,6 +631,12 @@ public sealed partial class SquadSystem : EntitySystem
                         keyComp.Channels.Remove(rStr);
                         changed = true;
                     }
+
+                    if (keyComp.DefaultChannel == rStr)
+                    {
+                        keyComp.DefaultChannel = null;
+                        changed = true;
+                    }
                 }
 
                 if (addRadio is { } a)
@@ -622,6 +645,12 @@ public sealed partial class SquadSystem : EntitySystem
                     if (!keyComp.Channels.Contains(aStr))
                     {
                         keyComp.Channels.Add(aStr);
+                        changed = true;
+                    }
+
+                    if (keyComp.DefaultChannel != aStr)
+                    {
+                        keyComp.DefaultChannel = aStr;
                         changed = true;
                     }
                 }
@@ -640,7 +669,7 @@ public sealed partial class SquadSystem : EntitySystem
 
     public void RemoveSquad(EntityUid marine, ProtoId<JobPrototype>? job)
     {
-        RemComp<SquadLeaderComponent>(marine);
+        DemoteSquadLeader(marine);
         if (!TryComp<SquadMemberComponent>(marine, out var member))
             return;
 
@@ -655,14 +684,9 @@ public sealed partial class SquadSystem : EntitySystem
         {
             oldSquad.Members.Remove(marine);
 
-            if (role != null)
-            {
-                if (oldSquad.Roles.TryGetValue(role.Value, out var oldJobs) &&
-                    oldJobs > 0)
-                {
-                    oldSquad.Roles[role.Value] = oldJobs - 1;
-                }
-            }
+            if (role != null
+                && oldSquad.Roles.TryGetValue(role.Value, out var oldJobs) && oldJobs > 0)
+                oldSquad.Roles[role.Value] = oldJobs - 1;
         }
 
         RemComp<SquadMemberComponent>(marine);
@@ -689,7 +713,10 @@ public sealed partial class SquadSystem : EntitySystem
         var ev = new GetMarineSquadNameEvent();
         RaiseLocalEvent(marine, ref ev);
 
-        MarineSetTitle(marine, $"{ev.SquadName} {ev.RoleName}");
+        // cmu edit start: trim so a hidden squad name leaves no leading space
+        // MarineSetTitle(marine, $"{ev.SquadName} {ev.RoleName}");
+        MarineSetTitle(marine, $"{ev.SquadName} {ev.RoleName}".Trim());
+        // cmu edit end
     }
 
     public void MarineSetTitle(EntityUid marine, string title)
@@ -763,42 +790,18 @@ public sealed partial class SquadSystem : EntitySystem
             return;
         }
 
-        if (Resolve(toPromote, ref toPromote.Comp, false))
-        {
-            var leaders = EntityQueryEnumerator<SquadLeaderComponent, SquadMemberComponent>();
-            while (leaders.MoveNext(out var uid, out var leader, out var otherMember))
-            {
-                if (otherMember.Squad != toPromote.Comp.Squad)
-                    continue;
-
-                if (leader.Headset is { } headset)
-                {
-                    RemComp<SquadLeaderHeadsetComponent>(headset);
-                    if (TryComp(headset, out EncryptionKeyHolderComponent? holder))
-                        _encryptionKey.UpdateChannels(headset, holder);
-                }
-
-                if (TryComp(uid, out MarineComponent? otherMarine) &&
-                    Equals(otherMarine.Icon, leader.Icon))
-                {
-                    _marine.ClearIcon((uid, otherMarine));
-                }
-
-                if (TryComp(uid, out MarineOrdersComponent? otherOrders) &&
-                    !otherOrders.Intrinsic)
-                {
-                    RemCompDeferred<MarineOrdersComponent>(uid);
-                }
-
-                RemComp<SquadLeaderComponent>(uid);
-                RemComp<RMCTrackableComponent>(uid);
-                RemCompDeferred<RMCPointingComponent>(uid);
-            }
-        }
-
         var newLeader = EnsureComp<SquadLeaderComponent>(toPromote);
         newLeader.Icon = icon;
-
+        // cmu edit start: auxiliary squad leaders keep their job icon
+        if (_squadMemberQuery.TryComp(toPromote, out var promotedMember) &&
+            promotedMember.Squad is { } promotedSquad &&
+            HasComp<CMUAuxiliarySquadComponent>(promotedSquad))
+        {
+            EnsureComp<CMUKeepJobIconComponent>(toPromote);
+        }
+        // cmu edit end
+        EnsureComp<RMCTrackableComponent>(toPromote);
+        EnsureComp<RMCPointingComponent>(toPromote);
         EnsureComp<RMCAwardRecommendationComponent>(toPromote);
         _awardRecommendation.SetCanRecommend(toPromote, true);
 
@@ -809,26 +812,28 @@ public sealed partial class SquadSystem : EntitySystem
             _marineOrders.StartActionUseDelay((toPromote, orders));
         }
 
-        EnsureComp<RMCTrackableComponent>(toPromote);
-        EnsureComp<RMCPointingComponent>(toPromote);
+        _marineOrders.EnsureOrderActions((toPromote.Owner, orders));
 
+        var squad = toPromote.Comp?.Squad;
         var slots = _inventory.GetSlotEnumerator(toPromote.Owner, SlotFlags.EARS);
         while (slots.MoveNext(out var slot))
         {
             if (slot.ContainedEntity is not { } contained)
                 continue;
 
-            if (TryComp(contained, out EncryptionKeyHolderComponent? holder))
+            if (squad != null && TryComp(contained, out EncryptionKeyHolderComponent? holder))
             {
                 newLeader.Headset = contained;
                 Dirty(toPromote, newLeader);
-                EnsureComp<SquadLeaderHeadsetComponent>(contained);
+                var leaderHeadset = EnsureComp<SquadLeaderHeadsetComponent>(contained);
+                leaderHeadset.Leader = toPromote;
+                Dirty(contained, leaderHeadset);
+                UpdateSquadLeaderHeadsetChannels(contained, squad.Value);
                 _encryptionKey.UpdateChannels(contained, holder);
                 break;
             }
         }
 
-        var squad = toPromote.Comp?.Squad;
         if (TryComp(toPromote, out ActorComponent? actor))
         {
             var squadStr = Exists(squad) ? $" for {Name(squad.Value)}" : string.Empty;
@@ -841,6 +846,58 @@ public sealed partial class SquadSystem : EntitySystem
             _marineAnnounce.AnnounceSquad(Loc.GetString("rmc-overwatch-console-new-squad-leader-announce", ("leaderName", Name(toPromote))), squadProto.ID);
             _popup.PopupCursor(Loc.GetString("rmc-overwatch-console-new-squad-leader-popup", ("leaderName", Name(toPromote)), ("squadName", Name(squad.Value))), user, PopupType.Medium);
         }
+
+        // Demote after promote, so the squad members are not in a limbo without SL
+        if (Resolve(toPromote, ref toPromote.Comp, false))
+        {
+            var leaders = EntityQueryEnumerator<SquadLeaderComponent, SquadMemberComponent>();
+            while (leaders.MoveNext(out var uid, out var _, out var otherMember))
+            {
+                if (uid == toPromote.Owner)
+                    continue;
+
+                if (otherMember.Squad != toPromote.Comp.Squad)
+                    continue;
+
+                DemoteSquadLeader(uid);
+            }
+        }
+    }
+
+    private void DemoteSquadLeader(EntityUid marine)
+    {
+        if (!TryComp(marine, out SquadLeaderComponent? leader))
+            return;
+
+        if (leader.Headset is { } headset && !TerminatingOrDeleted(headset))
+        {
+            RemComp<SquadLeaderHeadsetComponent>(headset);
+            if (TryComp(headset, out EncryptionKeyHolderComponent? holder))
+                _encryptionKey.UpdateChannels(headset, holder);
+        }
+
+        if (TryComp(marine, out MarineComponent? otherMarine)
+            && Equals(otherMarine.Icon, leader.Icon))
+            _marine.ClearIcon((marine, otherMarine));
+
+        if (TryComp(marine, out MarineOrdersComponent? otherOrders) && !otherOrders.Intrinsic)
+            RemCompDeferred<MarineOrdersComponent>(marine);
+
+        RemComp<SquadLeaderComponent>(marine);
+        RemComp<CMUKeepJobIconComponent>(marine); // cmu edit
+        RemComp<RMCTrackableComponent>(marine);
+        RemCompDeferred<RMCPointingComponent>(marine);
+        _awardRecommendation.SetCanRecommend(marine, false);
+    }
+
+    private void UpdateSquadLeaderHeadsetChannels(EntityUid headset, EntityUid squad)
+    {
+        if (!TryComp<SquadLeaderHeadsetComponent>(headset, out var headsetComp) ||
+            !TryComp<SquadTeamComponent>(squad, out var squadTeam))
+            return;
+
+        headsetComp.Channels = LeaderChannels.GetValueOrDefault(squadTeam.Group ?? "", DefaultLeaderChannels);
+        Dirty(headset, headsetComp);
     }
 
     public bool AreInSameSquad(Entity<SquadMemberComponent?> one, Entity<SquadMemberComponent?> two)
@@ -1080,4 +1137,3 @@ public sealed partial class SquadSystem : EntitySystem
         _membersToUpdate.Clear();
     }
 }
-

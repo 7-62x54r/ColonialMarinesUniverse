@@ -25,22 +25,22 @@
       visible: false
     - state: display-charging
       shader: unshaded
-      map: [ "enum.ApcVisualLayers.ChargeState" ]
+      map: [ "enum.RMCApcSpriteLayers.ChargeState" ]
     - state: apcox-0
       shader: unshaded
-      map: [ "enum.ApcVisualLayers.InterfaceLock" ]
+      map: [ "enum.RMCApcSpriteLayers.InterfaceLock" ]
     - state: apcox-1
       shader: unshaded
-      map: [ "enum.ApcVisualLayers.PanelLock" ]
+      map: [ "enum.RMCApcSpriteLayers.PanelLock" ]
     - state: apco0-2
       shader: unshaded
-      map: [ "enum.ApcVisualLayers.Equipment" ]
+      map: [ "enum.RMCApcSpriteLayers.Equipment" ]
     - state: apco1-2
       shader: unshaded
-      map: [ "enum.ApcVisualLayers.Lighting" ]
+      map: [ "enum.RMCApcSpriteLayers.Lighting" ]
     - state: apco2-2
       shader: unshaded
-      map: [ "enum.ApcVisualLayers.Environment" ]
+      map: [ "enum.RMCApcSpriteLayers.Environment" ]
   - type: Appearance
   - type: WallMount
     arc: 360
@@ -58,6 +58,7 @@
       components:
       - Xeno
   - type: Damageable
+  - type: Injurable
     damageContainer: Inorganic
   - type: Destructible
     thresholds:
@@ -82,54 +83,54 @@
         enum.WiresVisualLayers.MaintenancePanel: # TODO RMC14
           Working: { visible: false }
           WiresExposed: { visible: false }
-        enum.ApcVisualLayers.ChargeState: # TODO RMC14
+        enum.RMCApcSpriteLayers.ChargeState: # TODO RMC14
           Working: { visible: true }
           WiresExposed: { visible: false }
           CoverOpenBattery: { visible: false }
           CoverOpenNoBattery: { visible: false }
-        enum.ApcVisualLayers.InterfaceLock:
+        enum.RMCApcSpriteLayers.InterfaceLock:
           Working: { visible: true }
           WiresExposed: { visible: false }
           CoverOpenBattery: { visible: false }
           CoverOpenNoBattery: { visible: false }
-        enum.ApcVisualLayers.PanelLock:
+        enum.RMCApcSpriteLayers.PanelLock:
           Working: { visible: true }
           WiresExposed: { visible: false }
           CoverOpenBattery: { visible: false }
           CoverOpenNoBattery: { visible: false }
-        enum.ApcVisualLayers.Equipment:
+        enum.RMCApcSpriteLayers.Equipment:
           Working: { visible: true }
           WiresExposed: { visible: false }
           CoverOpenBattery: { visible: false }
           CoverOpenNoBattery: { visible: false }
-        enum.ApcVisualLayers.Lighting:
+        enum.RMCApcSpriteLayers.Lighting:
           Working: { visible: true }
           WiresExposed: { visible: false }
           CoverOpenBattery: { visible: false }
           CoverOpenNoBattery: { visible: false }
-        enum.ApcVisualLayers.Environment:
+        enum.RMCApcSpriteLayers.Environment:
           Working: { visible: true }
           WiresExposed: { visible: false }
           CoverOpenBattery: { visible: false }
           CoverOpenNoBattery: { visible: false }
       enum.RMCApcVisualsLayers.Lock:
-        enum.ApcVisualLayers.InterfaceLock:
+        enum.RMCApcSpriteLayers.InterfaceLock:
           true: { state: apcox-1 }
           false: { state: apcox-0 }
-#        enum.ApcVisualLayers.PanelLock: # TODO RMC14
+#        enum.RMCApcSpriteLayers.PanelLock: # TODO RMC14
 #          Working: { visible: false }
 #          Broken: { visible: false }
-#        enum.ApcVisualLayers.Equipment: # TODO RMC14
+#        enum.RMCApcSpriteLayers.Equipment: # TODO RMC14
 #          Working: { visible: false }
 #          Broken: { visible: false }
-#        enum.ApcVisualLayers.Lighting: # TODO RMC14
+#        enum.RMCApcSpriteLayers.Lighting: # TODO RMC14
 #          Working: { visible: false }
 #          Broken: { visible: false }
-#        enum.ApcVisualLayers.Environment: # TODO RMC14
+#        enum.RMCApcSpriteLayers.Environment: # TODO RMC14
 #          Working: { visible: false }
 #          Broken: { visible: false }
       enum.RMCApcVisualsLayers.Power:
-        enum.ApcVisualLayers.ChargeState:
+        enum.RMCApcSpriteLayers.ChargeState:
           NotCharging: { state: display-lack }
           Charging: { state: display-charging }
           FullCharge: { state: display-full }
@@ -138,6 +139,65 @@
     containers:
       rmc_apc_power_cell: !type:ContainerSlot
   - type: SpriteSetRenderOrder
+  # CMU14 Begin: the tile power stack, so a placed CMApc is a working APC on
+  # CMUMapUsesTilePower maps (MV feed in, LV supply out, battery buffer). On area
+  # power maps it idles: the wizden power writer skips carriers of RMCPowerReceiver
+  # and no functional cables exist to feed the charger, while RMCApc itself is gated
+  # off on tile power maps.
+  - type: StationAiWhitelist
+  - type: AmbientOnPowered
+  - type: AmbientSound
+    volume: -9
+    range: 2
+    sound:
+      path: /Audio/Ambience/Objects/hdd_buzz.ogg
+  - type: ExaminableBattery
+  - type: NodeContainer
+    examinable: true
+    nodes:
+      input:
+        !type:CableDeviceNode
+        nodeGroupID: MVPower
+      output:
+        !type:CableDeviceNode
+        nodeGroupID: Apc
+        connection: Both
+  - type: PowerMonitoringDevice
+    group: APC
+    sourceNode: input
+    loadNode: output
+    collectionName: apc
+    sprite: Structures/Wallmounts/apc.rsi
+    state: static
+  - type: BatteryCharger
+    voltage: Medium
+  - type: PowerProvider
+    voltage: Apc
+  - type: Apc
+    voltage: Apc
+  - type: ExtensionCableProvider
+  - type: Battery
+    # no netsync: a networked battery dirties every tick against the power net
+    netsync: false
+    maxCharge: 50000
+    startingCharge: 0
+  - type: PowerNetworkBattery
+    maxSupply: 10000
+    maxChargeRate: 5000
+    supplyRampTolerance: 1000
+    supplyRampRate: 500
+  - type: Electrified
+    onHandInteract: false
+    onInteractUsing: false
+    onBump: false
+    requirePower: true
+    mediumVoltageNode: input
+    lowVoltageNode: output
+  - type: LightningTarget
+    priority: 1
+  - type: StationInfiniteBatteryTarget
+  - type: PowerGridCheckNotify
+  # CMU14 End
 
 # APC under construction
 - type: entity
@@ -174,6 +234,20 @@
 - type: entity
   parent: CMApcBase
   id: CMApcConstructed
+  components:
+  - type: Construction
+    graph: CMApc
+    node: apc
+  # CMU14 Begin: superseded by the CMU14 node container on CMApcBase, which adds
+  # the MV input; the Apc output here would override it and drop that feed.
+  # - type: NodeContainer # CMU14: the APC takes its power from a cable run by hand to it
+  #   examinable: true
+  #   nodes:
+  #     input:
+  #       !type:CableDeviceNode
+  #       nodeGroupID: Apc
+  #       connection: Direct
+  # CMU14 End
 
 - type: entity
   parent: CMApcBase

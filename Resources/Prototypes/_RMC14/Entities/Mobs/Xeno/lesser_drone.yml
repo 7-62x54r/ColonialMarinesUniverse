@@ -10,18 +10,21 @@
   description: An alien drone. Looks... smaller.
   components:
   - type: GhostRole
-    name: cm-job-name-xeno-lesser-drone
+    name: cmu-job-name-xeno-unknown
     description: roles-lesser-drone-description
     raffle:
       settings: short
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/LesserDrone/lesser_drone.rsi # AU14-Edit Start
+    sprite: CMU14/Mobs/Xenos/LesserDrone/lesser_drone.rsi # AU14-Edit Start
     layers:
     - map: [ "enum.XenoVisualLayers.Base" ]
       state: alive
     - map: [ "enum.XenoInhandVisualLayers.Left" ]
       visible: false
     - map: [ "enum.XenoInhandVisualLayers.Right" ]
+      visible: false
+    - map: [ "enum.RMCShieldVisuals.Base" ]
+      sprite: _RMC14/Effects/xeno_shields.rsi
       visible: false
     - map: [ "focused" ]
       sprite: _RMC14/Interface/xeno_hud.rsi
@@ -35,6 +38,12 @@
       sprite: _RMC14/Effects/targeted.rsi
       state: sniper_lockon_intense_direction
       visible: false  # AU14-Edit End
+  - type: FiremanCarriable
+    canThrow: true
+    carrierWhitelist:
+      components:
+      - Synth
+      - Yautja # CMU14: Yautja may carry this caste too - CM-SS13's grab gate reaches MOB_SIZE_XENO (mob_grab.dm:82-89).
   - type: MobState
     allowedStates:
     - Alive
@@ -82,12 +91,16 @@
     plasmaRegenOnWeeds: 4
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 20
+      types:
+        Blunt: 6.66
+        Slash: 6.67
+        Piercing: 6.67
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 24
+      types:
+        Blunt: 8
+        Slash: 8
+        Piercing: 8
   - type: Tackle
     min: 4
     max: 5
@@ -136,7 +149,7 @@
   - type: XenoInhands
     prefix: lesser
   - type: FixedIdentity
-    name: cm-job-name-xeno-lesser-drone
+    name: cmu-job-name-xeno-unknown
   - type: VentCrawler
     ventCrawlIcon: lesser
   - type: RMCActionOrder

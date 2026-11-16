@@ -6,10 +6,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: resting
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: resting
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoRestActionEvent
 
@@ -30,9 +32,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: watch_xeno
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoWatchActionEvent
 
@@ -53,10 +57,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: emit_pheromones
     useDelay: 0.33
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: emit_pheromones
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoPheromonesActionEvent
 
@@ -78,10 +84,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: xenohide
     useDelay: 0.5
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: xenohide
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoHideActionEvent
 
@@ -101,10 +109,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: crest_defense
     useDelay: 2
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: crest_defense
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoToggleCrestActionEvent
 
@@ -124,10 +134,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: fortify
     useDelay: 5
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: fortify
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoFortifyActionEvent
 
@@ -153,10 +165,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: toggle_speed
     useDelay: 0.25
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: toggle_speed
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoResinWalkerActionEvent
 
@@ -175,10 +189,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: toggle_long_range
     useDelay: 0.2
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: toggle_long_range
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoZoomActionEvent
 
@@ -198,26 +214,91 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: queen_word
     useDelay: 10
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: queen_word
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoWordQueenActionEvent
   - type: XenoWordQueenAction
   - type: RMCDazeableAction
 
 - type: entity
+  id: ActionXenoPsychicWhisper
+  parent: ActionXenoBase
+  name: Psychic Whisper
+  description: Whisper a psychic message to a nearby mind.
+  components:
+  - type: Action
+    itemIconStyle: NoItem
+    useDelay: 10
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: psychic_whisper
+      map: ["enum.ActionVisuals.Icon"]
+  - type: TargetAction
+    range: 7
+  - type: EntityTargetAction
+    event: !type:XenoPsychicWhisperActionEvent
+    canTargetSelf: false
+    toggleOutline: false
+    whitelist:
+      components:
+      - MobState
+  - type: RMCDazeableAction
+
+- type: entity
+  id: ActionXenoPsychicRadiance
+  parent: ActionXenoBase
+  name: Psychic Radiance (100)
+  description: Radiate a psychic message to nearby minds.
+  components:
+  - type: Action
+    itemIconStyle: NoItem
+    useDelay: 10
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: psychic_radiance
+      map: ["enum.ActionVisuals.Icon"]
+  - type: InstantAction
+    event: !type:XenoPsychicRadianceActionEvent
+  - type: RMCDazeableAction
+
+- type: entity
+  id: ActionXenoGiveOrder
+  parent: ActionXenoBase
+  name: Give Order (100)
+  description: Send a psychic order to the xenonid you are watching.
+  components:
+  - type: Action
+    itemIconStyle: NoItem
+    useDelay: 10
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: queen_order
+      map: ["enum.ActionVisuals.Icon"]
+  - type: InstantAction
+    event: !type:XenoGiveOrderActionEvent
+  - type: RMCDazeableAction
+
+- type: entity
   id: ActionXenoGrowOvipositor
   parent: ActionXenoBase
-  name: Grow Ovipositor (700) # TODO RMC14 proper plasma costs
+  name: Grow Ovipositor (500)
   description: Become immobile and start laying eggs which will produce children. Has a 5 minute cooldown. [color=red]You must be in ovipositor mode for other xenonids to gain evolution points after round-start![/color]
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: grow_ovipositor
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoGrowOvipositorActionEvent
   - type: XenoGrowOvipositorAction
@@ -240,9 +321,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: lurker_invisibility
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoTurnInvisibleActionEvent
 
@@ -262,10 +345,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: empower
     useDelay: 26
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: empower
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoDefensiveShieldActionEvent
 
@@ -285,9 +370,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: retrieve_egg
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     checkCanAccess: false
     deselectOnMiss: false
@@ -312,10 +399,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: throw_parasite
     useDelay: 0
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: throw_parasite
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     checkCanAccess: false
     deselectOnMiss: false
@@ -340,10 +429,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: reserve_parasite
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: reserve_parasite
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoReserveParasiteActionEvent
 
@@ -362,10 +453,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: xeno_readmit
     useDelay: 0.5
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: xeno_readmit
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:ManageHiveActionEvent
 
@@ -377,10 +470,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _CM13/Actions/xeno_strain_actions.rsi
-      state: dancer_dodge
     useDelay: 19
+  - type: Sprite
+    layers:
+    - sprite: _CM13/Actions/xeno_strain_actions.rsi
+      state: dancer_dodge
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoDodgeActionEvent
   - type: XenoActionPlasma
@@ -394,10 +489,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: burrow
     checkCanInteract: false
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: burrow
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     range: 8
     repeat: true
@@ -423,10 +520,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: soak
     useDelay: 17
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: soak
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoSoakActionEvent
   - type: ActionBlockIfResting
@@ -445,9 +544,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: rav_empower
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoEmpowerActionEvent
   - type: ActionBlockIfResting
@@ -468,9 +569,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: lay_egg
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoGenerateEggsActionEvent
 
@@ -490,10 +593,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: screech
     useDelay: 24
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: screech
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Heatshield.XenoSelfImmolateActionEvent
   - type: XenoActionPlasma
@@ -508,10 +613,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: fortify
     useDelay: 16
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: fortify
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Heatshield.XenoThermoregulationActionEvent
   - type: XenoActionPlasma
@@ -526,10 +633,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _CM13/Actions/xeno_strain_actions.rsi
-      state: venator_store_acid
     useDelay: 5
+  - type: Sprite
+    layers:
+    - sprite: _CM13/Actions/xeno_strain_actions.rsi
+      state: venator_store_acid
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Venator.XenoStoreAcidActionEvent
   - type: XenoActionPlasma
@@ -544,10 +653,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _CM13/Actions/xeno_strain_actions.rsi
-      state: bulwark_encased_plates
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _CM13/Actions/xeno_strain_actions.rsi
+      state: bulwark_encased_plates
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Bulwark.XenoEncasedPlatesActionEvent
   - type: ActionBlockIfResting
@@ -560,12 +671,15 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _CM13/Actions/xeno_strain_actions.rsi
-      state: bulwark_reflective_shield
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _CM13/Actions/xeno_strain_actions.rsi
+      state: bulwark_reflective_shield
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Bulwark.XenoReflectiveShieldActionEvent
+  - type: XenoReflectiveShieldAction
   - type: ActionBlockIfResting
 
 - type: entity
@@ -576,10 +690,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: shift_spit_neurotoxin
     useDelay: 0.5
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: shift_spit_neurotoxin
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Alchemist.XenoSelectChemicalActionEvent
 
@@ -591,10 +707,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: secrete_resin
     useDelay: 3
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: secrete_resin
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Alchemist.XenoProduceChemicalActionEvent
   - type: XenoActionPlasma
@@ -609,10 +727,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: dump_acid
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: dump_acid
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Alchemist.XenoRemoveChemicalActionEvent
 
@@ -624,14 +744,19 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _CM13/Actions/xeno_strain_actions.rsi
-      state: reaper_carrion_mantle
     useDelay: 30
+  - type: Sprite
+    layers:
+    - sprite: _CM13/Actions/xeno_strain_actions.rsi
+      state: reaper_carrion_mantle
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     range: 5
   - type: EntityTargetAction
     event: !type:Content.Shared._RMC14.Xenonids.Reaper.XenoCarrionMantleActionEvent
+    whitelist: # CMU14: only xenos, so a click that lands on weeds under a moving hivemate keeps targeting
+      components:
+      - Xeno
   - type: ActionBlockIfResting
   - type: ActionInRangeUnobstructed
     range: 5

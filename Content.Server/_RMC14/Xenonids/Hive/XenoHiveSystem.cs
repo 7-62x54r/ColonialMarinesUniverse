@@ -1,45 +1,63 @@
 using Content.Server._RMC14.Announce;
+using Content.Server.Destructible;
 using Content.Server.GameTicking;
 using Content.Server.Popups;
+using Content.Shared._RMC14.Explosion;
 using Content.Shared._RMC14.Admin;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Chat;
 using Content.Shared._RMC14.Marines;
+using Content.Shared._RMC14.Sprite;
 using Content.Shared._RMC14.Synth;
 using Content.Shared._RMC14.Xenonids;
+using Content.Shared._RMC14.Xenonids.Evolution; // CMU14
+using Content.Shared._RMC14.Xenonids.Construction;
 using Content.Shared._RMC14.Xenonids.Hive;
 using Content.Shared.Chat;
+using Content.Shared.Coordinates;
+using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
 using Content.Shared.GameTicking;
 using Content.Shared.Popups;
+using Content.Shared.Radio;
 using Content.Shared.Roles;
 using Robust.Server.Audio;
 using Robust.Server.GameObjects;
 using Robust.Shared.Audio;
 using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
+using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Timing;
 using System.Data;
-using Content.Server.AU14.Round;
+using Content.Server.CMU14.Round;
 using IConfigurationManager = Robust.Shared.Configuration.IConfigurationManager;
 using Content.Server.Radio;
+using Content.Shared.CMU14.Xenomorphs.Pathogen;
 
 namespace Content.Server._RMC14.Xenonids.Hive;
 
 public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
 {
     [Dependency] private AudioSystem _audio = default!;
+    [Dependency] private IComponentFactory _compFactory = default!;
     [Dependency] private IConfigurationManager _config = default!;
     [Dependency] private GameTicker _gameTicker = default!;
     [Dependency] private MetaDataSystem _metaData = default!;
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private IPrototypeManager _prototypes = default!;
     [Dependency] private XenoAnnounceSystem _xenoAnnounce = default!;
+    [Dependency] private XenoEvolutionSystem _xenoEvolution = default!; // CMU14
     [Dependency] private PopupSystem _popup = default!;
+    [Dependency] private SharedRMCSpriteSystem _rmcSprite = default!;
+    [Dependency] private ISerializationManager _serialization = default!;
     [Dependency] private TransformSystem _transform = default!;
     [Dependency] private SharedCMChatSystem _rmcChat = default!;
     [Dependency] private AuRoundSystem _auRoundSystem = default!;
 
+    private const int InvinciblePer = 10;
+
     private readonly List<string> _announce = [];
+    private readonly List<Entity<InvincibleHiveStructureComponent>> _invincibles = new();
     private readonly EntProtoId _defaultHive = "CMXenoHive";
 
     private TimeSpan _lateJoinsPerBurrowedLarvaEarlyThreshold;
@@ -53,7 +71,9 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
 
         SubscribeLocalEvent<HijackBurrowedSurgeComponent, ComponentStartup>(OnBurrowedSurgeStartup);
         SubscribeLocalEvent<HijackBurrowedSurgeComponent, ComponentShutdown>(OnBurrowedSurgeShutdown);
+        SubscribeLocalEvent<InvincibleHiveStructureComponent, MapInitEvent>(OnInvincibleMapInit);
         SubscribeLocalEvent<RadioReceiveAttemptEvent>(OnRadioReceiveAttempt);
+        SubscribeLocalEvent<CMUPathogenHiveMemberComponent, MapInitEvent>(OnPathogenSpawn);
 
         Subs.CVar(_config,
             RMCCVars.RMCLateJoinsPerBurrowedLarvaEarlyThresholdMinutes,
@@ -68,7 +88,6 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
         if (args.Channel.ID != SharedChatSystem.HivemindChannel.Id)
             return;
 
-        //since hivemind is an intrinsic channel, we can probably just access it directly
         if (TryComp<HiveMemberComponent>(args.RadioSource, out var hivea) && IsMember(args.RadioReceiver, hivea.Hive))
             return;
         else args.Cancelled = true;
@@ -105,7 +124,7 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
                 continue;
 
             hive.LateJoinMarines -= lateJoinsPer;
-            IncreaseBurrowedLarva((uid, hive), 1);
+            ChangeBurrowedLarva((uid, hive), 1);
         }
     }
 
@@ -117,6 +136,115 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
     private void OnBurrowedSurgeShutdown(Entity<HijackBurrowedSurgeComponent> hive, ref ComponentShutdown args)
     {
         _xenoAnnounce.AnnounceToHive(EntityUid.Invalid, hive, Loc.GetString("rmc-xeno-burrowed-surge-end"));
+    }
+
+    private void OnInvincibleMapInit(Entity<InvincibleHiveStructureComponent> ent, ref MapInitEvent args)
+    {
+        ent.Comp.ReplaceAt = _timing.CurTime + ent.Comp.Duration;
+        Dirty(ent);
+
+        RemComp<DamageableComponent>(ent);
+        RemComp<DestructibleComponent>(ent);
+        RemComp<RMCWallExplosionDeletableComponent>(ent);
+        RemComp<XenoConstructionRequiresSupportComponent>(ent);
+
+        if (ent.Comp.BlockerId != null)
+            ent.Comp.Blocker = Spawn(ent.Comp.BlockerId, ent.Owner.ToCoordinates());
+
+        _rmcSprite.SetColor(ent.Owner, ent.Comp.Color);
+    }
+
+    /// <summary>
+    /// When CMUPathogenHive itself finishes MapInit, retroactively assign any Pathogen members
+    /// that spawned before the hive entity existed (e.g. map-placed entities).
+    /// </summary>
+    private void OnPathogenSpawn(Entity<CMUPathogenHiveMemberComponent> ent, ref MapInitEvent args)
+    {
+        TryAssignPathogenHive(ent.Owner);
+    }
+
+    private void TryAssignPathogenHive(EntityUid uid)
+    {
+        if (TerminatingOrDeleted(uid))
+            return;
+
+        var hives = EntityQueryEnumerator<HiveComponent, MetaDataComponent>();
+        while (hives.MoveNext(out var hiveUid, out _, out var meta))
+        {
+            if (meta.EntityPrototype?.ID != "CMUPathogenHive")
+                continue;
+
+            Log.Debug($"TryAssignPathogenHive: assigning {ToPrettyString(uid)} to Pathogen hive {ToPrettyString(hiveUid)}");
+            SetHive(uid, hiveUid);
+            return;
+        }
+
+        // CMU14 Begin
+        // a 0 ms timer re-ran every tick for as long as no pathogen hive existed (admin spawns, rounds without one)
+        // and spun test threads forever. map-placed members can wait a while for the hive, so keep retrying, just slowly
+        Log.Debug($"TryAssignPathogenHive: CMUPathogenHive not found for {ToPrettyString(uid)}, retrying");
+        Timer.Spawn(TimeSpan.FromSeconds(1), () => TryAssignPathogenHive(uid));
+        // CMU14 End
+    }
+
+    private void UpdateInvincible()
+    {
+        if (_invincibles.Count == 0)
+        {
+            var time = _timing.CurTime;
+            var query = EntityQueryEnumerator<InvincibleHiveStructureComponent>();
+            while (query.MoveNext(out var uid, out var comp))
+            {
+                if (time < comp.ReplaceAt)
+                    continue;
+
+                _invincibles.Add((uid, comp));
+            }
+        }
+
+        try
+        {
+            var i = 0;
+            for (var j = _invincibles.Count - 1; j >= 0; j--)
+            {
+                if (i++ > InvinciblePer)
+                    break;
+
+                var ent = _invincibles[j];
+                _invincibles.RemoveAt(j);
+
+                if (TerminatingOrDeleted(ent))
+                    continue;
+
+                RemCompDeferred<InvincibleHiveStructureComponent>(ent);
+                QueueDel(ent.Comp.Blocker);
+
+                _rmcSprite.SetColor(ent.Owner, Color.White);
+
+                if (!_prototypes.TryIndex(ent.Comp.Replace, out var replace))
+                    continue;
+
+                _metaData.SetEntityName(ent, replace.Name);
+
+                if (replace.TryComp(out DamageableComponent? damageable, _compFactory))
+                    AddComp(ent, _serialization.CreateCopy(damageable, notNullableOverride: true), true);
+
+                if (replace.TryComp(out DestructibleComponent? destructible, _compFactory))
+                    AddComp(ent, _serialization.CreateCopy(destructible, notNullableOverride: true), true);
+
+                if (replace.TryComp(out RMCWallExplosionDeletableComponent? wallDeletable, _compFactory))
+                    AddComp(ent, _serialization.CreateCopy(wallDeletable, notNullableOverride: true), true);
+
+                if (replace.TryComp(out XenoConstructionRequiresSupportComponent? requiresSupport, _compFactory))
+                    AddComp(ent, _serialization.CreateCopy(requiresSupport, notNullableOverride: true), true);
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Error($"Error processing {nameof(InvincibleHiveStructureComponent)}:\n{e}");
+
+            _invincibles.Clear();
+        }
     }
 
     public override void Update(float frameTime)
@@ -154,7 +282,9 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
                 }
             }
 
-            if (_announce.Count > 0)
+            // CMU14: with no living members only ghosts would hear it, skip entirely
+            if (_announce.Count > 0
+                && _xenoEvolution.HasLiving<XenoComponent>(1, hive: hiveId))
             {
                 var popup = Loc.GetString("rmc-hive-supports-castes", ("castes", string.Join(", ", _announce)));
                 _xenoAnnounce.AnnounceToHive(EntityUid.Invalid, hiveId, popup, hive.AnnounceSound, PopupType.Large);
@@ -169,14 +299,13 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
                 Dirty(hiveId, hive);
             }
 
-            if (!hive.AnnouncedHiveCoreCooldownOver && hive.NewCoreAt.HasValue && roundTime >= hive.NewCoreAt)
+            if (!hive.AnnouncedHiveCoreCooldownOver && hive.NewCoreAt.HasValue && _timing.CurTime >= hive.NewCoreAt) // CMU14: absolute deadline
             {
                 var corePopup = Loc.GetString("rmc-hive-core-cooldown-over");
                 _xenoAnnounce.AnnounceToHive(EntityUid.Invalid, hiveId, corePopup, hive.AnnounceSound);
                 hive.AnnouncedHiveCoreCooldownOver = true;
                 Dirty(hiveId, hive);
             }
-
         }
 
         var time = _timing.CurTime;
@@ -186,25 +315,33 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
             if (time < burrowed.NextSurgeAt)
                 continue;
 
-            if (GetHiveCore((id, hive)) == null)
+            if (!HasBurrowedLarvaSpawnPoint((id, hive)))
             {
-                //Reset time between if no core
                 if (burrowed.SurgeEvery != burrowed.ResetSurgeTime)
                     burrowed.SurgeEvery = burrowed.ResetSurgeTime;
+
+                burrowed.NextSurgeAt = time + burrowed.SurgeEvery;
+                Dirty(id, burrowed);
                 continue;
             }
 
-            IncreaseBurrowedLarva(1);
+            ChangeBurrowedLarva((id, hive), 1);
             burrowed.PooledLarva--;
             if (burrowed.PooledLarva < 1)
+            {
+                Dirty(id, burrowed);
                 RemCompDeferred<HijackBurrowedSurgeComponent>(id);
+                continue;
+            }
 
             if (burrowed.SurgeEvery > burrowed.MinSurgeTime)
                 burrowed.SurgeEvery -= burrowed.ReduceSurgeBy;
 
             burrowed.NextSurgeAt = time + burrowed.SurgeEvery;
-
+            Dirty(id, burrowed);
         }
+
+        UpdateInvincible();
     }
 
     /// <summary>
@@ -219,11 +356,9 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
 
     public void EvoScreech(HiveComponent hive)
     {
-
         if (hive.CurrentQueen is not { } queen)
             return;
 
-        // Get the map that the queen is on
         var map = _transform.GetMapId(queen);
         var mapFilter = Filter.BroadcastMap(map);
 
@@ -234,7 +369,8 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
 
             if (HasComp<XenoComponent>(recipient))
                 continue;
-            if (_auRoundSystem._selectedthreat.hiveevolution)
+
+            if (_auRoundSystem.SelectedThreat?.hiveevolution == true)
             {
                 var popupText = Loc.GetString(HasComp<SynthComponent>(recipient)
                     ? "rmc-hive-supports-castes-synth"
@@ -244,12 +380,7 @@ public sealed partial class XenoHiveSystem : SharedXenoHiveSystem
 
                 _audio.PlayEntity(hive.MarineAnnounceSound, recipient, recipient);
                 _rmcChat.ChatMessageToOne(ChatChannel.Radio, popupText, popupText, default, false, session.Channel);
-
             }
-
-
-
-
         }
     }
 }

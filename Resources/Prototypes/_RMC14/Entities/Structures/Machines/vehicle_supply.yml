@@ -1,6 +1,6 @@
 - type: entity
   parent: CMBaseStructureCorrodible
-  id: VehicleSupplyConsole
+  id: VehicleSupplyConsole # CMU14: filtered by platoon, without research gates.
   name: vehicle supply console
   description: A console for ordering vehicles and their hardpoints.
   components:
@@ -28,43 +28,115 @@
     key: enum.VehicleSupplyUIKey.Key
   - type: ActivatableUIRequiresAccess
   - type: AccessReader
-    access: [ [ "CMAccessRequisitions" ] ]
+    access: [ [ "RMCAccessVehicleCrew" ],  [ "AU14AccessGovforPilot" ], [ "AU14AccessOpforPilot"  ] ]
   - type: UserInterface
     interfaces:
       enum.VehicleSupplyUIKey.Key:
         type: VehicleSupplyBui
   - type: VehicleSupplyConsole
     vehicles:
-    - name: humvee
+
+    # CMU14: fighters launch from clear ground without a staging pad.
+    - vehicle: CMUFighterGround
+      group: vehicle-fighter
+      hardpoints:
+      - RMCDropshipAttachmentRocketPod
+      - RMCDropshipAttachmentAmmoGAU
+      - RMCDropshipAttachmentAmmoRocketMiniMike
+      - RMCDropshipAttachmentAmmoRocketKeeper
+      - RMCDropshipAttachmentAmmoRocketWidowmaker
+      - RMCDropshipAttachmentAmmoRocketHarpoon
+      - RMCDropshipAttachmentAmmoRocketNapalm
+
+    # CMU14: UPP and BEAR use their own airframe with the shared fighter allowance.
+    - vehicle: CMUFighterGroundUPP
+      group: vehicle-fighter
+      hardpoints:
+      - RMCDropshipAttachmentRocketPod
+      - RMCDropshipAttachmentAmmoGAU
+      - RMCDropshipAttachmentAmmoRocketMiniMike
+      - RMCDropshipAttachmentAmmoRocketKeeper
+      - RMCDropshipAttachmentAmmoRocketWidowmaker
+      - RMCDropshipAttachmentAmmoRocketHarpoon
+      - RMCDropshipAttachmentAmmoRocketNapalm
+
+    - name: M2420 JTMV Armed
       vehicle: VehicleHumvee
-      unlock: VehicleHumvee
+      group: vehicle-armed # cmu edit: armed, so it takes the VTOL/APC slot
       hardpoints:
       - VehicleHumveeTurret
+      - VehicleHumveeTurretArmed
       - VehicleHumveeCannon
       - VehicleHumveeLauncher
       - VehicleHumveeSnowplow
       - VehicleHumveeOverlight
       - VehicleHumveeHatch
       - VehicleHumveeWheel
-    - name: humvee (medical)
+
+    - name: M2421 JTMV Ambulance
       vehicle: VehicleHumveeMedical
-      unlock: VehicleHumveeMedical
+      group: vehicle-support
       hardpoints:
       - VehicleHumveeSnowplow
       - VehicleHumveeOverlight
-      - VehicleHumveeHatch
       - VehicleHumveeWheel
-    - name: humvee (transport)
+
+    - name: M2422 JTMV Transport
       vehicle: VehicleHumveeTransport
-      unlock: VehicleHumveeTransport
+      group: vehicle-support
       hardpoints:
       - VehicleHumveeSnowplow
       - VehicleHumveeOverlight
-      - VehicleHumveeHatch
       - VehicleHumveeWheel
-    - name: apc
+
+    - name: Kheshig-1 Transport (UPP)
+      vehicle: VehicleSPPVan
+      group: vehicle-support
+      hardpoints:
+      - VehicleSPPVanWheel
+
+    - name: Kheshig-1 Armed (UPP)
+      vehicle: VehicleSPPVanArmed
+      group: vehicle-armed # cmu edit: armed, so it takes the VTOL/APC slot
+      hardpoints:
+      - VehicleSPPVanTurret
+      - VehicleSPPVanCannon
+      - VehicleSPPVanWheel
+
+    - name: Kheshig-1 Medical (UPP)
+      vehicle: VehicleSPPVanMedical
+      group: vehicle-support
+      hardpoints:
+      - VehicleSPPVanWheel
+
+    - name: Kheshig-1 Police (UPP)
+      vehicle: VehicleSPPVanPrisoner
+      group: vehicle-support
+      hardpoints:
+      - VehicleSPPVanWheel
+
+    - name: Kheshig-1 Logistics (UPP)
+      vehicle: VehicleSPPVanLogistics
+      group: vehicle-support
+      hardpoints:
+      - VehicleSPPVanWheel
+
+    - name: M34E1 AEV
+      vehicle: VehicleAev
+      group: vehicle-support # cmu edit: unarmed, so it takes the support slot
+      hardpoints:
+      - VehicleTankTreads
+      - VehicleTankReinforcedTreads
+      - VehicleTankArmorBallistic
+      - VehicleTankArmorConcussive
+      - VehicleTankArmorCaustic
+      - VehicleTankArmorPaladin
+      - VehicleTankSnowplow
+      - VehicleTankOverdriveEnhancer
+
+    - name: M577 APC
       vehicle: VehicleAPC
-      unlock: VehicleAPC
+      group: vehicle-apc
       hardpoints:
       - RMCAPCDualCannon
       - RMCAPCFrontCannon
@@ -72,9 +144,10 @@
       - RMCAPCFlareLauncher
       - RMCAPCFreightStorage
       - RMCAPCWheel
-    - name: apc (medical)
+
+    - name: M577 APC (Medical)
       vehicle: VehicleAPCMed
-      unlock: VehicleAPCMed
+      group: vehicle-apc
       hardpoints:
       - RMCAPCDualCannon
       - RMCAPCFrontCannon
@@ -82,9 +155,10 @@
       - RMCAPCFlareLauncher
       - RMCAPCFreightStorage
       - RMCAPCWheel
-    - name: apc (command)
+
+    - name: M577 APC (Command)
       vehicle: VehicleAPCCommand
-      unlock: VehicleAPCCommand
+      group: vehicle-apc
       hardpoints:
       - RMCAPCDualCannon
       - RMCAPCFrontCannon
@@ -92,41 +166,252 @@
       - RMCAPCFlareLauncher
       - RMCAPCFreightStorage
       - RMCAPCWheel
-    - name: tank
-      vehicle: VehicleTank
-      unlock: VehicleTank
+
+    - name: M577 APC 'Weyland' (WY)
+      vehicle: VehicleAPCPMC
+      group: vehicle-apc
       hardpoints:
+      - RMCAPCDualCannon
+      - RMCAPCFrontCannon
+      - RMCAPCCommsRelay
+      - RMCAPCFlareLauncher
+      - RMCAPCFreightStorage
+      - RMCAPCWheel
+
+    - name: ZSL-68 APC (UPP)
+      vehicle: VehicleSPPAPC
+      group: vehicle-apc
+      hardpoints:
+      - VehicleSPPAPCWheel
+      - VehicleSPPAPCTurret
+      - VehicleSPPAPCMinigun
+      - VehicleSPPAPCAutocannon
+      - VehicleSPPAPCHJ35Launcher
+      - VehicleSPPAPCFlareLauncher
+      # CMU14: generic APC support modules; the UPP APC has no branded variants,
+      # and its support slot accepts them now that the slot compat gate is lifted
+      - RMCAPCCommsRelay
+      - RMCAPCFreightStorage
+
+    # CMU14: Wolfpack MGS. Entry and option names come from the localized prototype names;
+    # the hardpoint list holds only parts with art in the Wolfpack RSI.
+    - vehicle: CMUVehicleAPCWolfpack
+      group: vehicle-apc
+      hardpoints:
+      - CMUVehicleAPCWolfpackTurret
+      - CMUVehicleAPCWolfpackAutocannon
+      - CMUVehicleAPCWolfpackFrontCannon
+      - CMUVehicleAPCWolfpackFlareLauncher
+      - RMCAPCWheel
+    # CMU14 End
+
+    - name: M34A2 Longstreet #look here hoe
+      vehicle: VehicleTank
+      group: vehicle-tank
+      hardpoints:
+      - VehicleTankTurret
+      - VehicleTankTreads
+      - VehicleTankReinforcedTreads
       - VehicleTankArmorBallistic
       - VehicleTankArmorConcussive
       - VehicleTankArmorCaustic
       - VehicleTankArmorPaladin
       - VehicleTankSnowplow
       - VehicleTankLTAAAPMinigun
-      - VehicleTankLTBCannon
       - VehicleTankAceAutocannon
       - VehicleTankDragonFlamer
       - VehicleTankFlamer
       - VehicleTankGrenadeLauncher
+      - VehicleTankTowLauncher
+      - VehicleTankM56Cupola
       - VehicleTankRERE700
       - VehicleTankWarningArray
       - VehicleTankOverdriveEnhancer
       - VehicleTankRocketLauncher
-      - VehicleTankTowLauncher
       - VehicleTankFlareModule
       - VehicleTankArtilleryModule
-      - VehicleTankReinforcedTreads
-      - VehicleTankTreads
-    - name: humvee (arc)
-      vehicle: VehicleHumveeARC
-      unlock: VehicleHumveeARC
+
+    - name: M34A2 Longstreet 'Yutani' (WY)
+      vehicle: VehicleTankPMC
+      group: vehicle-tank
       hardpoints:
-      - VehicleHumveeTurret
-      - VehicleHumveeARCCannon
-      - VehicleHumveeLauncher
-      - VehicleHumveeSnowplow
-      - VehicleHumveeOverlight
-      - VehicleHumveeHatch
-      - VehicleHumveeWheel
+      - VehicleTankTurret
+      - VehicleTankTreads
+      - VehicleTankReinforcedTreads
+      - VehicleTankArmorBallistic
+      - VehicleTankArmorConcussive
+      - VehicleTankArmorCaustic
+      - VehicleTankArmorPaladin
+      - VehicleTankSnowplow
+      - VehicleTankLTAAAPMinigun
+      - VehicleTankAceAutocannon
+      - VehicleTankDragonFlamer
+      - VehicleTankFlamer
+      - VehicleTankGrenadeLauncher
+      - VehicleTankTowLauncher
+      - VehicleTankM56Cupola
+      - VehicleTankRERE700
+      - VehicleTankWarningArray
+      - VehicleTankOverdriveEnhancer
+      - VehicleTankRocketLauncher
+      - VehicleTankFlareModule
+      - VehicleTankArtilleryModule
+
+    - name: Cheetah 2A (UPP)
+      vehicle: VehicleSPPTank
+      group: vehicle-tank
+      hardpoints:
+      - VehicleSPPTankTurret
+      - VehicleTankTreads
+      - VehicleTankReinforcedTreads
+      - VehicleSPPTankP17702
+      - VehicleSPPTankRailgun
+      - VehicleSPPTankHJ35TLauncher
+      - VehicleSPPTankCupola
+      - VehicleSPPTankReactiveArmor
+      - VehicleSPPTankRocketLauncher
+      - VehicleSPPTankFlareModule
+      - VehicleSPPTankWarningArray
+      - VehicleSPPTankOverdriveEnhancer
+      - VehicleSPPTankArtilleryModule
+
+    - name: FV150 Hobelar LCT (TWE)
+      vehicle: VehicleTankTWE
+      group: vehicle-tank
+      hardpoints:
+      - VehicleTankTurretTWE
+      - VehicleTankTreadsTWE
+      - VehicleTankFlamer
+      - VehicleTankGrenadeLauncher
+      - VehicleTankTowLauncher
+      - VehicleTankM56Cupola
+      - VehicleTankRERE700
+      - VehicleTankRocketLauncherTWE
+
+#    - name: blackfoot
+#      vehicle: VehicleBlackfoot
+#      group: vehicle-support
+#      bundle:
+#      - CMUBlackfootLandingPadFoldedProp
+#      - CMUBlackfootFuelPumpCrate
+#      - CMUBlackfootFlightComputerCrate
+#      - CMUBlackfootAerospaceTug
+#      loadoutCategories:
+#      - id: primary
+#        name: Primary
+#        options:
+#        - id: VehicleBlackfootLaunchers
+#          name: flare launchers
+#          item: VehicleBlackfootLaunchers
+#          slot: launchers
+#      - id: armor
+#        name: Armor
+#        options: []
+#      - id: support
+#        name: Support
+#        options:
+#        - id: VehicleBlackfootReconSystem
+#          name: recon system
+#          item: VehicleBlackfootReconSystem
+#          slot: support
+#      hardpoints:
+#      - VehicleBlackfootThrusters
+#      - VehicleBlackfootLaunchers
+#      - VehicleBlackfootReconSystem
+
+    - name: AD-71E Blackfoot (Armed)
+      vehicle: VehicleBlackfootDoorGunVariant
+      group: vehicle-vtol
+      bundle:
+      - CMUBlackfootLandingPadFoldedProp
+      - CMUBlackfootFuelPumpCrate
+      - CMUBlackfootFlightComputerCrate
+      - CMUBlackfootAerospaceTug
+      hardpoints:
+      - VehicleBlackfootThrusters
+      - VehicleBlackfootLaunchers
+      - VehicleBlackfootDoorGun
+
+#    - name: AE-71E VTOL (Recon) # Temporarily unavailable from vehicle storage.
+#      vehicle: VehicleBlackfootRecon
+#      group: vehicle-support
+#      bundle:
+#      - CMUBlackfootLandingPadFoldedProp
+#      - CMUBlackfootFuelPumpCrate
+#      - CMUBlackfootFlightComputerCrate
+#      - CMUBlackfootAerospaceTug
+#      loadoutCategories:
+#      - id: primary
+#        name: Primary
+#        options:
+#        - id: VehicleBlackfootLaunchers
+#          name: flare launchers
+#          item: VehicleBlackfootLaunchers
+#          slot: launchers
+#      - id: secondary
+#        name: Secondary
+#        options:
+#        - id: VehicleBlackfootReconSystem
+#          name: recon system
+#          item: VehicleBlackfootReconSystem
+#          slot: recon
+#      - id: support
+#        name: Support
+#        options:
+#        - id: VehicleBlackfootSensorArray
+#          name: sensor array
+#          item: VehicleBlackfootSensorArray
+#          slot: sensors
+#      hardpoints:
+#      - VehicleBlackfootThrusters
+#      - VehicleBlackfootLaunchers
+#      - VehicleBlackfootReconSystem
+#      - VehicleBlackfootSensorArray
+
+    # CMU14: civilian choices for the appropriate platoon catalogs.
+    - name: Civilian Van
+      vehicle: AU14VehicleCivVan
+      group: vehicle-civ
+      hardpoints:
+      - RMCVanWheel
+
+    - name: Civilian Truck
+      vehicle: AU14VehicleCivTruck
+      group: vehicle-civ
+      hardpoints:
+      - RMCVanWheel
+
+    - name: Civilian Armored Truck
+      vehicle: AU14VehicleCivArmoredTruck
+      group: vehicle-civ
+      hardpoints:
+      - RMCVanWheel
+
+    - name: Paddy Wagon
+      vehicle: AU14VehicleCivHSVan
+      group: vehicle-civ
+      hardpoints:
+      - RMCVanWheel
+
+    - name: EMS Ambulance
+      vehicle: AU14VehicleCivEMSAmbulance
+      group: vehicle-civ
+      hardpoints:
+      - RMCVanWheel
+    # CMU14 End
+
+    - name: AD-71E Blackfoot (Transport)
+      vehicle: VehicleBlackfootTransport
+      group: vehicle-vtol
+      bundle:
+      - CMUBlackfootLandingPadFoldedProp
+      - CMUBlackfootFuelPumpCrate
+      - CMUBlackfootFlightComputerCrate
+      - CMUBlackfootAerospaceTug
+      hardpoints:
+      - VehicleBlackfootThrusters
+      - VehicleBlackfootLaunchers
+
   - type: PointLight
     radius: 1.5
     energy: 1.6
@@ -150,6 +435,12 @@
       components:
       - Xeno
   - type: RMCMesonsNonviewable
+
+- type: entity
+  parent: VehicleSupplyConsole
+  id: AU14VehicleSupplyConsoleUSCMLimited
+  name: vehicle supply console
+  description: A console for ordering vehicles and their hardpoints.
 
 - type: entity
   id: VehicleLift
@@ -177,11 +468,17 @@
           !type:PhysShapeAabb
           bounds: "-2.3,-2.3,2.3,2.3"
         layer:
-        - MidImpassable
+        - WallLayer
         mask:
         - ItemMask
         density: 1000
         hard: false
+  - type: Chasm
+    # cmu edit start: thrown stuff falls in like the ASRS lift, vehicles don't
+    blacklist:
+      components:
+      - Vehicle
+    # cmu edit end
   - type: StepTrigger
     requiredTriggeredSpeed: 0
     intersectRatio: 1
@@ -189,3 +486,4 @@
       tags:
       - Catwalk
   - type: VehicleSupplyLift
+    railingRange: 7

@@ -1,5 +1,6 @@
 using Content.Shared._RMC14.Intel.Detector;
 using Content.Shared._RMC14.MotionDetector;
+using Content.Shared._RMC14.Storage;
 using Content.Shared.ActionBlocker;
 using Content.Shared.Containers.ItemSlots;
 using Content.Shared.Hands.Components;
@@ -27,6 +28,7 @@ public sealed partial class SmartEquipSystem : EntitySystem
 {
     [Dependency] private SharedHandsSystem _hands = default!;
     [Dependency] private SharedStorageSystem _storage = default!;
+    [Dependency] private RMCStorageSystem _rmcStorage = default!;
     [Dependency] private InventorySystem _inventory = default!;
     [Dependency] private ItemSlotsSystem _slots = default!;
     [Dependency] private SharedContainerSystem _container = default!;
@@ -48,6 +50,12 @@ public sealed partial class SmartEquipSystem : EntitySystem
         CommandBinds.Builder
             .Bind(ContentKeyFunctions.SmartEquipBackpack, InputCmdHandler.FromDelegate(HandleSmartEquipBackpack, handle: false, outsidePrediction: false))
             .Bind(ContentKeyFunctions.SmartEquipBelt, InputCmdHandler.FromDelegate(HandleSmartEquipBelt, handle: false, outsidePrediction: false))
+            .Bind(ContentKeyFunctions.SmartEquipPocket1, InputCmdHandler.FromDelegate(HandleSmartEquipPocket1, handle: false, outsidePrediction: false))
+            .Bind(ContentKeyFunctions.SmartEquipPocket2, InputCmdHandler.FromDelegate(HandleSmartEquipPocket2, handle: false, outsidePrediction: false))
+            .Bind(ContentKeyFunctions.SmartEquipSuitStorage, InputCmdHandler.FromDelegate(HandleSmartEquipSuitStorage, handle: false, outsidePrediction: false))
+            .Bind(ContentKeyFunctions.SmartEquipUniform, InputCmdHandler.FromDelegate(HandleSmartEquipUniform, handle: false, outsidePrediction: false))
+            .Bind(ContentKeyFunctions.SmartEquipArmor, InputCmdHandler.FromDelegate(HandleSmartEquipArmor, handle: false, outsidePrediction: false))
+            .Bind(ContentKeyFunctions.SmartEquipHelmet, InputCmdHandler.FromDelegate(HandleSmartEquipHelmet, handle: false, outsidePrediction: false))
             .Register<SmartEquipSystem>();
     }
 
@@ -66,6 +74,36 @@ public sealed partial class SmartEquipSystem : EntitySystem
     private void HandleSmartEquipBelt(ICommonSession? session)
     {
         HandleSmartEquip(session, "belt");
+    }
+
+    private void HandleSmartEquipPocket1(ICommonSession? session)
+    {
+        HandleSmartEquip(session, "pocket1");
+    }
+
+    private void HandleSmartEquipPocket2(ICommonSession? session)
+    {
+        HandleSmartEquip(session, "pocket2");
+    }
+
+    private void HandleSmartEquipSuitStorage(ICommonSession? session)
+    {
+        HandleSmartEquip(session, "suitstorage");
+    }
+
+    private void HandleSmartEquipUniform(ICommonSession? session)
+    {
+        HandleSmartEquip(session, "jumpsuit");
+    }
+
+    private void HandleSmartEquipArmor(ICommonSession? session)
+    {
+        HandleSmartEquip(session, "outerClothing");
+    }
+
+    private void HandleSmartEquipHelmet(ICommonSession? session)
+    {
+        HandleSmartEquip(session, "head");
     }
 
     private void HandleSmartEquip(ICommonSession? session, string equipmentSlot)
@@ -106,14 +144,14 @@ public sealed partial class SmartEquipSystem : EntitySystem
 
         if (!TryComp<InventoryComponent>(uid, out var inventory) || !_inventory.HasSlot(uid, equipmentSlot, inventory))
         {
-            _popup.PopupClient(Loc.GetString("smart-equip-missing-equipment-slot", ("slotName", equipmentSlot)), uid, uid);
+            _popup.PopupEntity(Loc.GetString("smart-equip-missing-equipment-slot", ("slotName", equipmentSlot)), uid, uid);
             return;
         }
 
         // early out if we have an item and cant drop it at all
         if (handItem != null && !_hands.CanDropHeld(uid, hands.ActiveHandId))
         {
-            _popup.PopupClient(Loc.GetString("smart-equip-cant-drop"), uid, uid);
+            _popup.PopupEntity(Loc.GetString("smart-equip-cant-drop"), uid, uid);
             return;
         }
 
@@ -128,8 +166,9 @@ public sealed partial class SmartEquipSystem : EntitySystem
         //    - with hand item: try to put it in storage
         //    - without hand item: try to take the last stored item and put it in our hands
         // 3) has an item, and that item is an item slots holder
-        //    - with hand item: get the highest priority item slot with a valid whitelist and try to insert it
         //    - without hand item: get the highest priority item slot with an item and try to eject it
+        //    - with hand item: if AllowSmartEquip is enabled, get the highest priority item slot with a valid whitelist
+        //          and try to insert it. If not, go to step 4.
         // 4) has an item, with no special storage components
         //    - with hand item: fail
         //    - without hand item: try to put the item into your hand
@@ -142,13 +181,13 @@ public sealed partial class SmartEquipSystem : EntitySystem
         {
             if (handItem == null)
             {
-                _popup.PopupClient(emptyEquipmentSlotString, uid, uid);
+                _popup.PopupEntity(emptyEquipmentSlotString, uid, uid);
                 return;
             }
 
             if (!_inventory.CanEquip(uid, handItem.Value, equipmentSlot, out var reason))
             {
-                _popup.PopupClient(Loc.GetString(reason), uid, uid);
+                _popup.PopupEntity(Loc.GetString(reason), uid, uid);
                 return;
             }
 
@@ -169,17 +208,24 @@ public sealed partial class SmartEquipSystem : EntitySystem
             }
 
             _hands.TryDrop((uid, hands), hands.ActiveHandId!);
-            _inventory.TryEquip(uid, handItem.Value, equipmentSlot, predicted: true, checkDoafter:true);
+            _inventory.TryEquip(uid, handItem.Value, equipmentSlot, predicted: true, checkDoafter: true);
             return;
         }
 
         // case 2 (storage item):
         if (TryComp<StorageComponent>(slotItem, out var storage))
         {
+            // RMC14
+            if (!_actionBlocker.CanInteract(uid, slotItem) ||
+                !_storage.CanInteract(uid, (slotItem, storage), silent: false))
+            {
+                return;
+            }
+
             switch (handItem)
             {
                 case null when storage.Container.ContainedEntities.Count == 0:
-                    _popup.PopupClient(emptyEquipmentSlotString, uid, uid);
+                    _popup.PopupEntity(emptyEquipmentSlotString, uid, uid);
                     return;
                 case null:
                     var removing = storage.Container.ContainedEntities[^1];
@@ -188,20 +234,28 @@ public sealed partial class SmartEquipSystem : EntitySystem
                     return;
             }
 
-            if (!_storage.CanInsert(slotItem, handItem.Value, session.AttachedEntity, out var reason))
+            if (!_storage.CanInsert(slotItem, handItem.Value, out var reason, storage))
             {
                 if (reason != null)
-                    _popup.PopupClient(Loc.GetString(reason), uid, uid);
+                    _popup.PopupEntity(Loc.GetString(reason), uid, uid);
 
                 return;
             }
 
+            if (!_rmcStorage.CanInsert((slotItem, storage), handItem.Value, uid, out var rmcReason))
+            {
+                _popup.PopupEntity(Loc.GetString(rmcReason), uid, uid);
+                return;
+            }
+
             _hands.TryDrop((uid, hands), hands.ActiveHandId!);
-            _storage.Insert(slotItem, handItem.Value, out var stacked, out _, uid);
+            _storage.Insert(slotItem, handItem.Value, out var stacked, out _, user: uid);
 
             // if the hand item stacked with the things in inventory, but there's no more space left for the rest
             // of the stack, place the stack back in hand rather than dropping it on the floor
-            if (stacked != null && !_storage.CanInsert(slotItem, handItem.Value, session.AttachedEntity, out _))
+            if (stacked != null &&
+                (!_storage.CanInsert(slotItem, handItem.Value, out _, storage) ||
+                 !_rmcStorage.CanInsert((slotItem, storage), handItem.Value, uid, out _)))
             {
                 if (TryComp<StackComponent>(handItem.Value, out var handStack) && handStack.Count > 0)
                     _hands.TryPickup(uid, handItem.Value, handsComp: hands);
@@ -213,7 +267,33 @@ public sealed partial class SmartEquipSystem : EntitySystem
         // case 3 (itemslot item):
         if (TryComp<ItemSlotsComponent>(slotItem, out var slots))
         {
-            if (handItem == null)
+            if (handItem != null)
+            {
+                ItemSlot? toInsertTo = null;
+
+                foreach (var slot in slots.Slots.Values)
+                {
+                    if (!slot.HasItem
+                        && _whitelistSystem.IsWhitelistPassOrNull(slot.Whitelist, handItem.Value)
+                        && slot.Priority > (toInsertTo?.Priority ?? int.MinValue))
+                    {
+                        toInsertTo = slot;
+                    }
+                }
+
+                if (toInsertTo == null)
+                {
+                    _popup.PopupEntity(Loc.GetString("smart-equip-no-valid-item-slot-insert", ("item", handItem.Value)),
+                        uid,
+                        uid);
+                    return;
+                }
+
+                _slots.TryInsertFromHand(slotItem, toInsertTo, (uid, hands), excludeUserAudio: true);
+                return;
+            }
+
+            if (slots.AllowSmartEquip)
             {
                 ItemSlot? toEjectFrom = null;
 
@@ -225,34 +305,13 @@ public sealed partial class SmartEquipSystem : EntitySystem
 
                 if (toEjectFrom == null)
                 {
-                    _popup.PopupClient(emptyEquipmentSlotString, uid, uid);
+                    _popup.PopupEntity(emptyEquipmentSlotString, uid, uid);
                     return;
                 }
 
                 _slots.TryEjectToHands(slotItem, toEjectFrom, uid, excludeUserAudio: true);
                 return;
             }
-
-            ItemSlot? toInsertTo = null;
-
-            foreach (var slot in slots.Slots.Values)
-            {
-                if (!slot.HasItem
-                    && _whitelistSystem.IsWhitelistPassOrNull(slot.Whitelist, handItem.Value)
-                    && slot.Priority > (toInsertTo?.Priority ?? int.MinValue))
-                {
-                    toInsertTo = slot;
-                }
-            }
-
-            if (toInsertTo == null)
-            {
-                _popup.PopupClient(Loc.GetString("smart-equip-no-valid-item-slot-insert", ("item", handItem.Value)), uid, uid);
-                return;
-            }
-
-            _slots.TryInsertFromHand(slotItem, toInsertTo, uid, hands, excludeUserAudio: true);
-            return;
         }
 
         // case 4 (just an item):
@@ -261,7 +320,7 @@ public sealed partial class SmartEquipSystem : EntitySystem
 
         if (!_inventory.CanUnequip(uid, equipmentSlot, out var inventoryReason))
         {
-            _popup.PopupClient(Loc.GetString(inventoryReason), uid, uid);
+            _popup.PopupEntity(Loc.GetString(inventoryReason), uid, uid);
             return;
         }
 

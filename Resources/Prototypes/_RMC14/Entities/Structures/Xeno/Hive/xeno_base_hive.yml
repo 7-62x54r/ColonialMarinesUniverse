@@ -2,6 +2,11 @@
   abstract: true
   id: BaseHiveStructure
   components:
+  - type: FixedIdentity
+    name: cmu-job-name-xeno-unknown
+    whitelist:
+      components:
+      - Marine
   - type: GuideHelp
     guides:
     - RMCGuideHiveStructures
@@ -21,12 +26,16 @@
   - type: InteractionOutline
   - type: Clickable
   - type: Damageable
-    damageContainer: StructuralXeno
     damageModifierSet: Resin
+  - type: Injurable
+    damageContainer: StructuralXeno
   - type: RMCNightVisionVisible
     priority: -1
     transparency: 0.2
   - type: XenoConstruct
+  - type: NpcFactionMember # CMU14: hostile structure, valid sentry/turret target
+    factions:
+    - RMCXeno
   - type: MeleeReceivedMultiplier
     otherMultiplier: 8.2
   - type: XenoAnnounceStructureDestruction
@@ -44,6 +53,11 @@
   abstract: true
   id: BaseHiveStructureNode
   components:
+  - type: FixedIdentity
+    name: cmu-job-name-xeno-unknown
+    whitelist:
+      components:
+      - Marine
   - type: GuideHelp
     guides:
     - RMCGuideHiveStructures
@@ -52,8 +66,9 @@
   - type: InteractionOutline
   - type: Clickable
   - type: Damageable
-    damageContainer: StructuralXeno
     damageModifierSet: Resin
+  - type: Injurable
+    damageContainer: StructuralXeno
   - type: RMCNightVisionVisible
     priority: -1
     transparency: 0.1

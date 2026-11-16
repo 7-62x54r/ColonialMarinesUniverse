@@ -1,5 +1,7 @@
 using System;
 using System.Numerics;
+using Content.Shared._RMC14.Weapons.Ranged;
+using Content.Shared.CMU14.ZLevels.Core.Components;
 using Content.Shared.Vehicle;
 using Content.Shared.Vehicle.Components;
 using Content.Shared.Weapons.Ranged.Systems;
@@ -31,7 +33,10 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         SubscribeLocalEvent<VehicleTurretComponent, EntInsertedIntoContainerMessage>(OnInserted);
         SubscribeLocalEvent<VehicleTurretComponent, EntRemovedFromContainerMessage>(OnRemoved);
         SubscribeLocalEvent<VehicleTurretComponent, ComponentShutdown>(OnShutdown);
-        SubscribeLocalEvent<VehicleTurretComponent, AttemptShootEvent>(OnAttemptShoot);
+        // CMU14: constrain the shot from its final muzzle position before checking the firing arc.
+        SubscribeLocalEvent<VehicleTurretComponent, AttemptShootEvent>(OnAttemptShoot,
+            after: new[] { typeof(GunMuzzleOffsetSystem), typeof(VehicleTurretMuzzleSystem) },
+            before: new[] { typeof(GunFireArcSystem) });
         SubscribeNetworkEvent<VehicleTurretRotateEvent>(OnRotateEvent);
     }
 
@@ -119,6 +124,9 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         if (!TryGetVehicle(turretUid, out var vehicle))
             return;
 
+        if (TryComp<VehicleMaintenanceComponent>(vehicle, out var maintenance) && maintenance.ControlsLocked)
+            return;
+
         if (!_net.IsClient)
         {
             if (session.SenderSession.AttachedEntity is not { } user)
@@ -141,7 +149,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         if (!targetTurret.RotateToCursor)
             return;
 
-        if (!TryGetTurretOrigin(targetUid, targetTurret, out var originCoords))
+        if (!TryGetTurretOrigin(targetUid, out var originCoords))
             return;
 
         var targetCoords = GetCoordinates(args.Coordinates);
@@ -172,6 +180,9 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         var visualComp = EnsureComp<VehicleTurretVisualComponent>(visual);
         visualComp.Turret = GetNetEntity(turretUid);
         Dirty(visual, visualComp);
+        var zFollower = EnsureComp<CMUZVisualFollowerComponent>(visual);
+        zFollower.Target = vehicle;
+        Dirty(visual, zFollower);
         turret.VisualEntity = visual;
     }
 
@@ -197,9 +208,10 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         VehicleTurretComponent anchorTurret)
     {
         var vehicleRot = _transform.GetWorldRotation(vehicle);
-        var baseFacingAngle = GetVehicleFacingAngle(vehicle, vehicleRot);
+        var baseFacingAngle = vehicleRot;
         var anchorFacingAngle = GetOffsetFacing(anchorTurret, anchorTurret, vehicleRot, baseFacingAngle);
-        var anchorLocalOffset = (-vehicleRot).RotateVec(GetPixelOffset(anchorTurret, anchorFacingAngle) / PixelsPerMeter);
+        var anchorPixelOffset = GetPixelOffset(anchorTurret, anchorFacingAngle) / PixelsPerMeter;
+        var anchorLocalOffset = GetVehicleLocalOffset(anchorTurret, anchorPixelOffset, vehicleRot, anchorFacingAngle);
         var localRot = Angle.Zero;
         if (anchorTurret.RotateToCursor)
             localRot = anchorTurret.WorldRotation;
@@ -241,7 +253,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
             }
             else
             {
-                turretLocalOffset = (-vehicleRot).RotateVec(worldOffset);
+                turretLocalOffset = GetVehicleLocalOffset(turret, worldOffset, vehicleRot, turretFacingAngle);
                 relativeAnchorOffset = (-localRot).RotateVec(turretLocalOffset);
             }
             turretCoords = new EntityCoordinates(anchorUid, relativeAnchorOffset);
@@ -262,7 +274,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         _transform.SetLocalRotation(visual, visualLocalRot, visualXform);
     }
 
-    private void TryGetAnchorTurret(
+    public void TryGetAnchorTurret(
         EntityUid turretUid,
         VehicleTurretComponent turret,
         out EntityUid anchorUid,
@@ -281,18 +293,18 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         anchorTurret = parentTurret;
     }
 
-    public bool TryGetTurretOrigin(EntityUid turretUid, VehicleTurretComponent turret, out EntityCoordinates origin)
+    public bool TryGetTurretOrigin(EntityUid turretUid, out EntityCoordinates origin)
     {
         origin = default;
 
-        if (!TryGetVehicle(turretUid, out var vehicle))
+        if (!TryGetVehicle(turretUid, out _))
             return false;
 
         origin = _transform.GetMoverCoordinates(turretUid);
         return true;
     }
 
-    private Vector2 GetPixelOffset(VehicleTurretComponent turret, Angle facing)
+    public Vector2 GetPixelOffset(VehicleTurretComponent turret, Angle facing)
     {
         if (!turret.UseDirectionalOffsets)
             return turret.PixelOffset;
@@ -333,15 +345,19 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         return dir.ToAngle();
     }
 
-    private Angle GetVehicleFacingAngle(EntityUid vehicle, Angle vehicleRot)
+    private static Vector2 GetVehicleLocalOffset(
+        VehicleTurretComponent turret,
+        Vector2 offset,
+        Angle vehicleRot,
+        Angle facing)
     {
-        if (TryComp(vehicle, out GridVehicleMoverComponent? mover) && mover.CurrentDirection != Vector2i.Zero)
-            return new Vector2(mover.CurrentDirection.X, mover.CurrentDirection.Y).ToWorldAngle();
+        if (turret.UseDirectionalOffsets)
+            return VehicleTurretDirectionHelpers.GetLocalOffsetForRenderDirection(offset, facing);
 
-        return vehicleRot;
+        return (-vehicleRot).RotateVec(offset);
     }
 
-    private Angle GetOffsetFacing(
+    public Angle GetOffsetFacing(
         VehicleTurretComponent turret,
         VehicleTurretComponent anchorTurret,
         Angle vehicleRot,
@@ -353,7 +369,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         return (vehicleRot + anchorTurret.WorldRotation).Reduced();
     }
 
-    private bool TryGetVehicle(EntityUid turretUid, out EntityUid vehicle)
+    public bool TryGetVehicle(EntityUid turretUid, out EntityUid vehicle)
     {
         vehicle = default;
         var current = turretUid;
@@ -407,7 +423,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         return true;
     }
 
-    private bool TryGetParentTurret(
+    public bool TryGetParentTurret(
         EntityUid turretUid,
         out EntityUid parentUid,
         out VehicleTurretComponent parentTurret)
@@ -445,7 +461,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         if (!TryGetVehicle(targetUid, out var vehicle))
             return false;
 
-        if (!TryGetTurretOrigin(targetUid, targetTurret, out var originCoords))
+        if (!TryGetTurretOrigin(targetUid, out var originCoords))
             return false;
 
         targetCoords = Transform(target).Coordinates;
@@ -460,6 +476,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
             ? direction.ToWorldAngle()
             : (direction.ToWorldAngle() - vehicleRot).Reduced();
 
+        desiredRotation = CMUClampYaw(targetTurret, vehicle, desiredRotation); // CMU14
         targetTurret.TargetRotation = desiredRotation;
         if (targetTurret.RotationSpeed <= 0f)
         {
@@ -487,6 +504,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
             ? worldRotation
             : (worldRotation - vehicleRot).Reduced();
 
+        desiredRotation = CMUClampYaw(targetTurret, vehicle, desiredRotation); // CMU14
         targetTurret.TargetRotation = desiredRotation;
         if (targetTurret.RotationSpeed <= 0f)
         {
@@ -527,6 +545,9 @@ public sealed partial class VehicleTurretSystem : EntitySystem
 
     private void UpdateTurretRotation(EntityUid turretUid, VehicleTurretComponent turret, EntityUid vehicle, float frameTime)
     {
+        if (TryComp<VehicleMaintenanceComponent>(vehicle, out var maintenance) && maintenance.ControlsLocked)
+            return;
+
         if (!turret.RotateToCursor)
             return;
 
@@ -617,14 +638,16 @@ public sealed partial class VehicleTurretSystem : EntitySystem
 
         var vehicleRot = _transform.GetWorldRotation(vehicle);
 
+        var aimChecked = false;
         if (args.ToCoordinates != null &&
-            TryGetTurretOrigin(targetUid, targetTurret, out var originCoords))
+            TryGetTurretOrigin(targetUid, out var originCoords))
         {
             var originMap = _transform.ToMapCoordinates(originCoords);
             var targetMap = _transform.ToMapCoordinates(args.ToCoordinates.Value);
             var direction = targetMap.Position - originMap.Position;
             if (direction.LengthSquared() > 0.0001f)
             {
+                aimChecked = true;
                 var desiredWorldRotation = direction.ToWorldAngle();
                 var currentWorldRotation = (targetTurret.WorldRotation + vehicleRot).Reduced();
                 var desiredDelta = Angle.ShortestDistance(currentWorldRotation, desiredWorldRotation);
@@ -637,20 +660,23 @@ public sealed partial class VehicleTurretSystem : EntitySystem
             }
         }
 
-        var worldRotation = (targetTurret.WorldRotation + vehicleRot).Reduced();
-        var targetWorldRotation = targetTurret.StabilizedRotation
-            ? targetTurret.TargetRotation
-            : (targetTurret.TargetRotation + vehicleRot).Reduced();
-
-        var delta = Angle.ShortestDistance(worldRotation, targetWorldRotation);
-        if (Math.Abs(delta.Theta) <= alignmentTolerance)
+        if (!aimChecked)
         {
-            ApplyShotDirectionConstraint(ent.Comp, targetTurret, targetUid, vehicle, ref args);
-            return;
+            var worldRotation = (targetTurret.WorldRotation + vehicleRot).Reduced();
+            var targetWorldRotation = targetTurret.StabilizedRotation
+                ? targetTurret.TargetRotation
+                : (targetTurret.TargetRotation + vehicleRot).Reduced();
+
+            var delta = Angle.ShortestDistance(worldRotation, targetWorldRotation);
+            if (Math.Abs(delta.Theta) > alignmentTolerance)
+            {
+                args.Cancelled = true;
+                args.ResetCooldown = true;
+                return;
+            }
         }
 
-        args.Cancelled = true;
-        args.ResetCooldown = true;
+        ApplyShotDirectionConstraint(ent.Comp, targetTurret, targetUid, vehicle, ref args);
     }
 
     private void ApplyShotDirectionConstraint(
@@ -720,6 +746,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
         Angle desiredRotation,
         bool allowReverseDelay)
     {
+        desiredRotation = CMUClampYaw(turret, vehicle, desiredRotation); // CMU14
         var delta = Angle.ShortestDistance(turret.TargetRotation, desiredRotation);
         var deadzone = MathHelper.DegreesToRadians(MathF.Max(0f, turret.RotationInputDeadzoneDegrees));
 
@@ -787,7 +814,7 @@ public sealed partial class VehicleTurretSystem : EntitySystem
     private bool CanOperatorUseTurret(EntityUid turretUid, EntityUid user)
     {
         if (!TryGetVehicle(turretUid, out var vehicle))
-            return true;
+            return false;
 
         if (!TryComp(user, out VehicleWeaponsOperatorComponent? operatorComp) ||
             operatorComp.Vehicle != vehicle)

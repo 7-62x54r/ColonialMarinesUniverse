@@ -1,0 +1,128 @@
+#nullable enable
+
+using System.Collections.Generic;
+using System.Linq;
+using Content.Server.CMU14.Threats;
+using Content.Server.GameTicking;
+using Content.Shared.Access.Systems;
+using Content.Shared.Radio.Components;
+using Content.Shared.CMU14;
+using Content.Shared.CMU14.Threats;
+using Content.Shared.Chat;
+using Content.Shared.Mind;
+using Content.Shared.Roles;
+using Content.Shared.Roles.Jobs;
+using Content.Shared.CMU14.Threats.Mobs.Xeno;
+using Content.Shared._RMC14.Xenonids;
+using Content.Shared._RMC14.Vendors;
+using Robust.Shared.GameObjects;
+using Robust.Shared.Network;
+using Robust.Shared.Prototypes;
+using CultistComponent = Content.Shared.CMU14.Threats.Mobs.Cultist.CultistComponent;
+using HasKnowledgeOfXenoLanguageComponent = Content.Shared.CMU14.Threats.Mobs.Xeno.HasKnowledgeOfXenoLanguageComponent;
+
+namespace Content.IntegrationTests._AU14;
+
+[TestFixture]
+public sealed class CultistThreatAssignmentTest
+{
+    private static readonly ProtoId<JobPrototype> ThreatMemberJob = "AU14JobThreatMember";
+    private static readonly ProtoId<JobPrototype> CultistJob = "AU14JobCultist";
+    private static readonly ProtoId<ThreatPrototype> CultistThreat = "TestCultistAssignmentThreat";
+
+    [TestPrototypes]
+    private const string Prototypes = """
+        - type: threat
+          id: TestCultistAssignmentThreat
+          roundstartspawns: TestCultistAssignmentSpawn
+        - type: partySpawn
+          id: TestCultistAssignmentSpawn
+          leadersToSpawn: {}
+          gruntsToSpawn:
+            cultistJob: 1
+        """;
+
+    [Test]
+    public async Task AssignedCultistThreatMemberKeepsCultistJobAndMindRole()
+    {
+        await using var pair = await PoolManager.GetServerClient(new PoolSettings
+        {
+            Connected = true,
+            Dirty = true,
+            DummyTicker = false,
+        });
+
+        var server = pair.Server;
+        var map = await pair.CreateTestMap();
+        var player = server.PlayerMan.Sessions.Single();
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            entMan.System<GameTicker>().JoinAsObserver(player);
+            entMan.SpawnEntity("threatmemberspawnmarker", map.GridCoords);
+
+            var threat = server.ProtoMan.Index(CultistThreat);
+            var assignedJobs = new Dictionary<NetUserId, (ProtoId<JobPrototype>?, EntityUid)>
+            {
+                [player.UserId] = (ThreatMemberJob, EntityUid.Invalid),
+            };
+
+            entMan.System<ThreatSystem>().SpawnThreatFromVote(
+                threat,
+                map.MapId,
+                assignedJobs,
+                [player.UserId],
+                playerCount: 16);
+        });
+
+        await pair.RunSeconds(2);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var mindSystem = entMan.System<SharedMindSystem>();
+            var jobSystem = entMan.System<SharedJobSystem>();
+            var roleSystem = entMan.System<SharedRoleSystem>();
+
+            var mindId = mindSystem.GetMind(player.UserId);
+            Assert.That(mindId, Is.Not.Null);
+
+            var mind = entMan.GetComponent<MindComponent>(mindId!.Value);
+            Assert.That(mind.OwnedEntity, Is.Not.Null);
+            var cultist = mind.OwnedEntity!.Value;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(entMan.HasComponent<CultistComponent>(cultist), Is.True);
+                Assert.That(entMan.HasComponent<XenoComponent>(cultist), Is.False);
+                Assert.That(entMan.HasComponent<HasKnowledgeOfXenoLanguageComponent>(cultist), Is.True);
+                Assert.That(entMan.GetComponent<IntrinsicRadioTransmitterComponent>(cultist).Channels, Does.Contain(SharedChatSystem.HivemindChannel.Id));
+                Assert.That(entMan.GetComponent<ActiveRadioComponent>(cultist).Channels, Does.Contain(SharedChatSystem.HivemindChannel.Id));
+                Assert.That(entMan.GetComponent<CMVendorUserComponent>(cultist).Id, Is.EqualTo(CultistJob));
+                Assert.That(jobSystem.MindTryGetJobId(mindId.Value, out var job) ? job : null, Is.EqualTo(CultistJob));
+                Assert.That(MindHasRolePrototype(entMan, mind, "MindRoleCultist"), Is.True);
+                Assert.That(roleSystem.MindHasRole<JobRoleComponent>(mindId.Value), Is.True);
+                Assert.That(entMan.System<IdExaminableSystem>().GetInfo(cultist),
+                    Does.Not.Contain("Prime Hive"),
+                    "cultist hive affiliation must not be exposed by ID examination");
+            });
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    private static bool MindHasRolePrototype(IEntityManager entMan, MindComponent mind, string prototype)
+    {
+        foreach (var role in mind.MindRoleContainer.ContainedEntities)
+        {
+            if (entMan.TryGetComponent(role, out MetaDataComponent? meta) &&
+                meta.EntityPrototype?.ID == prototype)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

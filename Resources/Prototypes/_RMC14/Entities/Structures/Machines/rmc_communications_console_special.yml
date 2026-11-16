@@ -2,7 +2,7 @@
 - type: entity
   parent: RMCOverwatchConsole
   id: RMCOverwatchConsoleSPP
-  suffix: SPP
+  suffix: UPP
   components:
   - type: OverwatchConsole
     canOrbitalBombardment: false
@@ -11,7 +11,7 @@
 - type: entity
   parent: RMCOverwatchConsoleSPP
   id: RMCOverwatchConsoleSPPRotating
-  suffix: SPP, Rotating
+  suffix: UPP, Rotating
   components:
   - type: Sprite
     overrideDir: South
@@ -45,6 +45,8 @@
   - type: OverwatchConsole
     canOrbitalBombardment: false
     group: WeYa
+  - type: TacticalMapComputer
+    faction: MARINES
 
 - type: entity
   parent: RMCOverwatchConsoleWeYa
@@ -64,8 +66,25 @@
   - type: TacticalMapComputer
     faction: govfor
   - type: OverwatchConsole
-    canOrbitalBombardment: false
+    canOrbitalBombardment: true
     group: GOVFOR
+    # cmu edit start: shows the ship's IX-50 MGAD status
+    showAntiAirStatus: true
+    # cmu edit end
+  - type: AU14CallsignConsole
+    faction: govfor
+  # child UserInterface overrides replace the whole interfaces dict, so the
+  # parent keys are redeclared alongside the callsign directory
+  - type: UserInterface
+    interfaces:
+      enum.OverwatchConsoleUI.Key:
+        type: OverwatchConsoleBui
+      enum.TacticalMapComputerUi.Key:
+        type: TacticalMapComputerBui
+      enum.DialogUiKey.Key:
+        type: DialogBui
+      enum.AU14CallsignConsoleUI.Key:
+        type: AU14CallsignConsoleBui
 
 - type: entity
   parent: RMCOverwatchConsoleGovfor
@@ -84,10 +103,25 @@
   suffix: Opfor
   components:
   - type: OverwatchConsole
-    canOrbitalBombardment: false
+    canOrbitalBombardment: true
     group: OPFOR
+    # cmu edit start: shows the ship's IX-50 MGAD status
+    showAntiAirStatus: true
+    # cmu edit end
   - type: TacticalMapComputer
     faction: opfor
+  - type: AU14CallsignConsole
+    faction: opfor
+  - type: UserInterface
+    interfaces:
+      enum.OverwatchConsoleUI.Key:
+        type: OverwatchConsoleBui
+      enum.TacticalMapComputerUi.Key:
+        type: TacticalMapComputerBui
+      enum.DialogUiKey.Key:
+        type: DialogBui
+      enum.AU14CallsignConsoleUI.Key:
+        type: AU14CallsignConsoleBui
 - type: entity
   parent: RMCOverwatchConsoleOpfor
   id: RMCOverwatchConsoleOpforRotating

@@ -1,0 +1,93 @@
+- type: job
+  parent: CMJobBase
+  id: CMUJobParamarineSynthetic
+  isSynthetic: true
+  whitelisted: true
+  whitelistParent: CMUJobSyntheticWhitelist
+  roundSide: ThirdParty
+  roundForce: CMUParamarines
+  roundRole: ParamarineSynthetic
+  roundComponents:
+  - type: TacticalMapIcon
+    icon:
+      sprite: /Textures/_RMC14/Interface/map_blips.rsi
+      state: synth
+  - type: Skills
+    skills:
+      RMCSkillEndurance: 3
+      RMCSkillFirearms: 2
+      RMCSkillConstruction: 3
+      RMCSkillEngineer: 3
+      RMCSkillMedical: 3
+      RMCSkillSurgery: 3
+      RMCSkillMeleeWeapons: 2
+  - type: JobPrefix
+    prefix: cmu-paramarines-prefix-synthetic
+  # same synth body as the other ERT synths (US Army, Prodigy)
+  - type: MeleeWeapon
+    soundHit:
+      path: /Audio/_RMC14/Weapons/synthpunch1.ogg
+      params:
+        variation: 0.15
+        volume: -1
+    angle: 30
+    animation: WeaponArcFist
+    attackRate: 1
+    damage:
+      types:
+        Blunt: 35
+  - type: Synth
+  - type: Language
+    preset: AU14LanguagePresetSynth
+  - type: LanguageLearning
+    preset: AU14LanguageLearningPresetSynth
+  name: cmu-paramarines-name-synthetic-title
+  description: cmu-paramarines-description-synthetic
+  playTimeTracker: CMUJobParamarineSynthetic
+  ranks:
+    RMCRankCivilian: []
+  startingGear: CMUGearParamarineSynthetic
+  spawnMenuRoleName: IASF Parachute Regiment Synthetic (3rd party)
+  greeting: cmu-paramarines-greeting
+  icon: RMCJobIconParaSupportSynthetic
+  joinNotifyCrew: false
+  supervisors: cmu-paramarines-leader
+  accessGroups:
+  - Colonist
+  hidden: false
+
+- type: entity
+  parent: CMUBaseMobSpeciesParamarines
+  id: CMUJobParamarineSynthetic
+  name: IASF Parachute Regiment Synthetic
+  components:
+  - type: GhostTakeoverAvailable
+  - type: GhostRoleApplySpecial
+    squad: CMUSquadParamarines
+  - type: GhostRole
+    makeSentient: true
+    allowSpeech: true
+    allowMovement: true
+    name: cmu-paramarines-name-synthetic
+    description: cmu-paramarines-description-synthetic
+    reregister: false
+    job: CMUJobParamarineSynthetic
+    raffle:
+      settings: short
+    rules: cmu-paramarines-rules
+
+- type: startingGear
+  parent: CMUGearParamarineRifleman
+  id: CMUGearParamarineSynthetic
+  equipment:
+    head: RMCHeadParaBeret
+    jumpsuit: RMCJumpsuitMarinePara
+    outerClothing: RMCArmorParaSynthVestFill
+    belt: RMCMedicalL75RCMFillPara
+    back: RMCSatchelLightpackFilledParaSynth
+    pocket1: RMCPouchSurvivalSynthFill
+    pocket2: RMCPouchElectronics
+    suitstorage: RMCFlashlight
+
+- type: playTimeTracker
+  id: CMUJobParamarineSynthetic

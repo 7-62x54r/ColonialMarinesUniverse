@@ -1,5 +1,9 @@
+using System.Diagnostics.CodeAnalysis; // CMU14
 using System.Linq;
-using Content.Shared._CMU14.ZLevels.Core.EntitySystems;
+using Content.Shared.CMU14.Atmos; // CMU14
+using Content.Shared.CMU14.Chemistry.Fuel; // CMU14
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
+using Content.Shared.CMU14.Yautja;
 using Content.Shared._RMC14.Armor;
 using Content.Shared._RMC14.Chemistry;
 using Content.Shared._RMC14.Chemistry.Reagent;
@@ -7,15 +11,19 @@ using Content.Shared._RMC14.Emote;
 using Content.Shared._RMC14.Explosion;
 using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.OnCollide;
+// CMU14: fire growth and synthetic resistance.
+using Content.Shared._RMC14.Synth;
+using Content.Shared._RMC14.Water; // CMU14
 using Content.Shared._RMC14.Weapons.Melee;
 using Content.Shared._RMC14.Xenonids.Plasma;
-using Content.Shared.Alert;
 using Content.Shared.Atmos;
 using Content.Shared.Atmos.Components;
+using Content.Shared.Chemistry.Components; // CMU14
 using Content.Shared.Chemistry.EntitySystems;
 using Content.Shared.Chemistry.Reagent;
 using Content.Shared.Coordinates.Helpers;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
 using Content.Shared.Damage.Prototypes;
 using Content.Shared.Damage.Systems;
 using Content.Shared.Directions;
@@ -26,6 +34,8 @@ using Content.Shared.FixedPoint;
 using Content.Shared.Hands.EntitySystems;
 using Content.Shared.Interaction;
 using Content.Shared.Inventory;
+using Content.Shared.Item; // CMU14
+using Content.Shared.Nutrition.Components; // CMU14
 using Content.Shared.Maps;
 using Content.Shared.Paper;
 using Content.Shared.Popups;
@@ -47,14 +57,12 @@ namespace Content.Shared._RMC14.Atmos;
 
 public abstract partial class SharedRMCFlammableSystem : EntitySystem
 {
-    [Dependency] private AlertsSystem _alerts = default!;
     [Dependency] private SharedAppearanceSystem _appearance = default!;
     [Dependency] private SharedAudioSystem _audio = default!;
     [Dependency] private DamageableSystem _damageable = default!;
     [Dependency] private SharedDoAfterSystem _doAfter = default!;
     [Dependency] private EntityWhitelistSystem _entityWhitelist = default!;
     [Dependency] private SharedHandsSystem _hands = default!;
-    [Dependency] private IMapManager _map = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private SharedOnCollideSystem _onCollide = default!;
     [Dependency] private SharedPhysicsSystem _physics = default!;
@@ -62,6 +70,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
     [Dependency] private IPrototypeManager _prototype = default!;
     [Dependency] private RMCReagentSystem _reagent = default!;
     [Dependency] private RMCMapSystem _rmcMap = default!;
+    [Dependency] private AnchoredTileCacheSystem _anchorTiles = default!;
     [Dependency] private SharedRMCMeleeWeaponSystem _rmcMelee = default!;
     [Dependency] private SharedSolutionContainerSystem _solutionContainer = default!;
     [Dependency] private TagSystem _tag = default!;
@@ -73,10 +82,12 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
     [Dependency] private InventorySystem _inventory = default!;
     [Dependency] private EntityLookupSystem _entityLookup = default!;
     [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
+    [Dependency] private RMCWaterSystem _rmcWater = default!; // CMU14
+    [Dependency] private CMUFuelProfileSystem _cmuFuel = default!; // CMU14
 
-    private static readonly ProtoId<AlertPrototype> FireAlert = "Fire";
     private static readonly ProtoId<ReagentPrototype> WaterReagent = "Water";
     private static readonly ProtoId<TagPrototype> StructureTag = "Structure";
+    private readonly HashSet<Entity<RMCIgniteOnCollideComponent>> _nearbyFires = new();
     private static readonly ProtoId<TagPrototype> WallTag = "Wall";
     private static readonly ProtoId<DamageTypePrototype> HeatDamage = "Heat";
 
@@ -108,6 +119,10 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         SubscribeLocalEvent<CraftsIntoMolotovComponent, ExaminedEvent>(OnCraftsIntoMolotovExamined);
         SubscribeLocalEvent<CraftsIntoMolotovComponent, InteractUsingEvent>(OnCraftsIntoMolotovInteractUsing);
         SubscribeLocalEvent<CraftsIntoMolotovComponent, CraftMolotovDoAfterEvent>(OnCraftsIntoMolotovDoAfter);
+        // CMU14 start - any lidded bottle holding something that burns can be made into a molotov
+        SubscribeLocalEvent<OpenableComponent, InteractUsingEvent>(OnOpenableMolotovInteractUsing);
+        SubscribeLocalEvent<OpenableComponent, CraftMolotovDoAfterEvent>(OnOpenableMolotovDoAfter);
+        // CMU14 end
 
         SubscribeLocalEvent<TileFireOnTriggerComponent, RMCTriggerEvent>(OnTileFireTriggered);
         SubscribeLocalEvent<TileFireOnTriggerComponent, CMExplosiveTriggeredEvent>(OnTileFireOnTriggerExplosive);
@@ -148,7 +163,32 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
 
     private void OnTileFireMapInit(Entity<TileFireComponent> ent, ref MapInitEvent args)
     {
+        // CMU14: flames cannot burn on uncovered water.
+        if (_net.IsServer && _rmcWater.IsOnWater(ent))
+        {
+            QueueDel(ent);
+            return;
+        }
+
+        // CMU14: every source, including direct spawns, replaces the tile's previous flame.
+        if (_net.IsServer)
+        {
+            var fires = _rmcMap.GetAnchoredEntitiesEnumerator<TileFireComponent>(Transform(ent).Coordinates);
+            while (fires.MoveNext(out var fire))
+            {
+                if (fire != ent.Owner)
+                    QueueDel(fire);
+            }
+        }
+
         ent.Comp.SpawnedAt = _timing.CurTime;
+        // CMU14: fire growth and synthetic resistance.
+        if (ent.Comp.GrowthDuration > TimeSpan.Zero && TryComp(ent, out RMCIgniteOnCollideComponent? ignition))
+        {
+            ent.Comp.MatureIntensity = ignition.Intensity;
+            UpdateFireGrowth(ent, 0);
+            _appearance.SetData(ent, TileFireLayers.Base, TileFireVisuals.One);
+        }
         Dirty(ent);
     }
 
@@ -157,20 +197,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         if (_net.IsClient)
             return;
 
-        var water = false;
-        foreach (var container in args.Solution.Comp.Containers)
-        {
-            if (!_solutionContainer.TryGetSolution(args.Solution.Owner, container, out _, out var solution))
-                continue;
-
-            if (solution.ContainsPrototype(WaterReagent))
-            {
-                water = true;
-                break;
-            }
-        }
-
-        if (!water)
+        if (!args.Solution.Comp.Solution.ContainsPrototype(WaterReagent))
             return;
 
         if (ent.Comp.ExtinguishInstantly)
@@ -193,11 +220,17 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         if (time < patter.Last + patter.Cooldown)
             return;
 
+        args.Handled = true;
         patter.Last = time;
         Dirty(user, patter);
 
-        ent.Comp.Duration -= patter.RemoveDuration * ent.Comp.PatExtinguishMultiplier;
-        Dirty(ent);
+        // The pat counter is server-only; prediction replays must not advance it or delete networked fire.
+        if (_net.IsServer)
+        {
+            ent.Comp.CurrentPats++;
+            if (ent.Comp.CurrentPats >= ent.Comp.PatsToExtinguish)
+                QueueDel(ent);
+        }
 
         _rmcMelee.DoLunge(user, ent);
         _audio.PlayPredicted(patter.Sound, user, user, AudioParams.Default.WithVolume(-8).WithVariation(0.05f));
@@ -217,7 +250,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
 
     private void OnCraftsIntoMolotovExamined(Entity<CraftsIntoMolotovComponent> ent, ref ExaminedEvent args)
     {
-        if (!CanCraftMolotovPopup(ent, args.Examiner, false, out _))
+        if (!CMUCanCraftMolotov(ent, args.Examiner, false, out _, out _)) // CMU14
             return;
 
         using (args.PushGroup(nameof(CraftsIntoMolotovComponent)))
@@ -231,9 +264,10 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         if (!HasComp<PaperComponent>(args.Used))
             return;
 
-        if (!CanCraftMolotovPopup(ent, args.User, true, out _))
+        if (!CMUCanCraftMolotov(ent, args.User, true, out _, out _)) // CMU14
             return;
 
+        args.Handled = true; // CMU14
         var ev = new CraftMolotovDoAfterEvent();
         var doAfter = new DoAfterArgs(EntityManager, args.User, ent.Comp.Delay, ev, ent, ent, args.Used)
         {
@@ -248,26 +282,12 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
             return;
 
         args.Handled = true;
-        if (!HasComp<PaperComponent>(args.Used))
+        // CMU14 start - the molotov keeps the bottle's solution and burns with its fire spec (FLOW-22)
+        if (args.Used is not { } paper)
             return;
 
-        if (!CanCraftMolotovPopup(ent, args.User, true, out var intensity))
-            return;
-
-        if (_net.IsClient)
-            return;
-
-        var coords = _transform.GetMoverCoordinates(ent);
-        var molotov = Spawn(ent.Comp.Spawns, coords);
-
-        var tileFire = EnsureComp<TileFireOnTriggerComponent>(molotov);
-        tileFire.Duration = intensity.Int();
-        Dirty(molotov, tileFire);
-
-        Del(ent);
-        Del(args.Used);
-
-        _hands.TryPickupAnyHand(args.User, molotov);
+        CMUTryCraftMolotov(ent, paper, args.User, out _);
+        // CMU14 end
     }
 
     private void OnTileFireTriggered(Entity<TileFireOnTriggerComponent> ent, ref RMCTriggerEvent args)
@@ -275,8 +295,9 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         var coords = _transform.GetMoverCoordinates(ent);
         _audio.PlayPvs(ent.Comp.Sound, coords);
 
-        var tile = coords.SnapToGrid(EntityManager, _map);
-        SpawnFireDiamond(ent.Comp.Spawn, tile, ent.Comp.Range, ent.Comp.Intensity, ent.Comp.Duration);
+        var tile = coords.SnapToGrid(EntityManager);
+        if (!CMUTrySpawnContainedFire(ent, tile)) // CMU14: crafted molotovs burn their contents in a circle
+            SpawnFireDiamond(ent.Comp.Spawn, tile, ent.Comp.Range, ent.Comp.Intensity, ent.Comp.Duration);
         QueueDel(ent);
     }
 
@@ -303,8 +324,9 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
 
     private void OnTileFireOnTriggerExplosive(Entity<TileFireOnTriggerComponent> ent, ref CMExplosiveTriggeredEvent args)
     {
-        var coords = _transform.GetMoverCoordinates(ent).SnapToGrid(EntityManager, _map);
-        SpawnFireDiamond(ent.Comp.Spawn, coords, ent.Comp.Range, ent.Comp.Intensity, ent.Comp.Duration);
+        var coords = _transform.GetMoverCoordinates(ent).SnapToGrid(EntityManager);
+        if (!CMUTrySpawnContainedFire(ent, coords)) // CMU14
+            SpawnFireDiamond(ent.Comp.Spawn, coords, ent.Comp.Range, ent.Comp.Intensity, ent.Comp.Duration);
     }
 
     private void OnIgniteCollide(Entity<RMCIgniteOnCollideComponent> ent, ref StartCollideEvent args)
@@ -336,7 +358,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         if (args.Target != ent.Owner ||
             user == args.Target ||
             !TryComp(user, out FirePatterComponent? patter) ||
-            _entityWhitelist.IsBlacklistPass(patter.Blacklist, ent) ||
+            _entityWhitelist.IsWhitelistPass(patter.Blacklist, ent) ||
             !TryComp(ent, out FlammableComponent? flammable) ||
             !flammable.OnFire)
         {
@@ -354,7 +376,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         Pat(ent.Owner, patter.Stacks);
 
         _audio.PlayPredicted(patter.Sound, user, user);
-        _popup.PopupClient($"You try to put out the fire on {Name(ent)}!", ent, user, PopupType.SmallCaution);
+        _popup.PopupEntity($"You try to put out the fire on {Name(ent)}!", ent, user, PopupType.SmallCaution);
         _popup.PopupEntity($"{Name(user)} tries to put out the fire on you!", ent, ent, PopupType.SmallCaution);
 
         var others = Filter.PvsExcept(ent).RemoveWhereAttachedEntity(e => e == user || e == ent.Owner);
@@ -371,17 +393,6 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
     {
         RemCompDeferred<OnFireComponent>(ent);
         RemCompDeferred<RMCFireBypassActiveComponent>(ent);
-    }
-
-    public void UpdateFireAlert(EntityUid ent)
-    {
-        var ev = new ShowFireAlertEvent();
-        RaiseLocalEvent(ent, ref ev);
-
-        if (ev.Show)
-            _alerts.ShowAlert(ent, FireAlert);
-        else
-            _alerts.ClearAlert(ent, FireAlert);
     }
 
     public bool IsOnFire(Entity<FlammableComponent?> ent)
@@ -417,20 +428,23 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         if (intensity != null || duration != null)
         {
             var ignite = EnsureComp<RMCIgniteOnCollideComponent>(spawned);
-            if (intensity != null)
-                ignite.Intensity = intensity.Value;
-
-            if (duration != null)
-                ignite.Duration = duration.Value;
-
-            Dirty(spawned, ignite);
+            SetIntensityDuration((spawned, ignite, null), intensity, duration);
         }
 
         var onCollide = EnsureComp<DamageOnCollideComponent>(spawned);
         _onCollide.SetChain((spawned, onCollide), chain);
     }
 
-    private void SpawnFires(EntProtoId spawn, EntityCoordinates coordinates, int range, EntityUid chain, int? intensity, int? duration, HashSet<EntityCoordinates>? spawned = null)
+    private void SpawnFires(
+        EntProtoId spawn,
+        EntityCoordinates coordinates,
+        int range,
+        EntityUid chain,
+        int? intensity,
+        int? duration,
+        int? zProjectionMaxFloors = null,
+        Func<EntityCoordinates, bool>? canSpawn = null,
+        HashSet<EntityCoordinates>? spawned = null)
     {
         if (_net.IsClient)
             return;
@@ -442,7 +456,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
             if (!spawned.Add(target))
                 continue;
 
-            var nextRange = SpawnFire(target, spawn, chain, range, intensity, duration, out var cont);
+            var nextRange = SpawnFire(target, spawn, chain, range, intensity, duration, out var cont, zProjectionMaxFloors, canSpawn);
             if (nextRange == 0 || cont)
                 continue;
 
@@ -451,7 +465,7 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
                 {
                     try
                     {
-                        SpawnFires(spawn, target, nextRange, chain, intensity, duration, spawned);
+                        SpawnFires(spawn, target, nextRange, chain, intensity, duration, zProjectionMaxFloors, canSpawn, spawned);
                     }
                     catch (Exception e)
                     {
@@ -461,15 +475,24 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         }
     }
 
-    public void SpawnFireDiamond(EntProtoId spawn, EntityCoordinates center, int range, int? intensity = null, int? duration = null)
+    public void SpawnFireDiamond(
+        EntProtoId spawn,
+        EntityCoordinates center,
+        int range,
+        int? intensity = null,
+        int? duration = null,
+        int? zProjectionMaxFloors = null,
+        Func<EntityCoordinates, bool>? canSpawn = null)
     {
         var chain = _onCollide.SpawnChain();
         // Ensure the center tile is ignited as part of the diamond.
-        SpawnFire(center, spawn, chain, range, intensity, duration, out _);
-        SpawnFires(spawn, center, range, chain, intensity, duration);
+        SpawnFire(center, spawn, chain, range, intensity, duration, out _, zProjectionMaxFloors, canSpawn);
+        SpawnFires(spawn, center, range, chain, intensity, duration, zProjectionMaxFloors, canSpawn);
     }
 
-    public void SpawnFireLines(EntProtoId spawn, EntityCoordinates center, int cardinalRange, int ordinalRange, int? intensity = null, int? duration = null)
+    // CMU14: fire growth and synthetic resistance.
+    public void SpawnFireLines(EntProtoId spawn, EntityCoordinates center, int cardinalRange, int ordinalRange, int? intensity = null, int? duration = null,
+        Func<EntityCoordinates, bool>? canSpawn = null)
     {
         var chain = _onCollide.SpawnChain();
         var spawned = new HashSet<EntityCoordinates>();
@@ -483,7 +506,8 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
                 if (!spawned.Add(target))
                     continue;
 
-                nextRange = SpawnFire(target, spawn, chain, nextRange, intensity, duration, out var cont);
+                // CMU14: fire growth and synthetic resistance.
+                nextRange = SpawnFire(target, spawn, chain, nextRange, intensity, duration, out var cont, canSpawn: canSpawn);
                 target = target.Offset(direction);
                 if (cont)
                     break;
@@ -491,14 +515,30 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         }
     }
 
-    public int SpawnFire(EntityCoordinates target, EntProtoId spawn, EntityUid chain, int range, int? intensity, int? duration, out bool cont)
+    public int SpawnFire(
+        EntityCoordinates target,
+        EntProtoId spawn,
+        EntityUid chain,
+        int range,
+        int? intensity,
+        int? duration,
+        out bool cont,
+        int? zProjectionMaxFloors = null,
+        Func<EntityCoordinates, bool>? canSpawn = null)
     {
         cont = false;
-        if (!_zLevels.TryProjectToGround(target, out target))
+        var projected = zProjectionMaxFloors is { } maxFloors
+            ? _zLevels.TryProjectToGround(target, out target, maxFloors)
+            : _zLevels.TryProjectToGround(target, out target);
+
+        if (!projected)
         {
             cont = true;
             return range;
         }
+
+        if (canSpawn != null && !canSpawn(target))
+            return Math.Max(range - 1, 0);
 
         if (!_rmcMap.TryGetTileDef(target, out var tile) ||
             tile.ID == ContentTileDefinition.SpaceID)
@@ -668,41 +708,283 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         return true;
     }
 
-    private bool CanCraftMolotovPopup(Entity<CraftsIntoMolotovComponent> ent, EntityUid user, bool popup, out FixedPoint2 intensity)
+    // CMU14 start - FLOW-22 molotovs: any lidded bottle of anything that burns, fired with its fire spec.
+    // Replaces RMC's CanCraftMolotovPopup (Σ intensityMod × units written into the molotov's Duration).
+    /// <summary>Solution a crafted molotov carries; its fire spec decides the burn when it shatters.</summary>
+    public const string CMUMolotovSolution = "cmu_molotov";
+
+    private static readonly EntProtoId CMUDefaultMolotov = "RMCGrenadeMolotov";
+    private static readonly TimeSpan CMUMolotovDelay = TimeSpan.FromSeconds(2);
+
+    private void OnOpenableMolotovInteractUsing(Entity<OpenableComponent> ent, ref InteractUsingEvent args)
     {
-        intensity = default;
-        if (!_solutionContainer.TryGetSolution(ent.Owner, ent.Comp.SolutionId, out _, out var solution) ||
+        if (args.Handled ||
+            HasComp<CraftsIntoMolotovComponent>(ent) || // the RMC alcohol path handles these
+            !HasComp<PaperComponent>(args.Used) ||
+            !CMUIsMolotovBottle(ent))
+        {
+            return;
+        }
+
+        args.Handled = true;
+        if (!CMUCanCraftMolotov(ent, args.User, true, out _, out _))
+            return;
+
+        var ev = new CraftMolotovDoAfterEvent();
+        var doAfter = new DoAfterArgs(EntityManager, args.User, CMUMolotovDelay, ev, ent, ent, args.Used)
+        {
+            BreakOnMove = true,
+        };
+        _doAfter.TryStartDoAfter(doAfter);
+    }
+
+    private void OnOpenableMolotovDoAfter(Entity<OpenableComponent> ent, ref CraftMolotovDoAfterEvent args)
+    {
+        if (args.Handled || args.Cancelled || args.Used is not { } paper)
+            return;
+
+        args.Handled = true;
+        CMUTryCraftMolotov(ent, paper, args.User, out _);
+    }
+
+    /// <summary>
+    /// A bottle that can be made into a molotov: RMC's alcohol bottles (<see cref="CraftsIntoMolotovComponent"/>) or
+    /// any item with a closeable lid (<see cref="OpenableComponent.Closeable"/>) and a drainable solution.
+    /// </summary>
+    public bool CMUIsMolotovBottle(EntityUid container)
+    {
+        if (HasComp<CraftsIntoMolotovComponent>(container))
+            return true;
+
+        return TryComp(container, out OpenableComponent? openable) &&
+               openable.Closeable &&
+               HasComp<ItemComponent>(container) &&
+               HasComp<DrainableSolutionComponent>(container);
+    }
+
+    private bool CMUTryGetMolotovSolution(EntityUid container,
+        [NotNullWhen(true)] out Entity<SolutionComponent>? soln,
+        [NotNullWhen(true)] out Solution? solution)
+    {
+        if (TryComp(container, out CraftsIntoMolotovComponent? craft))
+            return _solutionContainer.TryGetSolution(container, craft.SolutionId, out soln, out solution);
+
+        return _solutionContainer.TryGetDrainableSolution(container, out soln, out solution);
+    }
+
+    /// <summary>
+    /// Whether paper can turn <paramref name="container"/> into a molotov: it must be a molotov bottle
+    /// (<see cref="CMUIsMolotovBottle"/>) whose contents resolve to a <see cref="CMUFireSource.Molotov"/> fire: any
+    /// fuel (stock napalm, generated Fueling/Oxidizing chemicals, blends) or enough alcohol.
+    /// </summary>
+    public bool CMUCanCraftMolotov(EntityUid container, EntityUid? user, bool popup, out CMUFireSpec spec,
+        [NotNullWhen(true)] out Entity<SolutionComponent>? soln)
+    {
+        spec = default;
+        soln = null;
+        if (!CMUIsMolotovBottle(container))
+            return false;
+
+        if (!CMUTryGetMolotovSolution(container, out soln, out var solution) ||
             solution.Volume <= FixedPoint2.Zero)
         {
-            if (popup)
-                _popup.PopupClient($"The {Name(ent)} is empty...", ent, user, PopupType.SmallCaution);
+            if (popup && user != null)
+                _popup.PopupEntity($"The {Name(container)} is empty...", container, user.Value, PopupType.SmallCaution);
 
+            soln = null;
             return false;
         }
 
-        intensity = FixedPoint2.Zero;
-        foreach (var solutionReagent in solution)
+        if (!_cmuFuel.TryResolveFire(solution, CMUFireSource.Molotov, out spec))
         {
-            if (!_reagent.TryIndex(solutionReagent.Reagent.Prototype, out var reagent))
-                continue;
-
-            intensity += reagent.IntensityMod * solutionReagent.Quantity;
-        }
-
-        if (intensity < ent.Comp.MinIntensity)
-        {
-            if (popup)
+            if (popup && user != null)
             {
-                var msg = $"There's not enough flammable liquid in the {Name(ent)}!";
-                _popup.PopupClient(msg, ent, user, PopupType.SmallCaution);
+                var msg = $"There's not enough flammable liquid in the {Name(container)}!";
+                _popup.PopupEntity(msg, container, user.Value, PopupType.SmallCaution);
             }
 
+            soln = null;
             return false;
         }
 
-        intensity = FixedPoint2.Min(intensity, ent.Comp.MaxIntensity);
         return true;
     }
+
+    /// <summary>
+    /// Turns <paramref name="container"/> and <paramref name="paper"/> into a molotov holding the container's whole
+    /// solution in <see cref="CMUMolotovSolution"/>. Server only; false, with nothing consumed, when it cannot burn.
+    /// </summary>
+    public bool CMUTryCraftMolotov(EntityUid container, EntityUid paper, EntityUid? user, [NotNullWhen(true)] out EntityUid? molotov)
+    {
+        molotov = null;
+        if (!HasComp<PaperComponent>(paper) ||
+            !CMUCanCraftMolotov(container, user, user != null, out var spec, out var soln))
+        {
+            return false;
+        }
+
+        if (_net.IsClient)
+            return false;
+
+        var coords = _transform.GetMoverCoordinates(container);
+        var spawns = TryComp(container, out CraftsIntoMolotovComponent? craft) ? craft.Spawns : CMUDefaultMolotov;
+        var uid = Spawn(spawns, coords);
+
+        var contents = _solutionContainer.SplitSolution(soln.Value, soln.Value.Comp.Solution.Volume);
+        _solutionContainer.EnsureSolution(uid, CMUMolotovSolution, out var molotovSoln);
+        molotovSoln.Comp.Solution.MaxVolume = FixedPoint2.Max(molotovSoln.Comp.Solution.MaxVolume, contents.Volume);
+        _solutionContainer.TryAddSolution(molotovSoln, contents);
+
+        // The fire comes from the contents (CMUTrySpawnContainedFire); these only matter if they are lost.
+        var tileFire = EnsureComp<TileFireOnTriggerComponent>(uid);
+        tileFire.Spawn = spec.BehaviourEntity;
+        tileFire.Intensity = spec.Intensity; // RMC wrote the strength into Duration here
+        tileFire.Duration = spec.Duration;
+        tileFire.Range = CMUFuelProfileSystem.CircleRadius(contents.Volume, spec);
+        Dirty(uid, tileFire);
+
+        Del(container);
+        Del(paper);
+
+        if (user != null)
+            _hands.TryPickupAnyHand(user.Value, uid);
+
+        molotov = uid;
+        return true;
+    }
+
+    /// <summary>
+    /// Shatters a crafted molotov: its contents resolve to a <see cref="CMUFireSource.Molotov"/> fire spec and fill a
+    /// circle of √units radius, capped by the spec. False for molotovs without contents (map-placed ones).
+    /// </summary>
+    private bool CMUTrySpawnContainedFire(EntityUid molotov, EntityCoordinates center)
+    {
+        if (!_solutionContainer.TryGetSolution(molotov, CMUMolotovSolution, out var soln, out var solution) ||
+            !_cmuFuel.TryResolveFire(solution, CMUFireSource.Molotov, out var spec))
+        {
+            return false;
+        }
+
+        if (_net.IsClient)
+            return true;
+
+        var radius = CMUFuelProfileSystem.CircleRadius(solution.Volume, spec);
+        _solutionContainer.RemoveAllSolution(soln.Value);
+        SpawnFireCircle(spec.BehaviourEntity, center, radius, spec);
+        return true;
+    }
+
+    /// <summary>
+    /// FLOW-22: applies a fire spec to a freshly spawned tile fire: intensity and burn duration, tile lifetime,
+    /// penetration (structure melting from level 3), the colour tier and its fire-stack cap. Raises
+    /// <see cref="CMUFireSpecAppliedEvent"/> for the server-side spread rule.
+    /// </summary>
+    public void ApplyFireSpec(EntityUid fire, CMUFireSpec spec)
+    {
+        ApplyFireSpecStats(fire, spec);
+        ScaleTileFireDuration(fire, spec.TileLifetimeMultiplier);
+        var ev = new CMUFireSpecAppliedEvent(spec, false);
+        RaiseLocalEvent(fire, ref ev);
+    }
+
+    /// <summary><see cref="ApplyFireSpec"/> without the lifetime scaling and the event.</summary>
+    private void ApplyFireSpecStats(EntityUid fire, CMUFireSpec spec)
+    {
+        SetIntensityDuration(fire, spec.Intensity, spec.Duration);
+        SetFirePenetrating(fire, spec.PenetrationLevel >= 1);
+
+        var tier = EnsureComp<CMUFireTierComponent>(fire);
+        tier.Tier = spec.Tier;
+        tier.Color = CMUFuelProfileSystem.TierColor(spec.Tier);
+        tier.PenetrationLevel = spec.PenetrationLevel;
+        tier.SpreadDepth = spec.SpreadDepth;
+        Dirty(fire, tier);
+
+        if (_igniteOnCollideQuery.TryComp(fire, out var ignite))
+        {
+            ignite.MaxStacks = CMUFuelProfileSystem.TierMaxStacks(spec.Tier, ignite.MaxStacks);
+            ignite.BurnColor = tier.Color;
+            Dirty(fire, ignite);
+        }
+
+        if (spec.PenetrationLevel >= 3)
+        {
+            var melting = EnsureComp<CMUStructureMeltingFireComponent>(fire);
+            melting.Level = spec.PenetrationLevel;
+            melting.Intensity = spec.Intensity;
+        }
+    }
+
+    /// <summary>
+    /// Fills a circle (dx² + dy² ≤ r² + r) around <paramref name="center"/> with <paramref name="spawn"/> fires sized by
+    /// <paramref name="spec"/>. Like <see cref="SpawnFireDiamond"/> the fire floods out from the centre and stops at
+    /// walls, structures and <see cref="BlockTileFireComponent"/> (which still catch alight), and skips space and tiles
+    /// it cannot project to the ground. Radius 0 lights only the centre tile.
+    /// </summary>
+    public void SpawnFireCircle(EntProtoId spawn, EntityCoordinates center, int radius, CMUFireSpec spec)
+    {
+        if (_net.IsClient)
+            return;
+
+        radius = Math.Max(0, radius);
+        var limit = radius * radius + radius;
+        var chain = _onCollide.SpawnChain();
+        var visited = new HashSet<Vector2i> { Vector2i.Zero };
+        var queue = new Queue<Vector2i>();
+        queue.Enqueue(Vector2i.Zero);
+        while (queue.TryDequeue(out var offset))
+        {
+            if (!CMUSpawnSpecFire(center.Offset(offset), spawn, chain, spec, out var blocks) || blocks)
+                continue;
+
+            foreach (var direction in _rmcMap.CardinalDirections)
+            {
+                var next = offset + direction.ToIntVec();
+                if (next.X * next.X + next.Y * next.Y > limit || !visited.Add(next))
+                    continue;
+
+                queue.Enqueue(next);
+            }
+        }
+    }
+
+    /// <summary>
+    /// One tile of a spec fire with <see cref="SpawnFire"/>'s checks. False when nothing was lit (space, nothing to
+    /// stand on); <paramref name="blocks"/> when the tile holds a wall, structure or fire blocker.
+    /// </summary>
+    private bool CMUSpawnSpecFire(EntityCoordinates target, EntProtoId spawn, EntityUid chain, CMUFireSpec spec, out bool blocks)
+    {
+        blocks = false;
+        if (!_zLevels.TryProjectToGround(target, out target))
+            return false;
+
+        if (!_rmcMap.TryGetTileDef(target, out var tile) ||
+            tile.ID == ContentTileDefinition.SpaceID)
+        {
+            return false;
+        }
+
+        if (_rmcMap.HasAnchoredEntityEnumerator<TileFireComponent>(target, out var oldTileFire))
+            QueueDel(oldTileFire);
+
+        var anchored = _rmcMap.GetAnchoredEntitiesEnumerator(target);
+        while (anchored.MoveNext(out var uid))
+        {
+            if (_blockTileFireQuery.HasComp(uid) ||
+                (_tag.HasAnyTag(uid, StructureTag, WallTag) && !_doorQuery.HasComp(uid)))
+            {
+                blocks = true;
+                break;
+            }
+        }
+
+        var spawned = Spawn(spawn, target);
+        ApplyFireSpec(spawned, spec);
+        var onCollide = EnsureComp<DamageOnCollideComponent>(spawned);
+        _onCollide.SetChain((spawned, onCollide), chain);
+        return true;
+    }
+    // CMU14 end
 
     private void OnPlasmaFrenzyIgnite(Entity<PlasmaFrenzyComponent> ent, ref IgnitedEvent args)
     {
@@ -772,6 +1054,44 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         }
     }
 
+    // CMU14 Begin: keep spread fire synchronized with its source fire.
+    /// <summary>
+    /// Makes a fire that spread from another burn exactly as strong as it, with the same age and lifetime, so the
+    /// whole burn dies down and goes out together.
+    /// </summary>
+    public void MatchTileFire(Entity<TileFireComponent> child, Entity<TileFireComponent> parent)
+    {
+        if (HasComp<Content.Shared.Gibbing.NonGibbingDamageComponent>(parent))
+            EnsureComp<Content.Shared.Gibbing.NonGibbingDamageComponent>(child);
+        child.Comp.SpawnedAt = parent.Comp.SpawnedAt;
+        child.Comp.Duration = parent.Comp.Duration;
+        child.Comp.GrowthDuration = parent.Comp.GrowthDuration;
+        child.Comp.MatureIntensity = parent.Comp.MatureIntensity;
+        Dirty(child);
+
+        if (TryComp(parent, out RMCIgniteOnCollideComponent? parentIgnite) &&
+            TryComp(child, out RMCIgniteOnCollideComponent? childIgnite))
+        {
+            SetIntensityDuration((child, childIgnite, null), parentIgnite.Intensity, parentIgnite.Duration);
+        }
+
+        // CMU14 start - FLOW-22: fires spread from a spec fire keep its tier, penetration and spread rule
+        if (TryComp(parent, out CMUFireTierComponent? parentTier) && parentIgnite != null)
+        {
+            var spec = CMUFuelProfileSystem.CreateSpec(parentIgnite.Intensity,
+                parentIgnite.Duration,
+                0,
+                CMUFuelProfileSystem.GenericFire, // only the stats are reapplied
+                parentTier.PenetrationLevel,
+                spreadDepth: parentTier.SpreadDepth);
+            ApplyFireSpecStats(child, spec);
+            var ev = new CMUFireSpecAppliedEvent(spec, true);
+            RaiseLocalEvent(child, ref ev);
+        }
+        // CMU14 end
+    }
+    // CMU14 End
+
     public void SetIntensityDuration(Entity<RMCIgniteOnCollideComponent?, DamageOnCollideComponent?> ent, int? intensity, int? duration)
     {
         Resolve(ent, ref ent.Comp1, ref ent.Comp2, false);
@@ -795,8 +1115,45 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         }
     }
 
+    // CMU14 method: fire growth, synthetic resistance, and Firepenetrating fuel.
+    /// <summary>
+    /// Fire bypasses worn armor, but respects synthetic and Yautja heat resistance unless the fire is
+    /// <paramref name="penetrating"/> (Firepenetrating fuel), in which case every resistance is ignored.
+    /// </summary>
+    public void DamageFromFire(EntityUid target, DamageSpecifier damage, bool interruptsDoAfters = true, EntityUid? origin = null, bool penetrating = false)
+    {
+        var ignoreResistances = penetrating || (!HasComp<SynthComponent>(target) && !HasComp<YautjaComponent>(target));
+        _damageable.TryChangeDamage(target, damage, ignoreResistances: ignoreResistances,
+            interruptsDoAfters: interruptsDoAfters, origin: origin);
+    }
+
+    // CMU14 method - Firepenetrating fuel
+    public void SetFirePenetrating(Entity<RMCIgniteOnCollideComponent?> ent, bool penetrating)
+    {
+        if (!Resolve(ent, ref ent.Comp, false))
+            return;
+
+        ent.Comp.FirePenetrating = penetrating;
+        Dirty(ent.Owner, ent.Comp);
+    }
+
+    // CMU14 method - flamer blends scale the tile fire's lifetime
+    /// <summary>Multiplies the remaining lifetime of a tile fire, keeping its spawn time.</summary>
+    public void ScaleTileFireDuration(Entity<TileFireComponent?> fire, float multiplier)
+    {
+        if (multiplier <= 0 || !Resolve(fire, ref fire.Comp, false))
+            return;
+
+        fire.Comp.Duration *= multiplier;
+        Dirty(fire.Owner, fire.Comp);
+    }
+
     private void TryIgnite(Entity<RMCIgniteOnCollideComponent> ent, EntityUid other, bool checkIgnited)
     {
+        // This will ignite too much during hijack otherwise, including fires
+        if (!HasComp<DamageableComponent>(other))
+            return;
+
         EnsureComp<SteppingOnFireComponent>(other);
         var flammableEnt = new Entity<FlammableComponent?>(other, null);
         if (!Resolve(flammableEnt, ref flammableEnt.Comp, false))
@@ -834,7 +1191,8 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         }
 
         if (!wasOnFire && IsOnFire(flammableEnt) && CanFireBypassImmunity(ent, other))
-            _damageable.TryChangeDamage(flammableEnt, flammableEnt.Comp.Damage * ent.Comp.Intensity, true);
+            // CMU14: fire growth and synthetic resistance.
+            DamageFromFire(other, flammableEnt.Comp.Damage * ent.Comp.Intensity, penetrating: ent.Comp.FirePenetrating); // CMU14
     }
 
     private void ApplyTileEffect(Entity<SteppingOnFireComponent> ent, RMCIgniteOnCollideComponent ignite, EntityUid fireEntity)
@@ -853,8 +1211,24 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
             stepping.ArmorMultiplier = ignite.ArmorMultiplier;
             if (TryComp<RMCFireArmorDebuffModifierComponent>(uid, out var mod))
                 stepping.ArmorMultiplier *= mod.DebuffModifier;
-            _armor.UpdateArmorValue((uid, null));
         }
+
+        // CMU14 Begin: fireproof wearers get their fire protection on the per-meter
+        // walking tick too; previously only the standing tick applied it, so every new
+        // fire tile stepped hit at full strength (AU-14 PR #2296).
+        var canIgnite = CanBeIgnited(uid, fireEntity, ignite.Intensity);
+        var fireProtection = 1f;
+        if (!canIgnite)
+        {
+            var ev = new GetFireProtectionEvent();
+            RaiseLocalEvent(uid, ref ev);
+
+            if (_inventoryQuery.TryComp(uid, out var inv))
+                _inventory.RelayEvent((uid, inv), ref ev);
+
+            fireProtection = ev.Multiplier;
+        }
+        // CMU14 End
 
         var coords = _transform.GetMoverCoordinates(uid);
         if (stepping.LastPosition is { } last &&
@@ -865,7 +1239,8 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
             {
                 stepping.Distance = 0;
                 if (CanFireBypassImmunity(fireEntity, uid))
-                    _damageable.TryChangeDamage(uid, tile * ignite.Intensity, true);
+                    // CMU14: fire growth and synthetic resistance; walking ticks take fire protection.
+                    DamageFromFire(uid, tile * ignite.Intensity * fireProtection, penetrating: ignite.FirePenetrating);
             }
         }
 
@@ -873,7 +1248,8 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
             return;
 
         // Check for ignition immunity before igniting
-        var canIgnite = CanBeIgnited(uid, fireEntity, ignite.Intensity);
+        // CMU14: read above the walking tick so fire protection can reuse it
+        //var canIgnite = CanBeIgnited(uid, fireEntity, ignite.Intensity);
 
         if (canIgnite)
         {
@@ -895,21 +1271,25 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         {
             // Damaging entities that are immune to being ignited but NOT immune to the fire's damage
             // Same update rate as FlammableSystem
-            var ev = new GetFireProtectionEvent();
-            RaiseLocalEvent(uid, ref ev);
+            // CMU14: fire protection is read once above the walking tick and reused here
+            //var ev = new GetFireProtectionEvent();
+            //RaiseLocalEvent(uid, ref ev);
 
-            if (_inventoryQuery.TryComp(uid, out var inv))
-                _inventory.RelayEvent((uid, inv), ref ev);
+            // CMU14
+            //if (_inventoryQuery.TryComp(uid, out var inv))
+            //    _inventory.RelayEvent((uid, inv), ref ev);
 
             if (ent.Comp.UpdateAt <= timing)
             {
-                _damageable.TryChangeDamage(uid, ignite.Intensity / 5f * flammable.Damage * ev.Multiplier, true, false);
+                // CMU14: fire growth and synthetic resistance.
+                // CMU14
+                DamageFromFire(uid, ignite.Intensity / 5f * flammable.Damage * fireProtection, interruptsDoAfters: false, penetrating: ignite.FirePenetrating);
                 ent.Comp.UpdateAt = timing + ent.Comp.UpdateTime;
             }
         }
 
         stepping.LastPosition = coords;
-        Dirty(ent);
+        // The caller compares the complete final state after all tile effects have run.
     }
 
     /// <summary>
@@ -922,6 +1302,11 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
     {
         // If the fire has a bypass component, it can always bypass immunity
         if (HasComp<RMCFireImmunityBypassComponent>(fireEntity))
+            return true;
+
+        // CMU14: penetrating research fire burns through fire immunity like cmss13's fire_penetrating,
+        // ravagers stood in it untouched before
+        if (TryComp<RMCIgniteOnCollideComponent>(fireEntity, out var ignite) && ignite.FirePenetrating)
             return true;
 
         var tileEv = new RMCGetFireImmunityEvent(fireEntity);
@@ -958,22 +1343,25 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         }
     }
 
+    // CMU14 method: ignition damage can spawn new fire sources during processing.
     private void RunIgniteOnCollide()
     {
         try
         {
             var applyQuery = EntityQueryEnumerator<RMCIgniteOnCollideComponent>();
             while (applyQuery.MoveNext(out var uid, out var apply))
-            {
-                foreach (var contact in _physics.GetEntitiesIntersectingBody(uid, (int)apply.Collision))
-                {
-                    TryIgnite((uid, apply), contact, true);
-                }
+                _cmuIgnitionSources.Add((uid, apply));
 
-                var enumerator = _rmcMap.GetAnchoredEntitiesEnumerator(uid);
-                while (enumerator.MoveNext(out var contact))
+            foreach (var (uid, apply) in _cmuIgnitionSources)
+            {
+                if (apply.Deleted || TerminatingOrDeleted(uid))
+                    continue;
+
+                // The immutable membership snapshot survives ignition callbacks that
+                // anchor new fire. Damage/immunity are still evaluated every update.
+                foreach (var contact in _anchorTiles.Get(uid))
                 {
-                    TryIgnite((uid, apply), contact, true);
+                    if (!TerminatingOrDeleted(contact)) TryIgnite((uid, apply), contact, true);
                 }
 
                 if (apply.InitDamaged)
@@ -982,12 +1370,21 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
                 apply.InitDamaged = true;
                 Dirty(uid, apply);
 
-                RemCompDeferred<DamageOnCollideComponent>(uid);
+                foreach (var contact in _physics.GetEntitiesIntersectingBody(uid, (int)apply.Collision))
+                {
+                    TryIgnite((uid, apply), contact, true);
+                }
+
+                _onCollide.DisableDamageOnCollide(uid);
             }
         }
         catch (Exception e)
         {
             Log.Error($"Error processing {nameof(RMCIgniteOnCollideComponent)}:\n{e}");
+        }
+        finally
+        {
+            _cmuIgnitionSources.Clear();
         }
     }
 
@@ -1007,7 +1404,15 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
                     continue;
                 }
 
-                if (time < fire.SpawnedAt + fire.BigFireDuration)
+                // CMU14: fire growth and synthetic resistance.
+                var age = time - fire.SpawnedAt;
+                var growing = fire.GrowthDuration > TimeSpan.Zero && age < fire.GrowthDuration;
+                if (fire.MatureIntensity != null)
+                    UpdateFireGrowth((uid, fire), (float) (age.TotalSeconds / Math.Max(.001, fire.GrowthDuration.TotalSeconds)));
+                if (growing)
+                    _appearance.SetData(uid, TileFireLayers.Base,
+                        age < fire.GrowthDuration / 2 ? TileFireVisuals.One : TileFireVisuals.Two);
+                else if (time < fire.SpawnedAt + fire.BigFireDuration)
                     _appearance.SetData(uid, TileFireLayers.Base, TileFireVisuals.Four);
                 else if (timeLeft < TimeSpan.FromSeconds(9))
                     _appearance.SetData(uid, TileFireLayers.Base, TileFireVisuals.One);
@@ -1021,6 +1426,16 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
         {
             Log.Error($"Error processing {nameof(TileFireComponent)}:\n{e}");
         }
+    }
+
+    // CMU14: fire growth and synthetic resistance.
+    private void UpdateFireGrowth(Entity<TileFireComponent> fire, float progress)
+    {
+        if (fire.Comp.MatureIntensity is not { } mature) return;
+        var intensity = Math.Max(1, (int) MathF.Ceiling(mature * (.15f + .85f * Math.Clamp(progress, 0, 1))));
+        if (TryComp(fire, out RMCIgniteOnCollideComponent? ignition) && ignition.Intensity != intensity)
+            SetIntensityDuration((fire, ignition, null), intensity, null);
+        if (progress >= 1) fire.Comp.MatureIntensity = null;
     }
 
     private void RunExtinguishFire()
@@ -1094,8 +1509,9 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
             var steppingQuery = EntityQueryEnumerator<SteppingOnFireComponent, PhysicsComponent>();
             while (steppingQuery.MoveNext(out var uid, out var stepping, out var body))
             {
+                var previousArmorMultiplier = stepping.ArmorMultiplier;
+                var previousState = (stepping.ArmorMultiplier, stepping.Distance, stepping.UpdateAt, stepping.LastPosition);
                 stepping.ArmorMultiplier = 1;
-                Dirty(uid, stepping);
 
                 var isStepping = false;
                 foreach (var contact in _physics.GetContactingEntities(uid, body, approximate: true))
@@ -1111,10 +1527,11 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
                 // Entities with a static body type do not have any contacts with tile fires, so we do another standing on fire check.
                 if (!isStepping)
                 {
-                    var nearbyEntities = _entityLookup.GetEntitiesInRange<RMCIgniteOnCollideComponent>(Transform(uid).Coordinates, 0.35f);
-                    if (nearbyEntities.Count != 0)
+                    _nearbyFires.Clear();
+                    _entityLookup.GetEntitiesInRange(Transform(uid).Coordinates, 0.35f, _nearbyFires);
+                    if (_nearbyFires.Count != 0)
                     {
-                        var nearbyEntity = nearbyEntities.First();
+                        var nearbyEntity = _nearbyFires.First();
                         ApplyTileEffect((uid, stepping), nearbyEntity.Comp, nearbyEntity.Owner);
                         isStepping = true;
                     }
@@ -1122,11 +1539,24 @@ public abstract partial class SharedRMCFlammableSystem : EntitySystem
 
                 if (!isStepping)
                     RemCompDeferred<SteppingOnFireComponent>(uid);
+                else
+                {
+                    if (previousState != (stepping.ArmorMultiplier, stepping.Distance, stepping.UpdateAt, stepping.LastPosition))
+                        Dirty(uid, stepping);
+                    if (stepping.ArmorMultiplier != previousArmorMultiplier)
+                        _armor.UpdateArmorValue((uid, null));
+                }
+
+                _nearbyFires.Clear();
             }
         }
         catch (Exception e)
         {
             Log.Error($"Error processing {nameof(SteppingOnFireComponent)}:\n{e}");
+        }
+        finally
+        {
+            _nearbyFires.Clear();
         }
     }
 

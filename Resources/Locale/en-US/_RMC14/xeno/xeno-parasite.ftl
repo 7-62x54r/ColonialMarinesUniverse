@@ -1,8 +1,10 @@
 rmc-xeno-failed-cant-infect = We can't infect {THE($target)}!
 rmc-xeno-failed-cant-reach = We can't reach {$target}, they need to be lying down!
 rmc-xeno-failed-target-dead = We can't infect the dead!
-rmc-xeno-infect-success = The tiny xenonid smashes against {$target}'s {$clothing} and rips it off!
-rmc-xeno-infect-fail = The tiny xenonid smashes against {$target}'s {$clothing}!
+# cmu edit start: lore names
+rmc-xeno-infect-success = The tiny xenomorph smashes against {$target}'s {$clothing} and rips it off!
+rmc-xeno-infect-fail = The tiny xenomorph smashes against {$target}'s {$clothing}!
+# cmu edit end
 rmc-xeno-failed-parasite-dead = We can't infect with a dead child!
 rmc-xeno-cant-throw = We can't throw {THE($target)}!
 
@@ -23,3 +25,11 @@ rmc-xeno-parasite-ghost-carrier-reserved = {THE($xeno)} has reserved the remaini
 rmc-xeno-parasite-ghost-carrier-dead = {THE($xeno)} is dead and all {POSS-ADJ($xeno)} children died with {OBJECT($xeno)}.
 
 rmc-xeno-parasite-carrier-death = The chittering mass of tiny aliens try to escape {THE($xeno)}!
+
+rmc-xeno-parasite-larva-claim-title = Become the larva?
+rmc-xeno-parasite-larva-claim-message = Do you want to become the larva if this host spawns one?
+rmc-xeno-parasite-larva-claim-yes = Yes
+rmc-xeno-parasite-larva-claim-no = No
+
+# CMU14
+rmc-xeno-infect-attached-self = We latch onto {THE($target)}'s face!

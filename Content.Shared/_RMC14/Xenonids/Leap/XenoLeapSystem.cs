@@ -7,6 +7,7 @@ using Content.Shared._RMC14.Damage.ObstacleSlamming;
 using Content.Shared._RMC14.Entrenching;
 using Content.Shared._RMC14.Movement;
 using Content.Shared._RMC14.Pulling;
+using Content.Shared._RMC14.Slow;
 using Content.Shared._RMC14.Stun;
 using Content.Shared._RMC14.Weapons.Melee;
 using Content.Shared._RMC14.Xenonids.Construction;
@@ -21,6 +22,7 @@ using Content.Shared._RMC14.Xenonids.Weeds;
 using Content.Shared.ActionBlocker;
 using Content.Shared.Coordinates;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.DoAfter;
 using Content.Shared.Effects;
 using Content.Shared.Eye.Blinding.Systems;
@@ -33,6 +35,7 @@ using Content.Shared.Mobs.Components;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Movement.Pulling.Events;
 using Content.Shared.Movement.Systems;
+using Content.Shared.Physics; // CMU14
 using Content.Shared.Popups;
 using Content.Shared.Pulling.Events;
 using Content.Shared.Standing;
@@ -60,12 +63,12 @@ public sealed partial class XenoLeapSystem : EntitySystem
     [Dependency] private SharedDoAfterSystem _doAfter = default!;
     [Dependency] private MobStateSystem _mobState = default!;
     [Dependency] private SharedXenoHiveSystem _hive = default!;
-    [Dependency] private MovementSpeedModifierSystem _movementSpeed = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private SharedPhysicsSystem _physics = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
     [Dependency] private SharedRMCLagCompensationSystem _rmcLagCompensation = default!;
     [Dependency] private RMCPullingSystem _rmcPulling = default!;
+    [Dependency] private RMCSlowSystem _slow = default!;
     [Dependency] private StandingStateSystem _standing = default!;
     [Dependency] private SharedStunSystem _stun = default!;
     [Dependency] private IGameTiming _timing = default!;
@@ -83,8 +86,12 @@ public sealed partial class XenoLeapSystem : EntitySystem
     private EntityQuery<PhysicsComponent> _physicsQuery;
     private EntityQuery<FixturesComponent> _fixturesQuery;
 
+    private bool _logPrediction = false;
+
     public override void Initialize()
     {
+        UpdatesAfter.Add(typeof(SharedPhysicsSystem));
+
         _physicsQuery = GetEntityQuery<PhysicsComponent>();
         _fixturesQuery = GetEntityQuery<FixturesComponent>();
 
@@ -125,8 +132,7 @@ public sealed partial class XenoLeapSystem : EntitySystem
             if (!HasComp<XenoLeapComponent>(ent) || !leaping.Running)
                 return;
 
-            _rmcLagCompensation.SetLastRealTick(args.SenderSession.UserId, msg.LastRealTick);
-            if (!_rmcLagCompensation.Collides(target, ent, args.SenderSession))
+            if (!_rmcLagCompensation.ValidatePredictedHit(target, ent, args.SenderSession, msg.LastRealTick, msg.Substep)) // CMU14
                 return;
         }
 
@@ -171,18 +177,57 @@ public sealed partial class XenoLeapSystem : EntitySystem
 
         if (args.Cancelled)
         {
-            _popup.PopupClient(Loc.GetString("cm-xeno-leap-cancelled"), xeno, xeno);
+            _popup.PopupEntity(Loc.GetString("cm-xeno-leap-cancelled"), xeno, xeno);
             return;
         }
 
         if (!_physicsQuery.TryGetComponent(xeno, out var physics))
             return;
 
-        if (EnsureComp<XenoLeapingComponent>(xeno, out var leaping))
+        if (HasComp<XenoLeapingComponent>(xeno))
             return;
 
-        args.Handled = true;
+        if (xeno.Comp.PlasmaCost > FixedPoint2.Zero &&
+            !_xenoPlasma.TryRemovePlasmaPopup(xeno.Owner, xeno.Comp.PlasmaCost))
+        {
+            return;
+        }
 
+        // CMU14: create leap state only after validating the path below.
+        // A rejected leap must not leave default destination/timing fields for Update.
+
+        _rmcPulling.TryStopAllPullsFromAndOn(xeno);
+
+        var origin = _transform.GetMapCoordinates(xeno);
+        var target = _transform.ToMapCoordinates(args.Coordinates);
+        var direction = target.Position - origin.Position;
+
+        if (direction == Vector2.Zero ||
+            !float.IsFinite(direction.Length() / xeno.Comp.Strength)) // CMU14: NaN target coords (zero-normalized NPC destinations) or zero strength crashed FromSeconds below
+            return;
+
+        var length = direction.Length();
+        var distance = Math.Clamp(length, 0.1f, xeno.Comp.Range.Float());
+        direction *= distance / length;
+
+        // CMU14: dashes must not cross barricade lines; the flight only stops on a
+        // direct fixture hit, so check the path up front. Barbed wire keeps its block.
+        var ray = new CollisionRay(origin.Position, direction.Normalized(), (int) CollisionGroup.BarricadeImpassable);
+        foreach (var result in _physics.IntersectRayWithPredicate(origin.MapId, ray, distance, e => !Transform(e).Anchored))
+        {
+            if (TryComp(result.HitEntity, out RMCLeapProtectionComponent? protection) &&
+                AttemptBlockLeap(result.HitEntity, protection.StunDuration, protection.BlockSound, xeno, _transform.GetMoverCoordinates(xeno), protection.FullProtection))
+                return;
+
+            _popup.PopupEntity(Loc.GetString("cmu-xeno-dash-blocked"), xeno, xeno);
+            return;
+        }
+
+        var impulse = direction.Normalized() * xeno.Comp.Strength * physics.Mass;
+
+        // CMU14: moved after path validation so blocked/invalid attempts have no active leap.
+        var leaping = EnsureComp<XenoLeapingComponent>(xeno);
+        args.Handled = true;
         leaping.KnockdownRequiresInvisibility = xeno.Comp.KnockdownRequiresInvisibility;
         leaping.DestroyObjects = xeno.Comp.DestroyObjects;
         leaping.MoveDelayTime = xeno.Comp.MoveDelayTime;
@@ -193,32 +238,19 @@ public sealed partial class XenoLeapSystem : EntitySystem
         leaping.IgnoredCollisionGroupLarge = xeno.Comp.IgnoredCollisionGroupLarge;
         leaping.IgnoredCollisionGroupSmall = xeno.Comp.IgnoredCollisionGroupSmall;
 
-        if (xeno.Comp.PlasmaCost > FixedPoint2.Zero &&
-            !_xenoPlasma.TryRemovePlasmaPopup(xeno.Owner, xeno.Comp.PlasmaCost))
-        {
-            return;
-        }
-
-        _rmcPulling.TryStopAllPullsFromAndOn(xeno);
-
-        var origin = _transform.GetMapCoordinates(xeno);
-        var target = _transform.ToMapCoordinates(args.Coordinates);
-        var direction = target.Position - origin.Position;
-
-        if (direction == Vector2.Zero)
-            return;
-
-        var length = direction.Length();
-        var distance = Math.Clamp(length, 0.1f, xeno.Comp.Range.Float());
-        direction *= distance / length;
-        var impulse = direction.Normalized() * xeno.Comp.Strength * physics.Mass;
-
         leaping.Origin = _transform.GetMoverCoordinates(xeno);
+        leaping.Destination = origin.Offset(direction);
+        leaping.Direction = direction.Normalized();
         leaping.ParalyzeTime = xeno.Comp.KnockdownTime;
         leaping.LeapSound = xeno.Comp.LeapSound;
         leaping.LeapEndTime = _timing.CurTime + TimeSpan.FromSeconds(direction.Length() / xeno.Comp.Strength);
 
         _obstacleSlamming.MakeImmune(xeno, 0.5f);
+
+        // Prevent leap from having longer/shorter range or skewed direction
+        // based on the xeno's movement when using it.
+        _physics.ResetDynamics(xeno, physics);
+
         _physics.ApplyLinearImpulse(xeno, impulse, body: physics);
         _physics.SetBodyStatus(xeno, physics, BodyStatus.InAir);
 
@@ -256,11 +288,7 @@ public sealed partial class XenoLeapSystem : EntitySystem
             if (!_xeno.CanAbilityAttackTarget(xeno, entity))
                 return;
 
-            if (TryComp<SlowedDownComponent>(xeno, out var root) && root.SprintSpeedModifier == 0f)
-            {
-                RemComp<SlowedDownComponent>(xeno);
-                _movementSpeed.RefreshMovementSpeedModifiers(xeno);
-            }
+            RemComp<RMCRootedComponent>(xeno);
 
             xeno.Comp.LastHit = null;
             xeno.Comp.LastHitAt = null;
@@ -317,6 +345,9 @@ public sealed partial class XenoLeapSystem : EntitySystem
         if (!TryComp(args.Leaper, out XenoLeapingComponent? leaping))
             return;
 
+        if (TryComp(args.Leaper, out XenoLeapComponent? leap) && !leap.CanBeShieldBlocked)
+            return;
+
         args.Cancelled = AttemptBlockLeap(ent.Owner, ent.Comp.StunDuration, ent.Comp.BlockSound, args.Leaper, leaping.Origin, ent.Comp.FullProtection);
     }
 
@@ -328,7 +359,7 @@ public sealed partial class XenoLeapSystem : EntitySystem
         if ((ent.Comp.Slots & args.SlotFlags) == 0)
             return;
 
-        ApplyLeapProtection(args.Equipee, ent);
+        ApplyLeapProtection(args.EquipTarget, ent);
     }
 
     private void OnGotUnequipped(Entity<RMCGrantLeapProtectionComponent> ent, ref GotUnequippedEvent args)
@@ -339,10 +370,10 @@ public sealed partial class XenoLeapSystem : EntitySystem
         if ((ent.Comp.Slots & args.SlotFlags) == 0)
             return;
 
-        if (!RemoveLeapProtection(args.Equipee, ent))
+        if (!RemoveLeapProtection(args.EquipTarget, ent))
             return;
 
-        RemCompDeferred<RMCLeapProtectionComponent>(args.Equipee);
+        RemCompDeferred<RMCLeapProtectionComponent>(args.EquipTarget);
     }
 
     private void OnEquippedHand(Entity<RMCGrantLeapProtectionComponent> ent, ref GotEquippedHandEvent args)
@@ -405,9 +436,15 @@ public sealed partial class XenoLeapSystem : EntitySystem
         if (!TryComp(user, out RMCLeapProtectionComponent? leapProtection))
             return true;
 
-        var stunDuration = new TimeSpan();
+        // var stunDuration = new TimeSpan(); // CMU14
         leapProtection.ProtectionProviders.Remove(protection);
+        return RefreshLeapProtection(user, leapProtection); // CMU14: also used when inherent protection changes.
+    }
 
+    // CMU14: shared recalculation preserves equipped shields when inherent protection is removed.
+    private bool RefreshLeapProtection(EntityUid user, RMCLeapProtectionComponent leapProtection)
+    {
+        var stunDuration = TimeSpan.Zero;
         // Set the inherent stun duration if it exists.
         if (leapProtection.InherentStunDuration != null)
         {
@@ -458,7 +495,7 @@ public sealed partial class XenoLeapSystem : EntitySystem
 
         var selfMessage = Loc.GetString("rmc-obstacle-slam-self", ("object", Identity.Name(blocker, EntityManager, leaper)));
 
-        _popup.PopupClient(selfMessage, leaper, leaper, PopupType.MediumCaution);
+        _popup.PopupEntity(selfMessage, leaper, leaper, PopupType.MediumCaution);
 
         var others = Filter.PvsExcept(leaper).Recipients;
         foreach (var other in others)
@@ -566,7 +603,7 @@ public sealed partial class XenoLeapSystem : EntitySystem
             victim.RecoverAt = _timing.CurTime + xeno.Comp.ParalyzeTime;
             Dirty(target, victim);
 
-            _stun.TrySlowdown(xeno, xeno.Comp.MoveDelayTime, true, 0f, 0f);
+            _slow.TryRoot(xeno, xeno.Comp.MoveDelayTime, applyChemical: true);
 
             if (_net.IsServer)
                 _stun.TryParalyze(target, _xeno.TryApplyXenoDebuffMultiplier(target, xeno.Comp.ParalyzeTime), true);
@@ -599,7 +636,28 @@ public sealed partial class XenoLeapSystem : EntitySystem
 
         if (_net.IsClient)
         {
-            var predictedEv = new XenoLeapPredictedHitEvent(GetNetEntity(target), _rmcLagCompensation.GetLastRealTick(null));
+            if (_logPrediction)
+            {
+                TryComp(xeno, out TransformComponent? leaperTransform);
+                TryComp(target, out TransformComponent? targetTransform);
+                Log.Debug($"""
+                    SENDING PREDICTED LEAP HIT!!
+                      CurTick:        {_timing.CurTick}
+                      LastRealTick:   {_rmcLagCompensation.GetLastRealTick(null)}
+                      Phys Substep:   {_rmcLagCompensation.GetCurrentSubstep()}
+                      In simulation?  {_timing.InSimulation}
+                      ApplyingState?  {_timing.ApplyingState}
+                      FirstTimePred?  {_timing.IsFirstTimePredicted}
+                      Substep:        {_rmcLagCompensation.GetClientSubstep()}
+                      Leaper Coords:  {leaperTransform?.Coordinates}
+                      Target Coords:  {targetTransform?.Coordinates}
+                    """);
+            }
+
+            var predictedEv = new XenoLeapPredictedHitEvent(
+                GetNetEntity(target),
+                _rmcLagCompensation.GetLastRealTick(null),
+                _rmcLagCompensation.GetClientSubstep());
             RaiseNetworkEvent(predictedEv);
             if (_timing.InPrediction && _timing.IsFirstTimePredicted)
             {
@@ -625,11 +683,9 @@ public sealed partial class XenoLeapSystem : EntitySystem
             if (_size.TryGetSize(leaping, out var size) && size > RMCSizes.SmallXeno)
                 collisionGroup = (int)leaping.Comp.IgnoredCollisionGroupLarge;
 
-            if (size >= RMCSizes.SmallXeno)
-            {
-                var fixture = fixtures.Fixtures.First();
-                _physics.SetCollisionMask(leaping, fixture.Key, fixture.Value, fixture.Value.CollisionMask | collisionGroup);
-            }
+            // CMU14
+            var fixture = fixtures.Fixtures.First();
+            _physics.SetCollisionMask(leaping, fixture.Key, fixture.Value, fixture.Value.CollisionMask | collisionGroup);
         }
 
         RemCompDeferred<XenoLeapingComponent>(leaping);
@@ -638,9 +694,31 @@ public sealed partial class XenoLeapSystem : EntitySystem
     public override void Update(float frameTime)
     {
         var time = _timing.CurTime;
+
+        // CMU14: a deleted leap target leaves LastHit dangling, which spams PVS resolve errors.
+        var leapers = EntityQueryEnumerator<XenoLeapComponent>();
+        while (leapers.MoveNext(out var uid, out var leap))
+        {
+            if (leap.LastHit is { } last && TerminatingOrDeleted(last))
+            {
+                leap.LastHit = null;
+                leap.LastHitAt = null;
+                Dirty(uid, leap);
+            }
+        }
+
         var leaping = EntityQueryEnumerator<XenoLeapingComponent>();
         while (leaping.MoveNext(out var uid, out var comp))
         {
+            var coordinates = _transform.GetMapCoordinates(uid);
+            if (coordinates.MapId == comp.Destination.MapId &&
+                Vector2.Dot(coordinates.Position - comp.Destination.Position, comp.Direction) >= 0)
+            {
+                _transform.SetMapCoordinates(uid, comp.Destination);
+                StopLeap((uid, comp));
+                continue;
+            }
+
             if (time < comp.LeapEndTime)
                 continue;
 

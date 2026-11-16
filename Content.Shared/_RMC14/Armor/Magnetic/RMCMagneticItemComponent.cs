@@ -1,4 +1,4 @@
-﻿using Content.Shared.Inventory;
+using Content.Shared.Inventory;
 using Robust.Shared.GameStates;
 
 namespace Content.Shared._RMC14.Armor.Magnetic;
@@ -9,4 +9,10 @@ public sealed partial class RMCMagneticItemComponent : Component
 {
     [DataField, AutoNetworkedField]
     public SlotFlags MagnetizeToSlots = SlotFlags.SUITSTORAGE;
+
+    [DataField, AutoNetworkedField]
+    public bool NeedsMagneticField;
+
+    [DataField, AutoNetworkedField]
+    public bool ReturnOnThrow = true;
 }

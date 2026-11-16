@@ -2,14 +2,16 @@
   abstract: true
   id: RMCBaseMeleeWeapon
   components:
-  - type: MeleeDamageMultiplier
-    whitelist:
-      components:
-      - Xeno
   - type: MeleeWeapon
     angle: 0
-  - type: CMArmorPiercing
-    amount: 20
+  - type: InteractedBlacklist
+    blacklist:
+      components:
+      - Xeno
+  - type: DamageOtherBlacklist
+    blacklist:
+      tags:
+      - Tree
 
 - type: entity
   parent: [ RMCBaseMeleeWeapon, BaseKnife, RMCAttachableBase ]
@@ -42,6 +44,13 @@
     damage:
       types:
         Slash: 18
+  - type: DamageImpactProfile
+    melee:
+      contact: Stab
+      penetration: Low
+    thrown:
+      contact: Stab
+      penetration: Low
   - type: Item
     size: Small
     sprite: _RMC14/Objects/Weapons/Melee/m5_bayonet.rsi
@@ -56,6 +65,10 @@
     - bonusDamage:
         types:
           Slash: 20
+      impact:
+        contact: Stab
+        penetration: Medium
+        energy: Medium
   - type: AttachableWeaponRangedMods
     modifiers:
     - conditions:
@@ -66,6 +79,7 @@
   - type: Tool
     qualities:
     - Cutting
+    - Slicing # CMU14: retain the base knife's slicing capability.
     speedModifier: 0.8
     useSound:
       path: /Audio/Items/wirecutter.ogg
@@ -225,6 +239,14 @@
     damage:
       types:
         Slash: 34
+  - type: DamageImpactProfile
+    melee:
+      contact: Stab
+      penetration: Low
+    thrown:
+      contact: Stab
+      penetration: Medium
+      energy: Medium
   - type: UsableWhileDevoured
   - type: Item
     size: Small
@@ -255,11 +277,18 @@
   - type: MeleeWeapon
     damage:
       types:
-        Slash: 47
+        Slash: 44
   - type: DamageOtherOnHit
     damage:
       types:
-        Slash: 27
+        Slash: 23
+  - type: DamageImpactProfile
+    melee:
+      contact: Slash
+      penetration: Low
+    thrown:
+      contact: Fragment
+      penetration: Low
   - type: UsableWhileDevoured
   - type: Item
     size: Large
@@ -333,6 +362,7 @@
   - type: Tag
     tags:
     - Knife
+    - RMCStraightRazor
   - type: Sprite
     sprite: _RMC14/Objects/Weapons/Melee/straight_razor.rsi
     layers:

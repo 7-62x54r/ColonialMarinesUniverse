@@ -7,6 +7,11 @@
     snap:
     - Wall
   components:
+  - type: FixedIdentity
+    name: cmu-job-name-xeno-unknown
+    whitelist:
+      components:
+      - Marine
   - type: Transform
     anchored: true
   - type: Physics
@@ -26,6 +31,9 @@
         hard: false
   - type: XenoWeeds
     level: 1
+  - type: NpcFactionMember # CMU14: hostile structure, valid sentry/turret target
+    factions:
+    - RMCXeno
   - type: RMCMesonsNonviewable
   - type: Clickable
   - type: XenoWeedsSpreading
@@ -77,9 +85,15 @@
     - 0:
         weed15: ""
   - type: XenoFriendly
+  - type: Flamability
+    chance: 1.0
+    rate: 0.08
+    range: 1.0
+    spread: 1.5
   - type: Damageable
-    damageContainer: StructuralXeno
     damageModifierSet: Weed
+  - type: Injurable
+    damageContainer: StructuralXeno
   - type: Destructible
     thresholds:
     - trigger:
@@ -122,7 +136,7 @@
       methods: [Touch]
       effects:
       - !type:HealthChange
-        scaleByQuantity: true
+        scaling: true
         damage:
           types:
             Heat: 4
@@ -165,12 +179,16 @@
   - type: QueenEyeVision
   - type: Damageable
     damage:
-      groups:
-        Brute: 6
+      types:
+        Blunt: 2
+        Slash: 2
+        Piercing: 2
   - type: XenoWeeds
     healOnStopSpreading:
-      groups:
-        Brute: -6
+      types:
+        Blunt: -2
+        Slash: -2
+        Piercing: -2
   - type: Tag
     tags:
     - XenoWeedNode
@@ -274,6 +292,15 @@
       behaviors:
       - !type:DoActsBehavior
         acts: [ "Destruction" ]
+  - type: Flamability
+    chance: 0.3
+    rate: 1.0
+    spread: 0.5
+    range: 0.8
+    scatterFireChance: 0.005
+    destroyAnyway: true
+    burnDurationMin: 4
+    burnDurationMax: 8
 
 - type: entity
   parent: XenoHiveWeeds
@@ -322,8 +349,10 @@
   - type: QueenEyeVision
   - type: XenoWeeds
     healOnStopSpreading:
-      groups:
-        Brute: -6
+      types:
+        Blunt: -2
+        Slash: -2
+        Piercing: -2
   - type: XenoConstructionPlasmaCost
     plasma: 75
   - type: Tag
@@ -391,7 +420,11 @@
   - type: XenoNestSurface
   - type: HiveMember
   - type: XenoFriendly
+  - type: NpcFactionMember # CMU14: hostile structure, valid sentry/turret target
+    factions:
+    - RMCXeno
   - type: Damageable
+  - type: Injurable
     damageContainer: StructuralXeno
   - type: Destructible
     thresholds:
@@ -463,8 +496,10 @@
         acts: [ "Destruction" ]
   - type: XenoWeeds
     healOnStopSpreading:
-      groups:
-        Brute: -6
+      types:
+        Blunt: -2
+        Slash: -2
+        Piercing: -2
   - type: Tag
     tags:
     - XenoWeedNode

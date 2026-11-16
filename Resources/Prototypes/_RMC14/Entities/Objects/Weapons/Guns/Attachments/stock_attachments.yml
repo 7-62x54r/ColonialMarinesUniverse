@@ -330,6 +330,8 @@
     - RMCAttachmentDoubleBarrelShotgunStock
   - type: AttachableWieldDelayMods
     modifiers: []
+  - type: AttachableSizeMods # CMU14: the launcher's built-in breech is already included in its base size.
+    modifiers: []
 
 - type: entity
   parent: RMCStockAttachmentBase
@@ -1153,7 +1155,7 @@
   description: Intergrated into the L23. You shouldn't have this.
   components:
   - type: Sprite
-    sprite: _AU14/Weapons/Guns/Attachments/royal_stock.rsi
+    sprite: CMU14/Weapons/Guns/Attachments/royal_stock.rsi
     state: rmc_nsg_stock
   - type: AttachableVisuals
     suffix: ""
@@ -1209,7 +1211,8 @@
     sprite: _RMC14/Objects/Weapons/Guns/Attachments/rmc_stock.rsi
     state: ak4047_stock
   - type: AttachableToggleable
-    active: true
+    # CMU14: AK-4047 stock starts collapsed like CM-SS13; default Active=false, so the pin is removed.
+    # active: true
     doAfterBreakOnMove: false
     doAfter: 0.5
     icon:
@@ -1231,7 +1234,7 @@
   description: Intergrated into the Two Bore Rifle. You shouldn't have this.
   components:
   - type: Sprite
-    sprite: _AU14/Weapons/Guns/Attachments/stock.rsi
+    sprite: CMU14/Weapons/Guns/Attachments/stock.rsi
     state: twobore_stock
   - type: AttachableVisuals
     suffix: ""
@@ -1239,6 +1242,48 @@
     tags:
     - RMCAttachmentStock
     - AU14AttachmentTwoBoreStock
+
+- type: entity
+  parent: RMCAttachableBase
+  id: RMCAttachmentL49Stock
+  name: L49 stock
+  description: A fixed stock for the L49 combat shotgun. Adds a bit of heft to the weapon, making it easier to make follow-up shots when shouldered - as well improving its performance as a melee weapon.
+  components:
+  - type: Sprite
+    sprite: _RMC14/Objects/Weapons/Guns/Attachments/rmc_stock.rsi
+    state: l49-stock
+  - type: AttachableVisuals
+    suffix: ""
+  - type: AttachableSizeMods
+    modifiers:
+      - size: 1
+  - type: AttachableSpeedMods
+    modifiers:
+    - conditions:
+        wieldedOnly: true
+      walk: -0.059
+      sprint: -0.101
+  - type: AttachableWeaponMeleeMods
+    modifiers:
+    - bonusDamage:
+        types:
+          Blunt: 10
+  - type: AttachableWeaponRangedMods
+    modifiers:
+    - conditions:
+        wieldedOnly: true
+      accuracyAddMult: 0.25
+      recoilFlat: -3
+      scatterFlat: -3
+    - conditions:
+        unwieldedOnly: true
+      accuracyAddMult: -0.25
+      recoilFlat: 3
+      scatterFlat: 3
+  - type: Tag
+    tags:
+    - RMCAttachmentStock
+    - RMCAttachmentL49Stock
 
 - type: Tag
   id: RMCAttachmentHG3712Stock
@@ -1347,3 +1392,6 @@
 
 - type: Tag
   id: AU14AttachmentTwoBoreStock
+
+- type: Tag
+  id: RMCAttachmentL49Stock

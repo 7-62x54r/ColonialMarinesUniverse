@@ -19,7 +19,7 @@ public sealed partial class TileFireComponent : Component
     public float PatExtinguishMultiplier = 1;
 
     [DataField, AutoNetworkedField]
-    public float SprayExtinguishMultiplier = 1;
+    public float SprayExtinguishMultiplier = 5;
 
     [DataField(customTypeSerializer: typeof(TimeOffsetSerializer)), AutoNetworkedField, AutoPausedField]
     public TimeSpan SpawnedAt;
@@ -29,6 +29,19 @@ public sealed partial class TileFireComponent : Component
 
     [DataField, AutoNetworkedField]
     public TimeSpan BigFireDuration = TimeSpan.FromSeconds(0.5);
+
+    // CMU14: spread fire growth.
+    /// <summary>Spreading fires grow from embers; weapon-created fires ignite immediately.</summary>
+    [DataField, AutoNetworkedField]
+    public TimeSpan GrowthDuration;
+
+    [DataField]
+    public int? MatureIntensity;
+
+    [DataField]
+    public int PatsToExtinguish = 2;
+
+    public int CurrentPats;
 }
 
 [Serializable, NetSerializable]

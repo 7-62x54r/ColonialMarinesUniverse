@@ -1,3 +1,4 @@
+using Content.Shared.CMU14.Medical.Core;
 using Content.Shared._RMC14.Xenonids;
 using Content.Shared.Alert;
 using Content.Shared.Atmos.Components;
@@ -8,6 +9,7 @@ using Content.Shared.Hands.Components;
 using Content.Shared.IdentityManagement;
 using Content.Shared.Internals;
 using Content.Shared.Inventory;
+using Content.Shared.Movement.Components;
 using Content.Shared.Popups;
 using Content.Shared.Verbs;
 using Robust.Shared.Containers;
@@ -89,41 +91,39 @@ public abstract partial class SharedInternalsSystem : EntitySystem
         if (internals.BreathTools.Count == 0)
         {
             var message = user == target ? Loc.GetString("internals-self-no-breath-tool") : Loc.GetString("internals-other-no-breath-tool", ("ent", Identity.Name(target, EntityManager, user)));
-            _popupSystem.PopupClient(message, target, user);
+            _popupSystem.PopupEntity(message, target, user);
             return false;
-        }
-
-        // Check if tank is present.
-        var tank = FindBestGasTank(target);
-
-        // If they're not on then check if we have a mask to use
-        if (tank == null)
-        {
-            var message = user == target ? Loc.GetString("internals-self-no-tank") : Loc.GetString("internals-other-no-tank", ("ent", Identity.Name(target, EntityManager, user)));
-            _popupSystem.PopupClient(message, target, user);
-            return false;
-        }
-
-        // Start the toggle do-after if it's on someone else.
-        if (!force && user != target)
-        {
-            return StartToggleInternalsDoAfter(user, (target, internals), mode);
         }
 
         // Toggle off.
         if (TryComp(internals.GasTankEntity, out GasTankComponent? gas))
         {
+            if (!force && user != target)
+                return StartToggleInternalsDoAfter(user, (target, internals), mode);
+
             if (mode == ToggleMode.On)
                 return false;
+
+            // CMU14: a dry tank swaps to one with air instead of just turning internals off
+            if (mode == ToggleMode.Toggle && CMUTrySwapDryTank(target, user, (internals.GasTankEntity.Value, gas)))
+                return true;
 
             return _gasTank.DisconnectFromInternals((internals.GasTankEntity.Value, gas), user);
         }
 
-        // No tank was connected, we’ll try to toggle internals on
-
-        // If the intent was to disable internals there’s nothing left to do
         if (mode == ToggleMode.Off)
             return false;
+
+        var tank = FindBestGasTank(target);
+        if (tank == null)
+        {
+            var message = user == target ? Loc.GetString("internals-self-no-tank") : Loc.GetString("internals-other-no-tank", ("ent", Identity.Name(target, EntityManager, user)));
+            _popupSystem.PopupEntity(message, target, user);
+            return false;
+        }
+
+        if (!force && user != target)
+            return StartToggleInternalsDoAfter(user, (target, internals), mode);
 
         return _gasTank.ConnectToInternals(tank.Value, user: user);
     }
@@ -163,12 +163,23 @@ public abstract partial class SharedInternalsSystem : EntitySystem
 
     private void OnInternalsStartup(Entity<InternalsComponent> ent, ref ComponentStartup args)
     {
-        _alerts.ShowAlert(ent, ent.Comp.InternalsAlert, GetSeverity(ent));
+        _alerts.ShowAlert(ent.Owner, ent.Comp.InternalsAlert, GetSeverity(ent));
+        RaiseCMUInternalsChanged(ent);
     }
 
     private void OnInternalsShutdown(Entity<InternalsComponent> ent, ref ComponentShutdown args)
     {
-        _alerts.ClearAlert(ent, ent.Comp.InternalsAlert);
+        _alerts.ClearAlert(ent.Owner, ent.Comp.InternalsAlert);
+        // CMU14: clear the tank link here. otherwise the tank's networked User dangles for the
+        // rest of the tick and PVS logs a resolve error serializing it. no disconnect ceremony:
+        // mid-teardown it would play sounds and toggle actions on deleted entities
+        if (TryComp(ent.Comp.GasTankEntity, out GasTankComponent? tank))
+        {
+            tank.User = null;
+            Dirty(ent.Comp.GasTankEntity.Value, tank);
+        }
+        ent.Comp.GasTankEntity = null;
+        RaiseCMUInternalsChanged(ent, shutdown: true);
     }
 
     public void ConnectBreathTool(Entity<InternalsComponent> ent, EntityUid toolEntity)
@@ -183,7 +194,8 @@ public abstract partial class SharedInternalsSystem : EntitySystem
         }
 
         Dirty(ent);
-        _alerts.ShowAlert(ent, ent.Comp.InternalsAlert, GetSeverity(ent));
+        _alerts.ShowAlert(ent.Owner, ent.Comp.InternalsAlert, GetSeverity(ent));
+        RaiseCMUInternalsChanged(ent);
     }
 
     public void DisconnectBreathTool(Entity<InternalsComponent> ent, EntityUid toolEntity, bool forced = false)
@@ -204,7 +216,8 @@ public abstract partial class SharedInternalsSystem : EntitySystem
             DisconnectTank(ent, forced: forced);
         }
 
-        _alerts.ShowAlert(ent, ent.Comp.InternalsAlert, GetSeverity(ent));
+        _alerts.ShowAlert(ent.Owner, ent.Comp.InternalsAlert, GetSeverity(ent));
+        RaiseCMUInternalsChanged(ent);
     }
 
     public void DisconnectTank(Entity<InternalsComponent> ent, bool forced = false)
@@ -215,6 +228,7 @@ public abstract partial class SharedInternalsSystem : EntitySystem
         ent.Comp.GasTankEntity = null;
         Dirty(ent);
         _alerts.ShowAlert(ent.Owner, ent.Comp.InternalsAlert, GetSeverity(ent.Comp));
+        RaiseCMUInternalsChanged(ent);
     }
 
     public bool TryConnectTank(Entity<InternalsComponent> ent, EntityUid tankEntity)
@@ -227,7 +241,8 @@ public abstract partial class SharedInternalsSystem : EntitySystem
 
         ent.Comp.GasTankEntity = tankEntity;
         Dirty(ent);
-        _alerts.ShowAlert(ent, ent.Comp.InternalsAlert, GetSeverity(ent));
+        _alerts.ShowAlert(ent.Owner, ent.Comp.InternalsAlert, GetSeverity(ent));
+        RaiseCMUInternalsChanged(ent);
         return true;
     }
 
@@ -259,39 +274,82 @@ public abstract partial class SharedInternalsSystem : EntitySystem
         return 1;
     }
 
+    // CMU14
+    private void RaiseCMUInternalsChanged(Entity<InternalsComponent> ent, bool shutdown = false)
+    {
+        var ev = new CMUInternalsChangedEvent(
+            !shutdown && AreInternalsWorking(ent.Comp),
+            shutdown ? null : ent.Comp.GasTankEntity);
+        RaiseLocalEvent(ent.Owner, ref ev);
+    }
+
     public Entity<GasTankComponent>? FindBestGasTank(
         Entity<HandsComponent?, InventoryComponent?, ContainerManagerComponent?> user)
     {
+        // CMU14: anything with air beats a dry tank, otherwise an empty tank on the back keeps winning over a fresh one
+        return CMUFindBestGasTank(user, requireAir: true) ?? CMUFindBestGasTank(user, requireAir: false);
+    }
+
+    // CMU14: upstream FindBestGasTank body, plus the requireAir filter on every candidate
+    private Entity<GasTankComponent>? CMUFindBestGasTank(
+        Entity<HandsComponent?, InventoryComponent?, ContainerManagerComponent?> user,
+        bool requireAir)
+    {
         // TODO use _respirator.CanMetabolizeGas() to prioritize metabolizable gasses
-        // Prioritise
-        // 1. back equipped tanks
-        // 2. exo-slot tanks
-        // 3. in-hand tanks
-        // 4. pocket/belt tanks
+        // Lookup order:
+        // 1. Back
+        // 2. Exo-slot
+        // 3. In-hand
+        // 4. Pocket/belt
+        // Jetpacks will only be used as a fallback if no other tank is found
+
+        // Store the first jetpack seen
+        Entity<GasTankComponent>? found = null;
 
         if (!Resolve(user, ref user.Comp2, ref user.Comp3))
             return null;
 
         if (_inventory.TryGetSlotEntity(user, "back", out var backEntity, user.Comp2, user.Comp3) &&
             TryComp<GasTankComponent>(backEntity, out var backGasTank) &&
-            _gasTank.CanConnectToInternals((backEntity.Value, backGasTank)))
+            CMUCanUseTank((backEntity.Value, backGasTank), requireAir)) // CMU14
         {
-            return (backEntity.Value, backGasTank);
+            found = (backEntity.Value, backGasTank);
+            if (!HasComp<JetpackComponent>(backEntity.Value))
+            {
+                return found;
+            }
         }
 
         if (_inventory.TryGetSlotEntity(user, "suitstorage", out var entity, user.Comp2, user.Comp3) &&
             TryComp<GasTankComponent>(entity, out var gasTank) &&
-            _gasTank.CanConnectToInternals((entity.Value, gasTank)))
+            CMUCanUseTank((entity.Value, gasTank), requireAir)) // CMU14
         {
-            return (entity.Value, gasTank);
+            found ??= (entity.Value, gasTank);
+            if (!HasComp<JetpackComponent>(entity.Value))
+            {
+                return (entity.Value, gasTank);
+            }
         }
 
         foreach (var item in _inventory.GetHandOrInventoryEntities((user.Owner, user.Comp1, user.Comp2)))
         {
-            if (TryComp(item, out gasTank) && _gasTank.CanConnectToInternals((item, gasTank)))
-                return (item, gasTank);
+            if (TryComp(item, out gasTank) && CMUCanUseTank((item, gasTank), requireAir)) // CMU14
+            {
+                found ??= (item, gasTank);
+                if (!HasComp<JetpackComponent>(item))
+                {
+                    return (item, gasTank);
+                }
+            }
         }
 
-        return null;
+        // cmu edit start: also check satchels, pouches and other worn storage
+        if (CMUFindStoredGasTank((user.Owner, user.Comp1, user.Comp2), requireAir, out var storedJetpack) is { } stored)
+            return stored;
+
+        found ??= storedJetpack;
+        // cmu edit end
+
+        return found;
     }
 }

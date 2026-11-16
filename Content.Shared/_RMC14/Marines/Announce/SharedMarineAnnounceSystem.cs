@@ -1,3 +1,5 @@
+using Content.Shared._RMC14.ARES;
+using Content.Shared._RMC14.ARES.Logs;
 using Content.Shared._RMC14.Dialog;
 using Content.Shared._RMC14.Marines.ControlComputer;
 using Content.Shared._RMC14.Marines.Roles.Ranks;
@@ -6,6 +8,8 @@ using Content.Shared._RMC14.Marines.Squads;
 using Content.Shared._RMC14.Overwatch;
 using Content.Shared._RMC14.TacticalMap;
 using Content.Shared._RMC14.AlertLevel;
+using Content.Shared._RMC14.Weapons.Ranged.IFF;
+using Content.Shared.Access.Systems;
 using Content.Shared.Administration.Logs;
 using Content.Shared.CCVar;
 using Content.Shared.Database;
@@ -27,8 +31,10 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
 {
     [Dependency] private ISharedAdminLogManager _adminLog = default!;
     [Dependency] private IConfigurationManager _config = default!;
+    [Dependency] private ARESCoreSystem _core = default!;
     [Dependency] private DialogSystem _dialog = default!;
     [Dependency] private SharedMarineControlComputerSystem _marineControlComputer = default!;
+    [Dependency] private SharedIdCardSystem _idCard = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
     [Dependency] private SharedRankSystem _rankSystem = default!;
@@ -40,8 +46,18 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
     public static readonly SoundSpecifier DefaultAnnouncementSound = new SoundPathSpecifier("/Audio/_RMC14/Announcements/Marine/notice2.ogg");
     public static readonly SoundSpecifier DefaultSquadSound = new SoundPathSpecifier("/Audio/_RMC14/Effects/tech_notification.ogg");
     public static readonly SoundSpecifier AresAnnouncementSound = new SoundPathSpecifier("/Audio/_RMC14/AI/announce.ogg");
+    public const string DefaultAnnouncementFaction = "govfor";
 
     public int CharacterLimit = 1000;
+
+    private static readonly EntProtoId<ARESLogTypeComponent> LogCat = "ARESTabAnnouncementLogs";
+
+    // CMU14: Vehicle interiors inherit their supplying faction.
+    public void SetComputerFaction(Entity<MarineCommunicationsComputerComponent> computer, string faction)
+    {
+        computer.Comp.Faction = faction;
+        Dirty(computer);
+    }
 
     public override void Initialize()
     {
@@ -102,9 +118,9 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         if (string.IsNullOrWhiteSpace(args.Text))
             return;
 
-        if (!_skills.HasSkill(args.Actor, ent.Comp.AnnounceSkill, ent.Comp.AnnounceSkillLevel))
+        if (!CMUCanAnnounce(ent, args.Actor)) // CMU14: synths can announce from a command tablet
         {
-            _popup.PopupClient(Loc.GetString("rmc-skills-no-training", ("target", ent)), args.Actor, PopupType.MediumCaution);
+            _popup.PopupSelf(Loc.GetString("rmc-skills-no-training", ("target", ent)), args.Actor, PopupType.MediumCaution);
             return;
         }
 
@@ -112,7 +128,7 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         if (_timing.CurTime < ent.Comp.LastAnnouncement + ent.Comp.Cooldown)
         {
             var cooldownMessage = Loc.GetString("rmc-announcement-cooldown", ("seconds", (int) ent.Comp.Cooldown.TotalSeconds));
-            _popup.PopupClient(cooldownMessage, args.Actor, PopupType.SmallCaution);
+            _popup.PopupSelf(cooldownMessage, args.Actor, PopupType.SmallCaution);
             return;
         }
 
@@ -121,7 +137,12 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         if (text.Length > CharacterLimit)
             text = text[..CharacterLimit].Trim();
 
-        AnnounceSigned(args.Actor, text, name: ent.Comp.AnnounceName, faction: ent.Comp.Faction);
+        // CMU14: admin tablets announce under High Command
+        var author = ent.Comp.AnnounceAuthor is { } announceAuthor ? Loc.GetString(announceAuthor) : null;
+        AnnounceSigned(args.Actor, text,
+            author: author,
+            name: ent.Comp.AnnounceName,
+            faction: ResolveAnnouncementFaction(ent));
 
         ent.Comp.LastAnnouncement = time;
         Dirty(ent);
@@ -148,7 +169,7 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
     {
         if (!_skills.HasSkill(args.Actor, ent.Comp.OverwatchSkill, ent.Comp.OverwatchSkillLevel))
         {
-            _popup.PopupClient("You are not trained in overwatch!", args.Actor, PopupType.LargeCaution);
+            _popup.PopupSelf("You are not trained in overwatch!", args.Actor, PopupType.LargeCaution);
             return;
         }
 
@@ -175,16 +196,18 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         string message,
         SoundSpecifier? sound = null,
         LocId? announcement = null,
-        string? faction = null)
+        string? faction = null,
+        string? ship = null) // CMU14: header name for the ares-map announcement
     {
     }
 
     public void AnnounceARES(
         EntityUid? source,
         string message,
-        SoundSpecifier? sound = null)
+        SoundSpecifier? sound = null,
+        string? faction = null) // CMU14: optional GOVFOR/OPFOR recipient filter.
     {
-        AnnounceARESStaging(source, message, sound, "rmc-announcement-ares-command");
+        AnnounceARESStaging(source, message, sound, "rmc-announcement-ares-command", faction); // CMU14
     }
 
     public virtual void AnnounceSquad(
@@ -206,6 +229,41 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         EntityUid receiver,
         SoundSpecifier? sound = null)
     {
+    }
+
+    public static string ResolveAnnouncementFaction(string? configuredFaction, string? overwatchGroup = null)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredFaction))
+            return configuredFaction.Trim().ToLowerInvariant();
+
+        if (!string.IsNullOrWhiteSpace(overwatchGroup))
+        {
+            var group = overwatchGroup.Trim().ToLowerInvariant();
+            if (group is "govfor" or "opfor")
+                return group;
+        }
+
+        return DefaultAnnouncementFaction;
+    }
+
+    public static bool IsMarineAnnouncementRecipient(string? marineFaction, string? targetFaction)
+    {
+        if (string.IsNullOrWhiteSpace(marineFaction))
+            return false;
+
+        return string.Equals(
+            marineFaction.Trim(),
+            ResolveAnnouncementFaction(targetFaction),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    protected string ResolveAnnouncementFaction(Entity<MarineCommunicationsComputerComponent> computer)
+    {
+        var overwatchGroup = TryComp<OverwatchConsoleComponent>(computer.Owner, out var overwatch)
+            ? overwatch.Group
+            : null;
+
+        return ResolveAnnouncementFaction(computer.Comp.Faction, overwatchGroup);
     }
 
     public virtual void AnnounceOverwatchSquad(
@@ -282,6 +340,14 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         AnnounceToMarines(wrappedMessage, sound, filter, excludeSurvivors, faction);
         AnnounceSignedUi(sender, message, author, name, sound, filter, excludeSurvivors, faction);
         _adminLog.Add(LogType.RMCMarineAnnounce, $"{ToPrettyString(sender):source} marine announced message: {message}");
+
+        if (_idCard.TryFindIdCard(sender, out var idCard) && TryComp(idCard, out ItemIFFComponent? idCardIFF))
+        {
+            foreach (var iffFaction in idCardIFF.Factions)
+            {
+                _core.CreateARESLog(iffFaction, LogCat, (string) $"{Name(sender)} sent an announcement: {message}");
+            }
+        }
     }
 
     protected virtual void AnnounceSignedUi(
@@ -302,10 +368,10 @@ public abstract partial class SharedMarineAnnounceSystem : EntitySystem
         return Loc.GetString("rmc-announcement-message", ("author", author), ("message", message));
     }
 
-    public string FormatARESStaging(LocId? author, string message)
+    public string FormatARESStaging(LocId? author, string message, string? ship = null) // CMU14: ship header name
     {
         author ??= "rmc-announcement-ares-message";
-        return Loc.GetString(author, ("message", FormattedMessage.EscapeText(message)));
+        return Loc.GetString(author, ("message", FormattedMessage.EscapeText(message)), ("ship", ship ?? string.Empty));
     }
 
     public string FormatARES(string message)

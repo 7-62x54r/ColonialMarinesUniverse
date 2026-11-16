@@ -2,6 +2,7 @@ using Content.Server.Administration.Logs;
 using Content.Server.CartridgeLoader.Cartridges;
 using Content.Server.CartridgeLoader;
 using Content.Server.Chat.Managers;
+using Content.Server.CMU14.HelpRelay.NewsRelay; // CMU14: author identity event for the news relay
 using Content.Server.Discord;
 using Content.Server.GameTicking;
 using Content.Server.MassMedia.Components;
@@ -46,6 +47,7 @@ public sealed partial class NewsSystem : SharedNewsSystem
     [Dependency] private DiscordWebhook _discord = default!;
     [Dependency] private IConfigurationManager _cfg = default!;
     [Dependency] private IBaseServer _baseServer = default!;
+    [Dependency] private IdentitySystem _identity = default!;
 
     private WebhookIdentifier? _webhookId = null;
     private Color _webhookEmbedColor;
@@ -170,9 +172,7 @@ public sealed partial class NewsSystem : SharedNewsSystem
         ent.Comp.PublishEnabled = false;
         ent.Comp.NextPublish = _timing.CurTime + TimeSpan.FromSeconds(ent.Comp.PublishCooldown);
 
-        var tryGetIdentityShortInfoEvent = new TryGetIdentityShortInfoEvent(ent, msg.Actor);
-        RaiseLocalEvent(tryGetIdentityShortInfoEvent);
-        string? authorName = tryGetIdentityShortInfoEvent.Title;
+        var authorName = _identity.GetIdentityShortInfo(msg.Actor, ent);
 
         var title = msg.Title.Trim();
         var content = msg.Content.Trim();
@@ -214,6 +214,14 @@ public sealed partial class NewsSystem : SharedNewsSystem
         };
 
         articles.Add(article.Value);
+
+        // CMU14 Begin: the news relay needs the publishing actor; articles only carry IC identity.
+        if (_station.GetOwningStation(uid) is { } cmuStation)
+        {
+            var cmuAuthored = new StationNewsAuthoredEvent(cmuStation, article.Value, actor);
+            RaiseLocalEvent(ref cmuAuthored);
+        }
+        // CMU14 End
 
         if (actor != null)
         {

@@ -9,6 +9,7 @@ using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Sentry;
 using Content.Shared._RMC14.Xenonids.Announce;
+using Content.Shared._RMC14.Xenonids.Construction.BuildMark;
 using Content.Shared._RMC14.Xenonids.Construction.Events;
 using Content.Shared._RMC14.Xenonids.Construction.Nest;
 using Content.Shared._RMC14.Xenonids.Construction.Tunnel;
@@ -19,7 +20,9 @@ using Content.Shared._RMC14.Xenonids.Hive;
 using Content.Shared._RMC14.Xenonids.Plasma;
 using Content.Shared._RMC14.Xenonids.Designer;
 using Content.Shared._RMC14.Xenonids.Designer.Events;
+using Content.Shared.CMU14.Xenos;
 using Content.Shared._RMC14.Xenonids.Weeds;
+using Content.Shared.ActionBlocker;
 using Content.Shared.Actions;
 using Content.Shared.Actions.Events;
 using Content.Shared.Administration.Logs;
@@ -29,12 +32,15 @@ using Content.Shared.Climbing.Components;
 using Content.Shared.Coordinates;
 using Content.Shared.Coordinates.Helpers;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Database;
 using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
 using Content.Shared.Doors.Components;
 using Content.Shared.Examine;
 using Content.Shared.FixedPoint;
+using Content.Shared.GameTicking;
 using Content.Shared.Interaction;
 using Content.Shared.Maps;
 using Content.Shared.Popups;
@@ -59,6 +65,8 @@ namespace Content.Shared._RMC14.Xenonids.Construction;
 
 public sealed partial class SharedXenoConstructionSystem : EntitySystem
 {
+    [Dependency] private readonly ActionBlockerSystem _actionBlocker = default!;
+    [Dependency] private readonly XenoBuildMarkSystem _buildMark = default!;
     [Dependency] private SharedAudioSystem _audio = default!;
     [Dependency] private AreaSystem _area = default!;
     [Dependency] private SharedXenoAnnounceSystem _announce = default!;
@@ -66,10 +74,11 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     [Dependency] private ISharedAdminLogManager _adminLogs = default!;
     [Dependency] private IComponentFactory _compFactory = default!;
     [Dependency] private DamageableSystem _damageable = default!;
+    [Dependency] private SharedDestructibleSystem _destructible = default!; // CMU14
     [Dependency] private SharedDoAfterSystem _doAfter = default!;
+    [Dependency] private SharedGameTicker _gameTicker = default!;
     [Dependency] private SharedXenoHiveSystem _hive = default!;
     [Dependency] private EntityLookupSystem _entityLookup = default!;
-    [Dependency] private IMapManager _map = default!;
     [Dependency] private SharedMapSystem _mapSystem = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
@@ -105,15 +114,20 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     private EntityQuery<XenoEggComponent> _xenoEggQuery;
     private EntityQuery<XenoTunnelComponent> _xenoTunnelQuery;
     private EntityQuery<QueenBuildingBoostComponent> _queenBoostQuery;
+    private EntityQuery<XenoHiveInstantBuildActionComponent> _xenoInstantBuildActionQuery;
 
     private const string XenoStructuresAnimation = "RMCEffect";
     private const string XenoHiveCoreNodeId = "HiveCoreXenoConstructionNode";
     private const float VehicleConstructionBlockRange = 3f;
+    private static readonly TimeSpan InstantBuildCounterRefreshInterval = TimeSpan.FromSeconds(1);
 
     private float _densityThreshold;
     private TimeSpan _newResinPreventCollideTime;
+    private TimeSpan _nextInstantBuildCounterRefresh;
 
     private readonly HashSet<EntityUid> _intersectingResin = new();
+    private readonly List<Entity<XenoWeedsComponent>> _adjacentNodes = new();
+    private readonly HashSet<EntityUid> _upgradingStructures = new();
 
     public override void Initialize()
     {
@@ -127,6 +141,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         _xenoEggQuery = GetEntityQuery<XenoEggComponent>();
         _xenoTunnelQuery = GetEntityQuery<XenoTunnelComponent>();
         _queenBoostQuery = GetEntityQuery<QueenBuildingBoostComponent>();
+        _xenoInstantBuildActionQuery = GetEntityQuery<XenoHiveInstantBuildActionComponent>();
 
         SubscribeLocalEvent<NewXenoEvolvedEvent>(OnNewXenoEvolved);
         SubscribeLocalEvent<XenoDevolvedEvent>(OnXenoDevolved);
@@ -225,7 +240,8 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         var doAfterEvent = new XenoOrderConstructionDoAfterEvent(ev.StructureId, ev.Target);
         var doAfter = new DoAfterArgs(EntityManager, user, construction.OrderConstructionDelay, doAfterEvent, user)
         {
-            BreakOnMove = true,
+            // CMU14: moving the remote eye must not interrupt the queen's construction.
+            BreakOnMove = !_queenEye.IsMovingRemoteEye(user),
             BlockDuplicate = false,
         };
 
@@ -282,7 +298,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
     private void OnXenoPlantWeedsAction(Entity<XenoConstructionComponent> xeno, ref XenoPlantWeedsActionEvent args)
     {
-        var coordinates = _transform.GetMoverCoordinates(xeno).SnapToGrid(EntityManager, _map);
+        var coordinates = _transform.GetMoverCoordinates(xeno).SnapToGrid(EntityManager);
         if (_transform.GetGrid(coordinates) is not { } gridUid ||
             !TryComp(gridUid, out MapGridComponent? gridComp))
         {
@@ -292,12 +308,11 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         var grid = new Entity<MapGridComponent>(gridUid, gridComp);
         if (_xenoWeeds.IsOnWeeds(grid, coordinates, true))
         {
-            _popup.PopupClient(Loc.GetString("cm-xeno-weeds-source-already-here"), xeno.Owner, xeno.Owner);
+            _popup.PopupEntity(Loc.GetString("cm-xeno-weeds-source-already-here"), xeno.Owner, xeno.Owner);
             return;
         }
 
-        var tile = _mapSystem.CoordinatesToTile(gridUid, gridComp, coordinates);
-        if (!_xenoWeeds.CanSpreadWeedsPopup(grid, tile, xeno, args.UseOnSemiWeedable, true))
+        if (!_xenoWeeds.CanSpreadWeedsPopup(grid, coordinates.Position, xeno, null, args.UseOnSemiWeedable, true))
             return;
 
         if (!_xenoWeeds.CanPlaceWeedsPopup(xeno, grid, coordinates, args.LimitDistance))
@@ -326,7 +341,8 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             return;
         }
 
-        if (_queenEye.IsInQueenEye(xeno.Owner) &&
+        var isInQueenEye = _queenEye.IsInQueenEye(xeno.Owner);
+        if (isInQueenEye &&
             !_queenEye.CanSeeTarget(xeno.Owner, coordinates))
         {
             return;
@@ -336,43 +352,60 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         var existing = _xenoWeeds.GetWeedsOnFloor(grid, coordinates);
         if (existing is { Comp.IsSource: true })
         {
-            _popup.PopupClient(Loc.GetString("cm-xeno-weeds-source-already-here"), args.Target, xeno.Owner);
+            _popup.PopupCoordinates(Loc.GetString("cm-xeno-weeds-source-already-here"), args.Target, xeno.Owner);
             return;
         }
 
-        Entity<XenoWeedsComponent> adjacent = default;
+        _adjacentNodes.Clear();
         if (existing == null)
         {
+            var canSpread = false;
             foreach (var direction in _rmcMap.CardinalDirections)
             {
-                if (_rmcMap.HasAnchoredEntityEnumerator(coordinates, out adjacent, direction))
-                    break;
+                if (!_rmcMap.HasAnchoredEntityEnumerator(coordinates, out Entity<XenoWeedsComponent> adjacent, direction))
+                    continue;
+
+                _adjacentNodes.Add(adjacent);
+
+                if (!_xenoWeeds.CanSpreadWeedsPopup(grid, coordinates.Position, xeno, adjacent, false, true))
+                    continue;
+
+                canSpread = true;
+                break;
             }
 
-            if (adjacent == default)
+            if (_adjacentNodes.Count == 0)
             {
-                _popup.PopupClient("You can only plant weeds if there is a nearby node.",
+                _popup.PopupCoordinates(Loc.GetString("rmc-xeno-weeds-no-nearby-node"),
                     args.Target,
                     xeno,
                     PopupType.MediumCaution);
 
                 return;
             }
+
+            if (!canSpread)
+            {
+                _popup.PopupCoordinates(Loc.GetString("rmc-xeno-weeds-blocked"), args.Target, xeno.Owner, PopupType.MediumCaution);
+
+                return;
+            }
         }
 
         var toSpawn = existing == null ? args.Expand : args.Source;
-        var tile = _mapSystem.CoordinatesToTile(gridUid, gridComp, coordinates);
-        if (!_xenoWeeds.CanSpreadWeedsPopup(grid, tile, xeno, false, true))
-            return;
 
-        if (!_xenoWeeds.CanPlaceWeedsPopup(xeno, grid, coordinates, false))
+        if (!_xenoWeeds.CanPlaceWeedsPopup(xeno, grid, coordinates, false, isInQueenEye ? coordinates : (EntityCoordinates?)null))
             return;
 
         var plasmaCost = existing == null ? args.PlasmaCost : args.SourcePlasmaCost;
         if (!_xenoPlasma.TryRemovePlasmaPopup(xeno.Owner, plasmaCost, popupOn: args.Target))
             return;
 
-        args.Handled = true;
+        if (existing != null)
+            _actions.SetCooldown(args.Action.AsNullable(), args.SourceCooldown);
+        else
+            args.Handled = true;
+
         if (_net.IsServer)
         {
             var newWeeds = Spawn(toSpawn, coordinates);
@@ -380,10 +413,10 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             _hive.SetSameHive(xeno.Owner, newWeeds);
 
             if (existing == null)
-                _xenoWeeds.AssignSource(newWeeds, adjacent.Comp?.Source ?? adjacent);
+                _xenoWeeds.AssignSource(newWeeds, _adjacentNodes.Last().Comp?.Source ?? _adjacentNodes.Last());
         }
 
-        _audio.PlayPredicted(xeno.Comp.BuildSound, coordinates, xeno);
+        _audio.PlayPredicted(xeno.Comp.BuildSound, coordinates, xeno.Owner);
     }
 
     private void OnXenoChooseStructureAction(Entity<XenoConstructionComponent> xeno, ref XenoChooseStructureActionEvent args)
@@ -436,7 +469,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         };
     }
 
-    private EntProtoId GetQueenAnimationVariant(EntProtoId originalId)
+    private EntProtoId GetResinUpgradeTarget(EntProtoId originalId)
     {
         return originalId.Id switch
         {
@@ -449,7 +482,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
     private void HandleSecreteResinPlacement(Entity<XenoConstructionComponent> xeno, ref XenoSecreteStructureActionEvent args)
     {
-        var snapped = args.Target.SnapToGrid(EntityManager, _map);
+        var snapped = args.Target.SnapToGrid(EntityManager);
         var hasBoost = _queenBoostQuery.HasComp(xeno.Owner);
 
         if ((xeno.Comp.CanUpgrade || hasBoost) &&
@@ -475,13 +508,23 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             var msg = hasBoost
                 ? "We regurgitate some resin and thicken the " + Name(upgradeable) + " effortlessly."
                 : $"We regurgitate some resin and thicken the {Name(upgradeable)}, using {cost} plasma.";
-            _popup.PopupClient(msg, upgradeable, xeno);
+            _popup.PopupEntity(msg, upgradeable, xeno);
 
             if (_net.IsClient)
                 return;
 
-            QueueDel(upgradeable);
-            var spawn = Spawn(to, snapped);
+            EntityUid spawn;
+            try
+            {
+                BeginStructureUpgrade(upgradeable);
+                Del(upgradeable);
+                spawn = Spawn(to, snapped);
+            }
+            finally
+            {
+                EndStructureUpgrade(upgradeable);
+            }
+
             _hive.SetSameHive(xeno.Owner, spawn);
             args.Handled = true;
             return;
@@ -502,28 +545,120 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             return;
         }
 
-        if (!CanSecreteOnTilePopup(xeno, choice, args.Target, true, true))
+        if (!CanAttemptSecrete(xeno, args.Target))
             return;
 
-        var attempt = new XenoSecreteStructureAttemptEvent(args.Target);
+        if (!_buildMark.CanMark(choice))
+        {
+            if (CanSecreteOnTilePopup(xeno, choice, args.Target, true, true, checkPlasma: !CanUseHiveInstantBuild(xeno)))
+                args.Handled = StartSecrete(xeno, choice, args.Target);
+
+            return;
+        }
+
+        var secreting = _buildMark.IsSecreting(xeno);
+        if (_buildMark.TryGetOwnMark(xeno, args.Target, out var ownMark))
+        {
+            args.Handled = true;
+            if (!secreting &&
+                ownMark.Comp.Structure is { } markStructure &&
+                xeno.Comp.CanBuild.Contains(markStructure) &&
+                CanSecreteOnTilePopup(xeno, markStructure, args.Target, true, true, false, checkPlasma: !CanUseHiveInstantBuild(xeno)) &&
+                StartSecrete(xeno, markStructure, args.Target))
+            {
+                return;
+            }
+
+            _buildMark.RemoveMark(ownMark, xeno);
+            return;
+        }
+
+        var result = CheckSecreteOnTile(xeno, choice, args.Target, true, true, true, true, checkPlasma: !CanUseHiveInstantBuild(xeno));
+        if (result == XenoSecreteTileResult.Blocked)
+            return;
+
+        if (result == XenoSecreteTileResult.Allowed && !secreting)
+        {
+            args.Handled = StartSecrete(xeno, choice, args.Target);
+            return;
+        }
+
+        _buildMark.PlaceMark(xeno, args.Target, choice, secreting);
+        args.Handled = true;
+    }
+
+    public void AdjustForTarget(EntityUid xeno, EntityCoordinates target, bool popup = true)
+    {
+        var ev = new XenoSecreteStructureAdjustFields(target.SnapToGrid(EntityManager), popup);
+        RaiseLocalEvent(xeno, ref ev);
+    }
+
+    public bool TryStartSecrete(Entity<XenoConstructionComponent> xeno, EntProtoId choice, EntityCoordinates target)
+    {
+        AdjustForTarget(xeno, target, false);
+        return xeno.Comp.CanBuild.Contains(choice) &&
+               _actionBlocker.CanInteract(xeno, null) &&
+               CanSecreteOnTilePopup(xeno, choice, target, true, true, false, checkPlasma: !CanUseHiveInstantBuild(xeno)) &&
+               CanAttemptSecrete(xeno, target) &&
+               StartSecrete(xeno, choice, target);
+    }
+
+    public EntProtoId? GetBuildableVariant(Entity<XenoConstructionComponent> xeno, EntProtoId structure)
+    {
+        if (xeno.Comp.CanBuild.Contains(structure))
+            return structure;
+
+        var upgraded = GetResinUpgradeTarget(structure);
+        if (xeno.Comp.CanBuild.Contains(upgraded))
+            return upgraded;
+
+        // CMU14: neomorph evolution changes mycelium structures to their configured thick variants.
+        if (_prototype.TryIndex(structure, out var proto) &&
+            proto.TryComp(out XenoStructureUpgradeableComponent? upgrade, _compFactory) &&
+            upgrade.To is { } variant && xeno.Comp.CanBuild.Contains(variant))
+            return variant;
+
+        return null;
+    }
+
+    private bool CanAttemptSecrete(EntityUid xeno, EntityCoordinates target)
+    {
+        var attempt = new XenoSecreteStructureAttemptEvent(target);
         RaiseLocalEvent(xeno, ref attempt);
+        return !attempt.Cancelled;
+    }
 
-        if (attempt.Cancelled)
-            return;
-
-        var animationChoice = hasBoost ? GetQueenAnimationVariant(choice) : choice;
+    private bool StartSecrete(Entity<XenoConstructionComponent> xeno, EntProtoId choice, EntityCoordinates target)
+    {
+        var hasBoost = _queenBoostQuery.HasComp(xeno.Owner);
+        var animationChoice = hasBoost ? GetResinUpgradeTarget(choice) : choice;
         var effectId = XenoStructuresAnimation + animationChoice;
-        var coordinates = GetNetCoordinates(args.Target);
+        var coordinates = GetNetCoordinates(target);
         var entityCoords = GetCoordinates(coordinates);
         EntityUid? effect = null;
 
         var buildMult = GetBuildSpeed(choice) ?? 1;
-        buildMult *= GetDesignNodeBuildTimeMultiplier(xeno.Owner, args.Target, choice);
+        buildMult *= GetDesignNodeBuildTimeMultiplier(xeno.Owner, target, choice);
 
         if (hasBoost && _queenBoostQuery.TryComp(xeno.Owner, out var boostComp))
             buildMult *= boostComp.BuildSpeedMultiplier;
 
         var finalBuildTime = xeno.Comp.BuildDelay * buildMult;
+
+        // CMU14: marked builds use the same instant-build charges and plasma fallback as manual builds.
+        if (TryUseHiveInstantBuild(xeno.Owner, out var hive))
+        {
+            if (TryCompleteSecreteStructure(xeno, coordinates, choice, false))
+                return true;
+
+            if (hive is { } hiveEnt)
+                RefundHiveInstantBuild(hiveEnt);
+
+            return false;
+        }
+
+        if (!CanSecreteOnTilePopup(xeno, choice, target, true, true))
+            return false;
 
         if (_net.IsServer && _prototype.HasIndex(effectId))
         {
@@ -532,19 +667,21 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         }
 
         var ev = new XenoSecreteStructureDoAfterEvent(coordinates, choice, GetNetEntity(effect));
-        args.Handled = true;
         var doAfter = new DoAfterArgs(EntityManager, xeno, finalBuildTime, ev, xeno)
         {
-            BreakOnMove = true,
+            // CMU14: do-afters follow the effective mover, which may be the remote eye.
+            BreakOnMove = !_queenEye.IsMovingRemoteEye(xeno.Owner),
             RootEntity = true,
             CancelDuplicate = false
         };
 
-        if (!_doAfter.TryStartDoAfter(doAfter))
-        {
-            if (effect != null && _net.IsServer)
-                QueueDel(effect);
-        }
+        if (_doAfter.TryStartDoAfter(doAfter))
+            return true;
+
+        if (effect != null && _net.IsServer)
+            QueueDel(effect);
+
+        return false;
     }
 
     private void CancelOrderConstructionTargeting(Entity<XenoConstructionComponent> xeno)
@@ -561,60 +698,207 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         Dirty(xeno);
     }
 
+    public int GetHiveInstantBuildsRemaining(EntityUid hive)
+    {
+        return TryComp(hive, out HiveComponent? comp)
+            ? comp.InstantBuildsRemaining
+            : 0;
+    }
+
+    public bool TryUseHiveInstantBuild(EntityUid hive)
+    {
+        if (!TryComp(hive, out HiveComponent? comp))
+            return false;
+
+        return TryUseHiveInstantBuild((hive, comp));
+    }
+
+    private bool TryUseHiveInstantBuild(Entity<HiveComponent> hive)
+    {
+        if (!CanUseHiveInstantBuild(hive))
+            return false;
+
+        hive.Comp.InstantBuildsRemaining--;
+        Dirty(hive);
+
+        if (_net.IsServer)
+            RefreshHiveInstantBuildActionCounters(hive);
+
+        return true;
+    }
+
+    private void RefundHiveInstantBuild(Entity<HiveComponent> hive)
+    {
+        var refunded = Math.Min(hive.Comp.InstantBuildsRemaining + 1, hive.Comp.MaxInstantBuilds);
+        if (refunded == hive.Comp.InstantBuildsRemaining)
+            return;
+
+        hive.Comp.InstantBuildsRemaining = refunded;
+        Dirty(hive);
+
+        if (_net.IsServer)
+            RefreshHiveInstantBuildActionCounters(hive);
+    }
+
+    private bool TryUseHiveInstantBuild(EntityUid user, out Entity<HiveComponent>? hive)
+    {
+        hive = _hive.GetHive(user);
+        if (hive is not { } hiveEnt)
+            return false;
+
+        if (!TryUseHiveInstantBuild(hiveEnt))
+            return false;
+
+        hive = hiveEnt;
+        return true;
+    }
+
+    private bool CanUseHiveInstantBuild(Entity<HiveComponent> hive)
+    {
+        return hive.Comp.InstantBuildsRemaining > 0 &&
+               IsHiveInstantBuildActive(hive);
+    }
+
+    public bool CanUseHiveInstantBuild(EntityUid user) // CMU14: also used by automatic marked construction.
+    {
+        var hive = _hive.GetHive(user);
+        return hive is { } hiveEnt &&
+               CanUseHiveInstantBuild(hiveEnt);
+    }
+
+    private bool IsHiveInstantBuildActive(Entity<HiveComponent> hive)
+    {
+        return _gameTicker.RoundDuration() < hive.Comp.InstantBuildDuration;
+    }
+
+    private bool ShouldShowHiveInstantBuildCounter(Entity<HiveComponent> hive)
+    {
+        return IsHiveInstantBuildActive(hive) ||
+               hive.Comp.InstantBuildsRemaining > 0;
+    }
+
+    public void RefreshHiveInstantBuildActionCounters(EntityUid hiveUid)
+    {
+        if (!TryComp(hiveUid, out HiveComponent? hive))
+            return;
+
+        RefreshHiveInstantBuildActionCounters((hiveUid, hive));
+    }
+
+    private void RefreshAllHiveInstantBuildActionCounters()
+    {
+        var hives = EntityQueryEnumerator<HiveComponent>();
+        while (hives.MoveNext(out var hiveUid, out var hive))
+        {
+            RefreshHiveInstantBuildActionCounters((hiveUid, hive));
+        }
+    }
+
+    private void RefreshHiveInstantBuildActionCounters(Entity<HiveComponent> hive)
+    {
+        if (_net.IsClient)
+            return;
+
+        var showCounter = ShouldShowHiveInstantBuildCounter(hive);
+        var buildsLeft = Math.Max(0, hive.Comp.InstantBuildsRemaining);
+        var xenos = EntityQueryEnumerator<XenoComponent, HiveMemberComponent>();
+        while (xenos.MoveNext(out _, out var xeno, out var member))
+        {
+            if (member.Hive != hive.Owner)
+                continue;
+
+            foreach (var actionId in xeno.Actions.Values)
+            {
+                if (!_xenoInstantBuildActionQuery.TryComp(actionId, out var counter))
+                    continue;
+
+                SetInstantBuildActionCounter((actionId, counter), buildsLeft, showCounter);
+            }
+        }
+    }
+
+    private void SetInstantBuildActionCounter(Entity<XenoHiveInstantBuildActionComponent> action, int buildsLeft, bool visible)
+    {
+        if (action.Comp.BuildsLeft == buildsLeft &&
+            action.Comp.Visible == visible)
+        {
+            return;
+        }
+
+        action.Comp.BuildsLeft = buildsLeft;
+        action.Comp.Visible = visible;
+        Dirty(action);
+    }
+
     private void OnXenoSecreteStructureDoAfter(Entity<XenoConstructionComponent> xeno, ref XenoSecreteStructureDoAfterEvent args)
     {
         if (_net.IsServer && args.Effect != null)
             QueueDel(GetEntity(args.Effect));
 
+        if (args.Cancelled)
+            _buildMark.OnSecreteCancelled(xeno, GetCoordinates(args.Coordinates));
+
         if (args.Handled || args.Cancelled)
             return;
 
-        var coordinates = GetCoordinates(args.Coordinates);
+        if (TryCompleteSecreteStructure(xeno, args.Coordinates, args.StructureId))
+            args.Handled = true;
+    }
+
+    private bool TryCompleteSecreteStructure(Entity<XenoConstructionComponent> xeno, NetCoordinates netCoordinates, EntProtoId structureId, bool consumePlasma = true)
+    {
+        var coordinates = GetCoordinates(netCoordinates);
+        if (coordinates.IsValid(EntityManager))
+            AdjustForTarget(xeno, coordinates);
+
         if (!coordinates.IsValid(EntityManager) ||
-            !xeno.Comp.CanBuild.Contains(args.StructureId) ||
-            !CanSecreteOnTilePopup(xeno, args.StructureId, GetCoordinates(args.Coordinates), true, true))
+            !xeno.Comp.CanBuild.Contains(structureId) ||
+            !CanSecreteOnTilePopup(xeno, structureId, coordinates, true, true, checkPlasma: consumePlasma))
         {
-            return;
+            return false;
         }
 
         var hasBoost = _queenBoostQuery.HasComp(xeno.Owner);
-        if (_area.TryGetArea(GetCoordinates(args.Coordinates), out var area, out _) &&
-            GetStructurePlasmaCost(args.StructureId) is { } baseCost)
+        if (_area.TryGetArea(coordinates, out var area, out _) &&
+            GetStructurePlasmaCost(structureId) is { } baseCost)
         {
             var cost = baseCost;
             if (area.Value.Comp.ResinConstructCount != 0 &&
                 !area.Value.Comp.Unweedable &&
-                _prototype.TryIndex(args.StructureId, out var structure) &&
-                structure.TryGetComponent(out XenoConstructionPlasmaCostComponent? plasmaCost, _compFactory) &&
+                _prototype.TryIndex(structureId, out var structure) &&
+                structure.TryComp(out XenoConstructionPlasmaCostComponent? plasmaCost, _compFactory) &&
                 plasmaCost.ScalingCost)
             {
                 cost = GetDensityCost(area.Value, xeno, cost);
             }
 
-            var plasmaMult = GetDesignNodePlasmaCostMultiplier(xeno.Owner, coordinates, args.StructureId);
+            var plasmaMult = GetDesignNodePlasmaCostMultiplier(xeno.Owner, coordinates, structureId);
             if (plasmaMult > 0f && plasmaMult != 1f)
                 cost = Math.Ceiling(cost.Float() * plasmaMult);
 
-            if (!hasBoost && !_xenoPlasma.TryRemovePlasmaPopup(xeno.Owner, cost))
-                return;
+            if (consumePlasma &&
+                !hasBoost &&
+                !_xenoPlasma.TryRemovePlasmaPopup(xeno.Owner, cost))
+            {
+                return false;
+            }
         }
-
-        args.Handled = true;
 
         if (_net.IsServer)
         {
-            var structureToSpawn = args.StructureId;
+            var structureToSpawn = structureId;
             structureToSpawn = ResolveDesignerDesignNodeChoice(xeno.Owner, structureToSpawn);
 
             if (hasBoost)
             {
-                var queenVariant = GetQueenVariant(args.StructureId);
+                var queenVariant = GetQueenVariant(structureId);
                 if (_prototype.HasIndex(queenVariant))
                 {
                     structureToSpawn = queenVariant;
                 }
             }
 
+            ClearResinObstructions(coordinates); // CMU14: only after validation and payment.
             var structure = Spawn(structureToSpawn, coordinates);
             _hive.SetSameHive(xeno.Owner, structure);
             if (TryComp(structure, out DesignNodeComponent? nodeComp))
@@ -708,6 +992,8 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         }
 
         _audio.PlayPredicted(xeno.Comp.BuildSound, coordinates, xeno);
+        _buildMark.OnStructureBuilt(xeno, coordinates);
+        return true;
     }
 
     private void OnXenoOrderConstructionAction(Entity<XenoConstructionComponent> xeno, ref XenoOrderConstructionActionEvent args)
@@ -759,7 +1045,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         var hasBoost = _queenBoostQuery.HasComp(xeno.Owner);
 
-        if (prototype.TryGetComponent(out HiveConstructionNodeComponent? node, _compFactory) &&
+        if (prototype.TryComp(out HiveConstructionNodeComponent? node, _compFactory) &&
             !hasBoost &&
             !_xenoPlasma.TryRemovePlasmaPopup((xeno, plasma), node.InitialPlasmaCost))
         {
@@ -769,7 +1055,8 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         if (_net.IsClient)
             return;
 
-        var coordinates = target.SnapToGrid(EntityManager, _map);
+        var coordinates = target.SnapToGrid(EntityManager);
+        ClearResinObstructions(coordinates); // CMU14
         var structure = Spawn(args.StructureId, coordinates);
 
         _hive.SetSameHive(xeno.Owner, structure);
@@ -843,7 +1130,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         if (node.PlasmaStored < node.PlasmaCost)
         {
-            _popup.PopupClient(
+            _popup.PopupEntity(
                 Loc.GetString("cm-xeno-requires-more-plasma", ("construction", target), ("plasma", plasmaLeft)),
                 target,
                 args.User);
@@ -859,7 +1146,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         if (HasComp<HiveConstructionRequiresHiveWeedsComponent>(target) && !_xenoWeeds.IsOnHiveWeeds((gridId, grid), target.ToCoordinates()))
         {
-            _popup.PopupClient(
+            _popup.PopupEntity(
                 Loc.GetString("rmc-xeno-construction-requires-hive-weeds", ("choice", target)),
                 target,
                 args.User);
@@ -880,7 +1167,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         EntityUid? floorWeeds = null;
         if (_prototype.TryIndex(node.Spawn, out var spawnProto) &&
-            spawnProto.HasComponent<XenoWeedsComponent>())
+            spawnProto.HasComp<XenoWeedsComponent>(_compFactory))
         {
             floorWeeds = _xenoWeeds.GetWeedsOnFloor(transform.Coordinates);
         }
@@ -924,10 +1211,13 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         if (GetCoordinates(args.Input.EntityCoordinatesTarget) is not { } target)
             return;
 
-        var snapped = target.SnapToGrid(EntityManager, _map);
+        var snapped = target.SnapToGrid(EntityManager);
+        var marking = !construction.OrderConstructionTargeting &&
+                      ent.Comp.CheckStructureSelected &&
+                      construction.BuildChoice is { } markChoice &&
+                      _buildMark.CanMark(markChoice);
 
-        var adjustEv = new XenoSecreteStructureAdjustFields(snapped);
-        RaiseLocalEvent(args.User, ref adjustEv);
+        AdjustForTarget(args.User, snapped, !marking);
 
         var hasBoost = _queenBoostQuery.HasComp(args.User);
 
@@ -967,8 +1257,19 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         if (construction.BuildChoice is { } buildChoice &&
             _prototype.TryIndex(buildChoice, out var buildChoiceProto) &&
-            buildChoiceProto.HasComponent<DesignerRemoteThickenResinComponent>(_compFactory))
+            buildChoiceProto.HasComp<DesignerRemoteThickenResinComponent>(_compFactory))
         {
+            return;
+        }
+
+        if (marking)
+        {
+            if (_buildMark.TryGetOwnMark(args.User, target, out _))
+                return;
+
+            if (CheckSecreteOnTile((args.User, construction), construction.BuildChoice, target, true, ent.Comp.CheckWeeds, true, true, checkPlasma: !CanUseHiveInstantBuild(args.User)) == XenoSecreteTileResult.Blocked)
+                args.Invalid = true;
+
             return;
         }
 
@@ -983,6 +1284,10 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         var plasmaLeft = node.Comp.PlasmaCost - node.Comp.PlasmaStored;
         args.PushMarkup(Loc.GetString("cm-xeno-construction-plasma-left", ("construction", node.Owner), ("plasma", plasmaLeft)));
     }
+
+    public void BeginStructureUpgrade(EntityUid uid) => _upgradingStructures.Add(uid);
+
+    public void EndStructureUpgrade(EntityUid uid) => _upgradingStructures.Remove(uid);
 
     private void OnHiveConstructionNodeActivated(Entity<HiveConstructionNodeComponent> node, ref ActivateInWorldEvent args)
     {
@@ -1029,10 +1334,10 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             return;
         }
 
-        if (xenoStructureDamage.TotalDamage <= 0)
+        if (_damageable.GetTotalDamage((xenoStructure, xenoStructureDamage)) <= 0)
         {
             var undamagedStructureMessage = Loc.GetString("rmc-xeno-construction-repair-structure-no-damage-failure", ("struct", xenoStructure.Owner));
-            _popup.PopupClient(undamagedStructureMessage, xenoStructure.Owner.ToCoordinates(), user);
+            _popup.PopupCoordinates(undamagedStructureMessage, xenoStructure.Owner.ToCoordinates(), user);
             return;
         }
 
@@ -1051,7 +1356,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         };
 
         _doAfter.TryStartDoAfter(doAfter);
-        _popup.PopupClient(Loc.GetString("rmc-xeno-construction-repair-structure-start-attempt",
+        _popup.PopupCoordinates(Loc.GetString("rmc-xeno-construction-repair-structure-start-attempt",
                 ("struct", xenoStructure.Owner)),
             xenoStructureTransform.Coordinates,
             user
@@ -1070,7 +1375,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             !TryComp(xenoStructure, out TransformComponent? xenoStructureTransform) ||
             !TryComp(user, out XenoPlasmaComponent? plasma) ||
             !TryComp(xenoStructure, out DamageableComponent? xenoStructureDamage) ||
-            xenoStructureDamage.TotalDamage <= 0)
+            _damageable.GetTotalDamage((xenoStructure, xenoStructureDamage)) <= 0)
         {
             return;
         }
@@ -1098,15 +1403,15 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 ("struct", xenoStructure.Owner),
                 ("remainingPlasma", xenoStructure.Comp.PlasmaCost - xenoStructure.Comp.StoredPlasma)
             );
-            _popup.PopupClient(notEnoughPlasmaMessage, xenoStructure.Owner.ToCoordinates(), user);
+            _popup.PopupCoordinates(notEnoughPlasmaMessage, xenoStructure.Owner.ToCoordinates(), user);
             return;
         }
 
-        _damageable.SetAllDamage(xenoStructure.Owner, xenoStructureDamage, 0);
+        _damageable.SetAllDamage((xenoStructure.Owner, xenoStructureDamage), FixedPoint2.Zero);
         var ev = new XenoStructureRepairedEvent();
         RaiseLocalEvent(xenoStructure, ev);
 
-        _popup.PopupClient(
+        _popup.PopupCoordinates(
             Loc.GetString("rmc-xeno-construction-repair-structure-success", ("struct", xenoStructure.Owner)),
             xenoStructureTransform.Coordinates,
             user
@@ -1133,6 +1438,9 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
     private void OnCheckAdjacentCollapse<T>(Entity<XenoConstructionSupportComponent> ent, ref T args)
     {
+        if (_upgradingStructures.Contains(ent.Owner))
+            return;
+
         if (!_transformQuery.TryComp(ent, out var xform) ||
             _transform.GetGrid((ent, xform)) is not { Valid: true } gridId ||
             !TryComp(gridId, out MapGridComponent? grid))
@@ -1146,7 +1454,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         {
             var dir = (AtmosDirection)(1 << i);
             var pos = indices.Offset(dir);
-            var anchored = _mapSystem.GetAnchoredEntitiesEnumerator(gridId, grid, pos);
+            var anchored = _mapSystem.GetAnchoredEntities(gridId, grid, pos);
             while (anchored.MoveNext(out var uid))
             {
                 if (TerminatingOrDeleted(uid.Value) || EntityManager.IsQueuedForDeletion(uid.Value))
@@ -1205,21 +1513,23 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         Dirty(ent.Comp.Xeno.Value, list);
     }
 
+    // CMU14 method: clear surviving structures, not the owner whose list is being removed.
     private void OnListRemove<T>(Entity<XenoSecretionListComponent> ent, ref T args)
     {
         foreach (var built in ent.Comp.Built.Values)
         {
             foreach (var nEnt in built)
             {
-                if (GetEntity(nEnt) is not { Valid: true } ||
-                    TerminatingOrDeleted(ent) ||
-                    !TryComp(ent, out XenoSecretionLimitedComponent? limited))
+                if (GetEntity(nEnt) is not { Valid: true } structure ||
+                    TerminatingOrDeleted(structure) ||
+                    !TryComp(structure, out XenoSecretionLimitedComponent? limited) ||
+                    limited.Xeno != ent.Owner)
                 {
                     continue;
                 }
 
                 limited.Xeno = null;
-                Dirty(ent, limited);
+                Dirty(structure, limited);
             }
         }
     }
@@ -1227,7 +1537,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     public FixedPoint2? GetStructurePlasmaCost(EntProtoId prototype)
     {
         if (_prototype.TryIndex(prototype, out var buildChoice) &&
-            buildChoice.TryGetComponent(out XenoConstructionPlasmaCostComponent? cost, _compFactory))
+            buildChoice.TryComp(out XenoConstructionPlasmaCostComponent? cost, _compFactory))
         {
             return cost.Plasma;
         }
@@ -1239,7 +1549,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     {
         XenoConstructionMinRangeComponent? minRangeComp = null;
         if (_prototype.TryIndex(prototype, out var buildChoice))
-            buildChoice.TryGetComponent(out minRangeComp, _compFactory);
+            buildChoice.TryComp(out minRangeComp, _compFactory);
         if (minRangeComp != null)
             return minRangeComp.MinRange.Float();
         return 0;
@@ -1248,7 +1558,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     private float? GetBuildSpeed(EntProtoId prototype)
     {
         if (_prototype.TryIndex(prototype, out var buildChoice) &&
-            buildChoice.TryGetComponent(out XenoConstructionBuildSpeedComponent? speed, _compFactory))
+            buildChoice.TryComp(out XenoConstructionBuildSpeedComponent? speed, _compFactory))
         {
             return speed.BuildTimeMult;
         }
@@ -1281,20 +1591,44 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     private bool TileSolidAndNotBlocked(EntityCoordinates target)
     {
         return _turf.GetTileRef(target) is { } tile &&
-               !_turf.IsSpace(tile) &&
+               !IsSpaceForConstruction(tile) && // CMU14: multi-z roofs are isSpace but still floor
                _turf.GetContentTileDefinition(tile).Sturdy &&
-               !_turf.IsTileBlocked(tile, Impassable) &&
+               !_turf.IsTileBlocked(tile.GridUid, tile.GridIndices, Impassable,
+                   ignore: uid => IsClearableOnTile(uid, tile)) && // CMU14
                !_xenoNest.HasAdjacentNestFacing(target);
+    }
+
+    // CMU14: do not clear neighboring vegetation whose fixture overlaps the construction tile.
+    private bool IsClearableOnTile(EntityUid uid, TileRef tile)
+        => HasComp<ResinClearableComponent>(uid) &&
+           _turf.GetTileRef(Transform(uid).Coordinates) is { } other &&
+           other.GridUid == tile.GridUid && other.GridIndices == tile.GridIndices &&
+           _destructible.CanDestroy(uid);
+
+    private void ClearResinObstructions(EntityCoordinates coordinates)
+    {
+        if (!_net.IsServer || _turf.GetTileRef(coordinates) is not { } tile)
+            return;
+
+        // Include fixtureless grass on tile edges; the exact tile check below excludes neighboring scenery.
+        var obstructions = new HashSet<EntityUid>();
+        _entityLookup.GetEntitiesIntersecting(tile.GridUid, _entityLookup.GetWorldBounds(tile), obstructions,
+            LookupFlags.Uncontained | LookupFlags.Approximate);
+        foreach (var uid in obstructions)
+        {
+            if (IsClearableOnTile(uid, tile))
+                _destructible.DestroyEntity(uid);
+        }
     }
 
     private bool InRangePopup(EntityUid xeno, EntityCoordinates target, float range, float minRange = 0, bool popup = true)
     {
         var origin = _transform.GetMoverCoordinates(xeno);
-        target = target.SnapToGrid(EntityManager, _map);
+        target = target.SnapToGrid(EntityManager);
         if (!_transform.InRange(origin, target, range))
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("cm-xeno-cant-reach-there"), target, xeno);
+                _popup.PopupCoordinates(Loc.GetString("cm-xeno-cant-reach-there"), target, xeno);
 
             return false;
         }
@@ -1302,7 +1636,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         if (minRange != 0 && _transform.InRange(origin, target, minRange))
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("cm-xeno-cant-build-in-self"), target, xeno);
+                _popup.PopupCoordinates(Loc.GetString("cm-xeno-cant-build-in-self"), target, xeno);
 
             return false;
         }
@@ -1310,78 +1644,105 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         return true;
     }
 
-    public bool CanSecreteOnTilePopup(Entity<XenoConstructionComponent> xeno, EntProtoId? buildChoice, EntityCoordinates target, bool checkStructureSelected, bool checkWeeds, bool popup = true)
+    public bool CanSecreteOnTilePopup(Entity<XenoConstructionComponent> xeno, EntProtoId? buildChoice, EntityCoordinates target, bool checkStructureSelected, bool checkWeeds, bool popup = true, bool checkPlasma = true)
+    {
+        return CheckSecreteOnTile(xeno, buildChoice, target, checkStructureSelected, checkWeeds, popup, false, checkPlasma) == XenoSecreteTileResult.Allowed;
+    }
+
+    public XenoSecreteTileResult CheckSecreteOnTile(Entity<XenoConstructionComponent> xeno, EntProtoId? buildChoice, EntityCoordinates target, bool checkStructureSelected, bool checkWeeds, bool popup, bool deferSoft, bool checkPlasma = true)
     {
         if (checkStructureSelected && buildChoice == null)
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-select-structure"), target, xeno);
+                _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-select-structure"), target, xeno);
 
-            return false;
+            return XenoSecreteTileResult.Blocked;
         }
 
         if (_transform.GetGrid(target) is not { } gridId ||
             !TryComp(gridId, out MapGridComponent? grid))
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+                _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
 
-            return false;
+            return XenoSecreteTileResult.Blocked;
         }
 
-        target = target.SnapToGrid(EntityManager, _map);
+        target = target.SnapToGrid(EntityManager);
         var hasBoost = _queenBoostQuery.HasComp(xeno.Owner);
 
-        if (IsNearVehiclePopup(xeno, target))
-            return false;
+        if (IsNearVehiclePopup(xeno, target, popup))
+            return XenoSecreteTileResult.Blocked;
         if (checkStructureSelected &&
             buildChoice is { } nodeChoice &&
             _prototype.TryIndex(nodeChoice, out var nodeChoiceProto) &&
-            nodeChoiceProto.HasComponent<DesignNodeComponent>() &&
+            nodeChoiceProto.HasComp<DesignNodeComponent>(_compFactory) &&
             _rmcMap.HasAnchoredEntityEnumerator<DesignNodeComponent>(target, out _))
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("rmc-xeno-construction-blocked-structure"), xeno, xeno, PopupType.SmallCaution);
+                _popup.PopupCoordinates(Loc.GetString("rmc-xeno-construction-blocked-structure"), target, xeno, PopupType.SmallCaution);
 
-            return false;
+            return XenoSecreteTileResult.Blocked;
         }
 
-        if (checkWeeds && !_xenoWeeds.IsOnWeeds((gridId, grid), target))
+        // Structures that patch holes (scab resin) invert the usual placement rules: they want an EMPTY tile
+        // and do not care about weeds, because a collapsed floor has neither. See XenoOpenSpaceConstruction.
+        var buildsOnOpenSpace = buildChoice is { } openSpaceChoice &&
+                                _prototype.TryIndex(openSpaceChoice, out var openSpaceProto) &&
+                                openSpaceProto.HasComp<XenoOpenSpaceConstructionComponent>(_compFactory);
+
+        if (checkWeeds && !buildsOnOpenSpace && !_xenoWeeds.IsOnWeeds((gridId, grid), target))
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-need-weeds"), target, xeno);
+                _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-need-weeds"), target, xeno);
 
-            return false;
+            return XenoSecreteTileResult.Blocked;
         }
 
         var ev = new XenoConstructionRangeEvent(xeno.Comp.BuildRange);
         RaiseLocalEvent(xeno, ref ev);
 
+        var outOfRange = false;
         if (ev.Range > 0 && !_queenEye.IsInQueenEye(xeno.Owner))
         {
-            if (!InRangePopup(xeno, target, ev.Range.Float(), GetStructureMinRange(buildChoice).Float(), popup))
-                return false;
+            if (deferSoft && !InRangePopup(xeno, target, ev.Range.Float(), popup: false))
+                outOfRange = true;
+            else if (!InRangePopup(xeno, target, ev.Range.Float(), GetStructureMinRange(buildChoice).Float(), popup))
+                return XenoSecreteTileResult.Blocked;
         }
 
-        if (!TileSolidAndNotBlocked(target))
+        if (buildsOnOpenSpace)
+        {
+            // Only into an actual hole. Building these over intact floor is what made scab resin behave like
+            // a second floor layer instead of a patch.
+            var openTile = _mapSystem.CoordinatesToTile(gridId, grid, target);
+            if (_mapSystem.TryGetTileRef(gridId, grid, openTile, out var openRef) && !openRef.Tile.IsEmpty)
+            {
+                if (popup)
+                    _popup.PopupCoordinates(Loc.GetString("rmc-xeno-construction-failed-needs-hole"), target, xeno);
+
+                return XenoSecreteTileResult.Blocked;
+            }
+        }
+        else if (!TileSolidAndNotBlocked(target))
         {
             if (popup)
-                _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+                _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
 
-            return false;
+            return XenoSecreteTileResult.Blocked;
         }
 
         var tile = _mapSystem.CoordinatesToTile(gridId, grid, target);
-        var anchored = _mapSystem.GetAnchoredEntitiesEnumerator(gridId, grid, tile);
+        var anchored = _mapSystem.GetAnchoredEntities(gridId, grid, tile);
         while (anchored.MoveNext(out var uid))
         {
             if (_hiveConstructionNodeQuery.TryGetComponent(uid, out var node) &&
                 node.BlockOtherNodes)
             {
                 if (popup)
-                    _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+                    _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
 
-                return false;
+                return XenoSecreteTileResult.Blocked;
             }
 
             if (_xenoConstructQuery.HasComp(uid) ||
@@ -1391,10 +1752,13 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 _blockXenoConstructionQuery.HasComp(uid))
             {
                 if (popup)
-                    _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+                    _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
 
-                return false;
+                return XenoSecreteTileResult.Blocked;
             }
+
+            if (HasComp<ResinClearableComponent>(uid) && _destructible.CanDestroy(uid.Value)) // CMU14
+                continue;
 
             if (!HasComp<BarricadeComponent>(uid))
             {
@@ -1405,33 +1769,43 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                     door.State != DoorState.Open)
                 {
                     if (popup)
-                        _popup.PopupClient(Loc.GetString("rmc-xeno-construction-blocked-structure"), xeno, xeno, PopupType.SmallCaution);
+                        _popup.PopupCoordinates(Loc.GetString("rmc-xeno-construction-blocked-structure"), target, xeno, PopupType.SmallCaution);
 
-                    return false;
+                    return XenoSecreteTileResult.Blocked;
                 }
             }
         }
 
-        if (checkStructureSelected &&
+        var insufficientPlasma = false;
+        if (checkPlasma && checkStructureSelected &&
             GetStructurePlasmaCost(buildChoice) is { } cost &&
             !hasBoost &&
-            !_xenoPlasma.HasPlasmaPopup(xeno.Owner, cost, doPopup: popup))
+            !_xenoPlasma.HasPlasmaPopup(xeno.Owner, cost, doPopup: popup && !deferSoft))
         {
-            return false;
+            if (!deferSoft)
+                return XenoSecreteTileResult.Blocked;
+
+            insufficientPlasma = true;
         }
 
+        var unsupported = false;
         if (checkStructureSelected &&
             buildChoice is { } choice)
         {
             if (_prototype.TryIndex(choice, out var choiceProto) &&
-                choiceProto.HasComponent<XenoConstructionRequiresSupportComponent>(_compFactory))
+                choiceProto.HasComp<XenoConstructionRequiresSupportComponent>(_compFactory))
             {
                 if (!IsSupported((gridId, grid), target))
                 {
-                    if (popup)
-                        _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-requires-support", ("choice", choiceProto.Name)), target, xeno);
+                    if (!deferSoft)
+                    {
+                        if (popup)
+                            _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-requires-support", ("choice", choiceProto.Name)), target, xeno);
 
-                    return false;
+                        return XenoSecreteTileResult.Blocked;
+                    }
+
+                    unsupported = true;
                 }
             }
 
@@ -1439,7 +1813,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
             {
                 if (popup)
                 {
-                    _popup.PopupClient(
+                    _popup.PopupCoordinates(
                         "We've already built the maximum possible structures we can!",
                         target,
                         xeno,
@@ -1447,11 +1821,23 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                     );
                 }
 
-                return false;
+                return XenoSecreteTileResult.Blocked;
             }
         }
 
-        return _area.CanResinPopup((gridId, grid, null), tile, xeno);
+        if (!_area.CanResinPopup((gridId, grid, null), tile, xeno, popup))
+            return XenoSecreteTileResult.Blocked;
+
+        if (outOfRange)
+            return XenoSecreteTileResult.OutOfRange;
+
+        if (unsupported)
+            return XenoSecreteTileResult.Unsupported;
+
+        if (insufficientPlasma)
+            return XenoSecreteTileResult.InsufficientPlasma;
+
+        return XenoSecreteTileResult.Allowed;
     }
 
     public bool CanOrderConstructionPopup(Entity<XenoConstructionComponent> xeno, EntityCoordinates target, EntProtoId? choice, bool popup = true)
@@ -1475,7 +1861,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         foreach (var direction in Directions)
         {
             var pos = SharedMapSystem.GetDirection(tile, direction);
-            var directionEnumerator = _mapSystem.GetAnchoredEntitiesEnumerator(gridId, grid, pos);
+            var directionEnumerator = _mapSystem.GetAnchoredEntities(gridId, grid, pos);
 
             while (directionEnumerator.MoveNext(out var ent))
             {
@@ -1483,7 +1869,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                     node.BlockOtherNodes)
                 {
                     if (popup)
-                        _popup.PopupClient(Loc.GetString("cm-xeno-too-close-to-other-node", ("target", ent.Value)), xeno, xeno);
+                        _popup.PopupCoordinates(Loc.GetString("cm-xeno-too-close-to-other-node", ("target", ent.Value)), target, xeno);
 
                     return false;
                 }
@@ -1493,7 +1879,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         if (choice != null &&
             _prototype.TryIndex(choice, out var choiceProto))
         {
-            if (choiceProto.HasComponent<HiveConstructionRequiresWeedableSurfaceComponent>(_compFactory))
+            if (choiceProto.HasComp<HiveConstructionRequiresWeedableSurfaceComponent>(_compFactory))
             {
                 if (!_mapSystem.TryGetTileRef(gridId, grid, tile, out var tileRef) ||
                     !_tile.TryGetDefinition(tileRef.Tile.TypeId, out var tileDef) ||
@@ -1501,13 +1887,13 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                     tileDef is ContentTileDefinition { WeedsSpreadable: false })
                 {
                     if (popup)
-                        _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), xeno, xeno);
+                        _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
 
                     return false;
                 }
             }
 
-            if (choiceProto.HasComponent<HiveConstructionRequiresHiveCoreComponent>(_compFactory) &&
+            if (choiceProto.HasComp<HiveConstructionRequiresHiveCoreComponent>(_compFactory) &&
                 _net.IsServer)
             {
                 if (_hive.GetHive(xeno.Owner) is { } hiveEnt)
@@ -1529,7 +1915,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 }
             }
 
-            if (choiceProto.HasComponent<HiveConstructionRequiresHiveWeedsComponent>(_compFactory) && !_xenoWeeds.IsOnHiveWeeds((gridId, grid), target))
+            if (choiceProto.HasComp<HiveConstructionRequiresHiveWeedsComponent>(_compFactory) && !_xenoWeeds.IsOnHiveWeeds((gridId, grid), target))
             {
                 if (_net.IsServer && popup)
                     _popup.PopupEntity(Loc.GetString("rmc-xeno-construction-requires-hive-weeds", ("choice", choiceProto.Name)), xeno, xeno, PopupType.MediumCaution);
@@ -1537,7 +1923,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 return false;
             }
 
-            if (choiceProto.HasComponent<HiveConstructionRequiresSpaceComponent>(_compFactory))
+            if (choiceProto.HasComp<HiveConstructionRequiresSpaceComponent>(_compFactory))
             {
                 if (!CanPlaceSpaceRequiringStructurePopup(_transform.ToMapCoordinates(target), (gridId, grid), xeno.Owner, choiceProto.Name, popup))
                 {
@@ -1545,7 +1931,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 }
             }
 
-            if (choiceProto.TryGetComponent(out HiveConstructionLimitedComponent? limited, _compFactory) &&
+            if (choiceProto.TryComp(out HiveConstructionLimitedComponent? limited, _compFactory) &&
                 !CanPlaceLimitedHiveStructure(xeno.Owner, limited, out var limit, out _))
             {
                 // server-only as the structure may not be in the client's PVS bubble
@@ -1587,9 +1973,10 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         curCount = 0;
         var limitedConstructs = EntityQueryEnumerator<HiveConstructionLimitedComponent, HiveMemberComponent>();
-        while (limitedConstructs.MoveNext(out var otherUnique, out _))
+        // CMU14: limits are per hive, another hive's core must not eat this hive's slot
+        while (limitedConstructs.MoveNext(out var otherUnique, out var member))
         {
-            if (otherUnique.Id == id)
+            if (otherUnique.Id == id && member.Hive == hive.Owner)
                 curCount++;
         }
 
@@ -1599,7 +1986,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     public bool CanPlaceLimitedXenoStructure(Entity<XenoSecretionLimitedComponent?> xeno, EntProtoId construction)
     {
         if (!_prototype.TryIndex(construction, out var prototype) ||
-            !prototype.TryGetComponent(out XenoSecretionLimitedComponent? comp, _compFactory))
+            !prototype.TryComp(out XenoSecretionLimitedComponent? comp, _compFactory))
         {
             return true;
         }
@@ -1634,7 +2021,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         {
             var dir = (AtmosDirection)(1 << i);
             var pos = tile.Offset(dir);
-            var anchored = _mapSystem.GetAnchoredEntitiesEnumerator(grid, grid, pos);
+            var anchored = _mapSystem.GetAnchoredEntities(grid, grid, pos);
             while (anchored.MoveNext(out var uid))
             {
                 if (TerminatingOrDeleted(uid.Value) || EntityManager.IsQueuedForDeletion(uid.Value))
@@ -1666,7 +2053,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         {
             if (popup)
             {
-                _popup.PopupClient(
+                _popup.PopupCoordinates(
                     Loc.GetString("rmc-xeno-construction-requires-space", ("choice", structName)),
                     userCoords,
                     user
@@ -1691,7 +2078,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
                 if (popup)
                 {
-                    _popup.PopupClient(
+                    _popup.PopupCoordinates(
                         Loc.GetString("rmc-xeno-construction-requires-space", ("choice", structName)),
                         userCoords,
                         user);
@@ -1721,7 +2108,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         }
 
         var tile = _mapSystem.TileIndicesFor(gridId, grid, coords);
-        var anchored = _mapSystem.GetAnchoredEntitiesEnumerator(gridId, grid, tile);
+        var anchored = _mapSystem.GetAnchoredEntities(gridId, grid, tile);
         var hasWeeds = false;
         while (anchored.MoveNext(out var uid))
         {
@@ -1768,12 +2155,13 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         return true;
     }
 
-    private bool IsNearVehiclePopup(Entity<XenoConstructionComponent> xeno, EntityCoordinates target)
+    private bool IsNearVehiclePopup(Entity<XenoConstructionComponent> xeno, EntityCoordinates target, bool popup = true)
     {
         if (!IsNearVehicle(_transform.ToMapCoordinates(target)))
             return false;
 
-        _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+        if (popup)
+            _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
         return true;
     }
 
@@ -1842,6 +2230,12 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     public override void Update(float frameTime)
     {
         var time = _timing.CurTime;
+        if (_net.IsServer && time >= _nextInstantBuildCounterRefresh)
+        {
+            _nextInstantBuildCounterRefresh = time + InstantBuildCounterRefreshInterval;
+            RefreshAllHiveInstantBuildActionCounters();
+        }
+
         var query = EntityQueryEnumerator<XenoRecentlyConstructedComponent>();
         while (query.MoveNext(out var uid, out var comp))
         {
@@ -1965,7 +2359,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         var wantDoor = designer.BuildDoorNodes;
 
         if (!_prototype.TryIndex(choice, out var proto) ||
-            !proto.TryGetComponent(out DesignerDesignNodeVariantComponent? variants, _compFactory))
+            !proto.TryComp(out DesignerDesignNodeVariantComponent? variants, _compFactory))
         {
             return choice;
         }
@@ -1987,17 +2381,17 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
         var msg = ent.Comp.BuildDoorNodes
             ? "We will now place door markers."
             : "We will now place wall markers.";
-        _popup.PopupClient(msg, ent, ent, PopupType.Small);
+        _popup.PopupEntity(msg, ent, ent, PopupType.Small);
 
         Dirty(ent);
     }
 
     private float GetDesignNodeBuildTimeMultiplier(EntityUid user, EntityCoordinates target, EntProtoId buildChoice)
     {
-        if (_prototype.TryIndex(buildChoice, out var proto) && proto.HasComponent<DesignNodeComponent>())
+        if (_prototype.TryIndex(buildChoice, out var proto) && proto.HasComp<DesignNodeComponent>(_compFactory))
             return 1f;
 
-        var snapped = target.SnapToGrid(EntityManager, _map);
+        var snapped = target.SnapToGrid(EntityManager);
         using var anchoredNodes = _rmcMap.GetAnchoredEntitiesEnumerator<DesignNodeComponent>(snapped);
         while (anchoredNodes.MoveNext(out var nodeUid))
         {
@@ -2025,14 +2419,14 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     {
         if (_prototype.TryIndex(buildChoice, out var proto))
         {
-            if (proto.HasComponent<DesignNodeComponent>())
+            if (proto.HasComp<DesignNodeComponent>(_compFactory))
                 return 1f;
 
-            if (proto.HasComponent<HiveConstructionLimitedComponent>(_compFactory))
+            if (proto.HasComp<HiveConstructionLimitedComponent>(_compFactory))
                 return 1f;
         }
 
-        var snapped = target.SnapToGrid(EntityManager, _map);
+        var snapped = target.SnapToGrid(EntityManager);
         using var anchoredNodes = _rmcMap.GetAnchoredEntitiesEnumerator<DesignNodeComponent>(snapped);
         while (anchoredNodes.MoveNext(out var nodeUid))
         {
@@ -2058,14 +2452,14 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     private bool TryHandleDesignerRemoteDeleteNodeChoice(Entity<XenoConstructionComponent> xeno, EntProtoId choice, EntityCoordinates target)
     {
         if (!_prototype.TryIndex(choice, out var proto) ||
-            !proto.TryGetComponent(out DesignerDeleteDesignNodeComponent? deleteChoice, _compFactory))
+            !proto.TryComp(out DesignerDeleteDesignNodeComponent? deleteChoice, _compFactory))
         {
             return false;
         }
 
         if (_transform.GetGrid(target) is null)
         {
-            _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+            _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
             return true;
         }
 
@@ -2077,7 +2471,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 return true;
         }
 
-        var snapped = target.SnapToGrid(EntityManager, _map);
+        var snapped = target.SnapToGrid(EntityManager);
         EntityUid? nodeUid = null;
         DesignNodeComponent? nodeComp = null;
 
@@ -2089,14 +2483,14 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         if (nodeUid is null || nodeComp is null)
         {
-            _popup.PopupClient(Loc.GetString("rmc-xeno-designer-delete-node-none"), snapped, xeno, PopupType.SmallCaution);
+            _popup.PopupCoordinates(Loc.GetString("rmc-xeno-designer-delete-node-none"), snapped, xeno, PopupType.SmallCaution);
             return true;
         }
 
         if (deleteChoice.OnlyOwnNodes &&
             nodeComp.BoundXeno != xeno.Owner)
         {
-            _popup.PopupClient(Loc.GetString("rmc-xeno-designer-delete-node-not-owned"), snapped, xeno, PopupType.SmallCaution);
+            _popup.PopupCoordinates(Loc.GetString("rmc-xeno-designer-delete-node-not-owned"), snapped, xeno, PopupType.SmallCaution);
             return true;
         }
 
@@ -2113,7 +2507,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
     private bool TryHandleDesignerRemoteThickenResin(Entity<XenoConstructionComponent> xeno, EntProtoId choice, EntityCoordinates target)
     {
         if (!_prototype.TryIndex(choice, out var proto) ||
-            !proto.TryGetComponent(out DesignerRemoteThickenResinComponent? thickenChoice, _compFactory))
+            !proto.TryComp(out DesignerRemoteThickenResinComponent? thickenChoice, _compFactory))
         {
             return false;
         }
@@ -2123,7 +2517,7 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
 
         if (_transform.GetGrid(target) is null)
         {
-            _popup.PopupClient(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
+            _popup.PopupCoordinates(Loc.GetString("cm-xeno-construction-failed-cant-build"), target, xeno);
             return true;
         }
 
@@ -2133,18 +2527,18 @@ public sealed partial class SharedXenoConstructionSystem : EntitySystem
                 return true;
         }
 
-        var snapped = target.SnapToGrid(EntityManager, _map);
+        var snapped = target.SnapToGrid(EntityManager);
         if (!_rmcMap.HasAnchoredEntityEnumerator<XenoStructureUpgradeableComponent>(snapped, out var upgradeable) ||
             upgradeable.Comp.To is not { } to ||
             !_prototype.HasIndex(to))
         {
-            _popup.PopupClient(Loc.GetString("rmc-xeno-designer-thicken-none"), snapped, xeno, PopupType.SmallCaution);
+            _popup.PopupCoordinates(Loc.GetString("rmc-xeno-designer-thicken-none"), snapped, xeno, PopupType.SmallCaution);
             return true;
         }
 
         if (HasComp<WeedboundWallComponent>(upgradeable.Owner))
         {
-            _popup.PopupClient(Loc.GetString("rmc-xeno-designer-thicken-weedbound"), snapped, xeno, PopupType.SmallCaution);
+            _popup.PopupCoordinates(Loc.GetString("rmc-xeno-designer-thicken-weedbound"), snapped, xeno, PopupType.SmallCaution);
             return true;
         }
 

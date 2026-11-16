@@ -1,17 +1,18 @@
-﻿using Content.Shared._RMC14.Xenonids.Invisibility;
+using Content.Shared._RMC14.Xenonids.Invisibility;
 using Robust.Client.GameObjects;
 using Robust.Client.Graphics;
 using Robust.Shared.Prototypes;
 
 namespace Content.Client._RMC14.Xenonids.Invisibility;
 
-public sealed partial class XenoInvisibilityVisualsSystem : EntitySystem
+public sealed partial class XenoInvisibilityVisualsSystem : EntitySystem // CMU14 Class
 {
     private static readonly ProtoId<ShaderPrototype> InvisibilityShader = "RMCInvisible";
+    private const string ShaderId = "RMCInvisible";
 
     [Dependency] private IPrototypeManager _prototypes = default!;
+    [Dependency] private SpriteSystem _sprite = default!;
 
-    private readonly Dictionary<EntityUid, ShaderInstance> _shaders = new();
     private EntityQuery<XenoActiveInvisibleComponent> _activeInvisibleQuery;
 
     public override void Initialize()
@@ -23,15 +24,11 @@ public sealed partial class XenoInvisibilityVisualsSystem : EntitySystem
 
     private void OnShutdown(Entity<XenoTurnInvisibleComponent> ent, ref ComponentShutdown args)
     {
-        if (!_shaders.Remove(ent, out var shader) ||
-            TerminatingOrDeleted(ent))
+        if (TerminatingOrDeleted(ent)
+                || !TryComp(ent, out SpriteComponent? sprite))
             return;
 
-        if (TryComp(ent, out SpriteComponent? sprite) &&
-            ReferenceEquals(sprite.PostShader, shader))
-        {
-            sprite.PostShader = null;
-        }
+        _sprite.RemovePostShader(sprite, ShaderId);
     }
 
     public override void Update(float frameTime)
@@ -41,19 +38,22 @@ public sealed partial class XenoInvisibilityVisualsSystem : EntitySystem
         {
             var opacity = _activeInvisibleQuery.HasComp(uid) ? comp.Opacity : 1;
 
-            if (opacity < 1)
+            if (!_sprite.TryGetPostShader(sprite, ShaderId, out var entry))
             {
-                if (!_shaders.TryGetValue(uid, out var shader))
-                    _shaders[uid] = shader = _prototypes.Index(InvisibilityShader).InstanceUnique();
+                if (opacity >= 1)
+                    continue;
 
-                sprite.PostShader = shader;
-                shader.SetParameter("visibility", opacity);
+                _sprite.SetPostShader(sprite, new SpriteComponent.PostShaderArgs(ShaderId, _prototypes.Index(InvisibilityShader).InstanceUnique()));
+                continue;
             }
-            else if (_shaders.Remove(uid, out var shader) &&
-                     ReferenceEquals(sprite.PostShader, shader))
+
+            if (opacity >= 1)
             {
-                sprite.PostShader = null;
+                _sprite.RemovePostShader(sprite, ShaderId);
+                continue;
             }
+
+            entry.Shader.SetParameter("visibility", opacity);
         }
     }
 }

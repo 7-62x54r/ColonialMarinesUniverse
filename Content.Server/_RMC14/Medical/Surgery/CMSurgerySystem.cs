@@ -1,11 +1,12 @@
-using Content.Server._CMU14.Medical.Surgery;
+using Content.Server.CMU14.Medical.Treatment.Surgery;
 using Content.Server._RMC14.Medical.Wounds;
 using Content.Server.Body.Systems;
 using Content.Server.Chat.Systems;
 using Content.Server.Popups;
-using Content.Shared._CMU14.Medical;
-using Content.Shared._CMU14.Medical.Surgery;
-using Content.Shared._CMU14.Medical.StatusEffects;
+using Content.Shared.CMU14.Medical.Anatomy.BodyParts;
+using Content.Shared.CMU14.Medical.Core;
+using Content.Shared.CMU14.Medical.Treatment.Surgery;
+using Content.Shared.CMU14.Medical.Injuries.Pain;
 using Content.Shared._RMC14.Marines.Skills;
 using Content.Shared._RMC14.Medical.Surgery;
 using Content.Shared._RMC14.Medical.Surgery.Conditions;
@@ -16,12 +17,13 @@ using Content.Shared._RMC14.Repairable;
 using Content.Shared._RMC14.Synth;
 using Content.Shared._RMC14.Xenonids.Organs;
 using Content.Shared._RMC14.Xenonids.Parasite;
+using Content.Shared.Body;
+using Content.Shared.Body.Part;
+using Content.Shared.Body.Systems;
 using Content.Shared.Interaction;
 using Content.Shared.Prototypes;
 using Content.Shared.Tools.Components;
 using Content.Shared.Tools.Systems;
-using Content.Shared.Body.Part;
-using Content.Shared.Body.Systems;
 using Robust.Server.GameObjects;
 using Robust.Shared.Containers;
 using Robust.Shared.Network;
@@ -33,8 +35,8 @@ namespace Content.Server._RMC14.Medical.Surgery;
 public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
 {
     private const string SynthSurgeryOpenQuality = "Screwing";
+    private static readonly EntProtoId DetachedBodyPrototype = "DetachedBody";
 
-    [Dependency] private BodySystem _body = default!;
     [Dependency] private ChatSystem _chat = default!;
     [Dependency] private SharedContainerSystem _container = default!;
     [Dependency] private INetManager _net = default!;
@@ -42,11 +44,14 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
     [Dependency] private PopupSystem _popup = default!;
     [Dependency] private SkillsSystem _skills = default!;
     [Dependency] private UserInterfaceSystem _ui = default!;
+    [Dependency] private SharedSynthSystem _synth = default!;
     [Dependency] private SharedToolSystem _tool = default!;
+    [Dependency] private RMCRepairableSystem _repairable = default!;
     [Dependency] private WoundsSystem _wounds = default!;
     [Dependency] private CMUSurgeryDispatchSystem _cmuDispatch = default!;
     [Dependency] private CMUSurgeryFlowSystem _cmuFlow = default!;
     [Dependency] private SharedPainShockSystem _cmuPain = default!;
+    [Dependency] private SharedBodySystem _body = default!;
 
     private readonly List<EntProtoId> _surgeries = new();
 
@@ -72,12 +77,11 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
 
     private void OnSynthRepairToolUseAttempt(Entity<SynthComponent> ent, ref RMCSynthRepairToolUseAttemptEvent args)
     {
-        if (args.Handled || args.User == ent.Owner || !HasComp<CMSurgeryTargetComponent>(ent.Owner))
+        if (args.Handled || !HasComp<CMSurgeryTargetComponent>(ent.Owner))
             return;
 
         if (IsSynthReattachStepTool(args.Used)
             && TryComp<CMUSurgeryArmedStepComponent>(ent.Owner, out var armed)
-            && armed.Surgeon == args.User
             && armed.LeafSurgeryId == "RMCSynthSurgeryReattachLimb")
         {
             if (!_cmuFlow.ToolMatchesCategory(args.Used, armed.RequiredToolCategory))
@@ -91,6 +95,9 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
                 args.Handled = handled;
             return;
         }
+
+        if (IsSynthRepairToolForCurrentDamage(ent, args.User, args.Used))
+            return;
 
         if (!HasMissingSynthLimbSlot(ent.Owner))
             return;
@@ -121,15 +128,15 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
             if (isSynth != HasComp<RMCSynthSurgeryComponent>(surgeryEnt))
                 continue;
 
-            foreach (var part in _body.GetBodyChildren(body))
+            foreach (var part in MedicalIndex.GetBodyParts(body))
             {
-                var ev = new CMSurgeryValidEvent(body, part.Id);
+                var ev = new CMSurgeryValidEvent(body, part.Owner);
                 RaiseLocalEvent(surgeryEnt, ref ev);
 
                 if (ev.Cancelled)
                     continue;
 
-                surgeries.GetOrNew(GetNetEntity(part.Id)).Add(surgery);
+                surgeries.GetOrNew(GetNetEntity(part.Owner)).Add(surgery);
             }
         }
 
@@ -145,9 +152,6 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
             return;
 
         if (!HasComp<SynthComponent>(target) || !HasComp<CMSurgeryTargetComponent>(target))
-            return;
-
-        if (args.User == target)
             return;
 
         if (!HasMissingSynthLimbSlot(target))
@@ -168,23 +172,44 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
     {
         return HasComp<BlowtorchComponent>(used) ||
                HasComp<RMCCableCoilComponent>(used) ||
-               HasComp<BodyPartComponent>(used);
+               HasComp<BodyPartComponent>(used) ||
+               IsDetachedLimbCarrier(used);
+    }
+
+    private bool IsDetachedLimbCarrier(EntityUid used)
+    {
+        return MetaData(used).EntityPrototype?.ID == DetachedBodyPrototype.ToString() &&
+               TryComp<BodyComponent>(used, out var body) &&
+               _body.GetRootPartOrNull(used, body) is { } root &&
+               CMUBodyPartSlots.IsReportableMissingPart(root.BodyPart.PartType);
+    }
+
+    private bool IsSynthRepairToolForCurrentDamage(Entity<SynthComponent> synth, EntityUid user, EntityUid used)
+    {
+        if (HasComp<RMCCableCoilComponent>(used))
+            return _synth.HasDamage(synth.Owner, synth.Comp.CableCoilDamageGroup);
+
+        if (HasComp<BlowtorchComponent>(used) &&
+            _tool.HasQuality(used, synth.Comp.RepairQuality) &&
+            _synth.HasDamage(synth.Owner, synth.Comp.WelderDamageGroup))
+        {
+            return _repairable.UseFuel(used, user, 5, true);
+        }
+
+        return false;
     }
 
     private bool HasMissingSynthLimbSlot(EntityUid patient)
     {
-        if (_body.GetRootPartOrNull(patient) is not { } root)
+        if (!MedicalIndex.TryGetRootPart(patient, out var root))
             return false;
 
-        foreach (var (slotId, slot) in root.BodyPart.Children)
+        foreach (var slot in MedicalIndex.GetBodyPartSlots(root.Owner))
         {
             if (slot.Type is not (BodyPartType.Arm or BodyPartType.Leg))
                 continue;
 
-            var containerId = SharedBodySystem.GetPartSlotContainerId(slotId);
-            if (!_container.TryGetContainer(root.Entity, containerId, out var container))
-                return true;
-            if (container.ContainedEntities.Count == 0)
+            if (slot.Part is null)
                 return true;
         }
 
@@ -297,8 +322,17 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
         }
         else
         {
-            SpawnAtPosition(ent.Comp.DeadLarvaItem, coords);
+            var embryoItem = IsBloodburstInfection(infected)
+                ? ent.Comp.DeadBloodburstEmbryoItem
+                : ent.Comp.DeadLarvaItem;
+
+            SpawnAtPosition(embryoItem, coords);
         }
+    }
+
+    private bool IsBloodburstInfection(VictimInfectedComponent infected)
+    {
+        return infected.BurstSpawn == "CMU14XenoBloodburster";
     }
 
     private void OnStepXenoHeartComplete(Entity<RMCSurgeryStepXenoHeartEffectComponent> ent, ref CMSurgeryStepEvent args)
@@ -312,7 +346,7 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
         if (!TryComp(args.Body, out TransformComponent? xform))
             return;
 
-        foreach (var entity in _body.GetBodyOrganEntityComps<XenoHeartComponent>(args.Body))
+        foreach (var entity in MedicalIndex.GetOrgans<XenoHeartComponent>(args.Body))
         {
             QueueDel(entity.Owner);
         }
@@ -333,7 +367,7 @@ public sealed partial class CMSurgerySystem : SharedCMSurgerySystem
 
         foreach (var entity in _prototypes.EnumeratePrototypes<EntityPrototype>())
         {
-            if (entity.HasComponent<CMSurgeryComponent>())
+            if (entity.HasComp<CMSurgeryComponent>(Factory))
                 _surgeries.Add(new EntProtoId(entity.ID));
         }
     }

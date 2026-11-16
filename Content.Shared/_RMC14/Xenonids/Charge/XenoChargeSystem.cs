@@ -1,3 +1,6 @@
+using Content.Shared.Vehicle.Components;
+using Content.Shared.Vehicle;
+using Content.Shared._RMC14.Vehicle;
 using System.Numerics;
 using Content.Shared._RMC14.Actions;
 using Content.Shared._RMC14.Damage;
@@ -7,15 +10,19 @@ using Content.Shared._RMC14.Entrenching;
 using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Pulling;
 using Content.Shared._RMC14.Slow;
+using Content.Shared.CMU14.Yautja.Slow; // CMU14
 using Content.Shared._RMC14.Stun;
 using Content.Shared._RMC14.Xenonids.Actions;
 using Content.Shared._RMC14.Xenonids.Animation;
+using Content.Shared._RMC14.Xenonids.Charge.CursorCharge;
 using Content.Shared._RMC14.Xenonids.Hive;
 using Content.Shared._RMC14.Xenonids.HiveLeader;
 using Content.Shared._RMC14.Xenonids.Plasma;
 using Content.Shared.Actions;
 using Content.Shared.CCVar;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Damage.Prototypes;
 using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
@@ -33,11 +40,11 @@ using Content.Shared.Stunnable;
 using Content.Shared.Throwing;
 using Robust.Shared.Audio;
 using Robust.Shared.Audio.Systems;
+using Robust.Shared.Map;
 using Robust.Shared.Configuration;
 using Robust.Shared.Network;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
-using Robust.Shared.Physics.Dynamics;
 using Robust.Shared.Physics.Events;
 using Robust.Shared.Physics.Systems;
 using Robust.Shared.Player;
@@ -49,6 +56,10 @@ namespace Content.Shared._RMC14.Xenonids.Charge;
 
 public sealed partial class XenoChargeSystem : EntitySystem
 {
+    [Dependency] private Content.Shared._RMC14.Vehicle.VehicleSystem _rmcVehicles = default!;
+    [Dependency] private VehicleWheelSystem _vehicleWheels = default!;
+    [Dependency] private HardpointSystem _hardpoints = default!;
+    [Dependency] private GridVehicleMoverSystem _gridVehicleMover = default!;
     [Dependency] private SharedActionsSystem _actions = default!;
     [Dependency] private SharedAudioSystem _audio = default!;
     [Dependency] private SharedColorFlashEffectSystem _colorFlash = default!;
@@ -68,7 +79,6 @@ public sealed partial class XenoChargeSystem : EntitySystem
     [Dependency] private SharedStunSystem _stun = default!;
     [Dependency] private ThrowingSystem _throwing = default!;
     [Dependency] private IGameTiming _timing = default!;
-    [Dependency] private ThrownItemSystem _thrownItem = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private XenoAnimationsSystem _xenoAnimations = default!;
     [Dependency] private XenoSystem _xeno = default!;
@@ -77,36 +87,38 @@ public sealed partial class XenoChargeSystem : EntitySystem
     [Dependency] private RMCPullingSystem _rmcPulling = default!;
     [Dependency] private EntityLookupSystem _lookup = default!;
     [Dependency] private RMCSlowSystem _slow = default!;
+    [Dependency] private CMUYautjaSlowSystem _yautjaSlow = default!; // CMU14
     [Dependency] private SharedDestructibleSystem _destruct = default!;
     [Dependency] private RMCSizeStunSystem _sizeStun = default!;
     [Dependency] private SharedPhysicsSystem _physics = default!;
+    [Dependency] private SharedBroadphaseSystem _broadphase = default!;
 
     private readonly ProtoId<DamageTypePrototype> _blunt = "Blunt";
 
     private EntityQuery<InputMoverComponent> _inputMoverQuery;
     private EntityQuery<PhysicsComponent> _physicsQuery;
-    private EntityQuery<ThrownItemComponent> _thrownItemQuery;
     private EntityQuery<XenoToggleChargingComponent> _xenoToggleChargingQuery;
     private EntityQuery<ActiveXenoToggleChargingComponent> _activeXenoToggleChargingQuery;
     private EntityQuery<XenoToggleChargingRecentlyHitComponent> _xenoToggleChargingRecentlyHitQuery;
 
     private bool _relativeMovement;
+    private readonly HashSet<Entity<MobStateComponent>> _nearbyMobs = new();
+    private readonly List<EntityUid> _colorFlashTargets = new(1);
     private readonly HashSet<(Entity<ActiveXenoToggleChargingComponent> Crusher, EntityUid Target)> _hit = new();
 
     public override void Initialize()
     {
         _inputMoverQuery = GetEntityQuery<InputMoverComponent>();
         _physicsQuery = GetEntityQuery<PhysicsComponent>();
-        _thrownItemQuery = GetEntityQuery<ThrownItemComponent>();
         _xenoToggleChargingQuery = GetEntityQuery<XenoToggleChargingComponent>();
         _activeXenoToggleChargingQuery = GetEntityQuery<ActiveXenoToggleChargingComponent>();
         _xenoToggleChargingRecentlyHitQuery = GetEntityQuery<XenoToggleChargingRecentlyHitComponent>();
 
         SubscribeLocalEvent<XenoChargeComponent, XenoChargeActionEvent>(OnXenoChargeAction);
-        SubscribeLocalEvent<XenoChargeComponent, ThrowDoHitEvent>(OnXenoChargeHit);
         SubscribeLocalEvent<XenoChargeComponent, XenoChargeDoAfterEvent>(OnXenoChargeDoAfterEvent);
-        SubscribeLocalEvent<XenoChargeComponent, StopThrowEvent>(OnXenoChargeStop);
         SubscribeLocalEvent<XenoChargeComponent, PreventCollideEvent>(OnXenoChargePreventCollide);
+
+        SubscribeLocalEvent<XenoChargingComponent, StartCollideEvent>(OnChargingCollide);
 
         SubscribeLocalEvent<ChargeFlungComponent, ThrowDoHitEvent>(OnChargeFlungHit);
         SubscribeLocalEvent<ChargeFlungComponent, StopThrowEvent>(OnChargeFlungStop);
@@ -216,7 +228,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
         if (_net.IsClient &&
             damageable != null &&
             damage.Comp.DestroyDamage > FixedPoint2.Zero &&
-            damageable.TotalDamage >= damage.Comp.DestroyDamage)
+            _damageable.GetTotalDamage((damage, damageable)) >= damage.Comp.DestroyDamage)
         {
             _transform.DetachEntity(damage, Transform(damage));
         }
@@ -343,21 +355,20 @@ public sealed partial class XenoChargeSystem : EntitySystem
         var ev = new XenoChargeDoAfterEvent(GetNetCoordinates(args.Target));
         var doAfter = new DoAfterArgs(EntityManager, xeno, xeno.Comp.ChargeDelay, ev, xeno)
         {
-            BreakOnMove = true,
             Hidden = true,
         };
 
-        _stun.TrySlowdown(xeno, TimeSpan.FromSeconds(0.6f), false, 0f, 0f);
+        _slow.TryRoot(xeno, TimeSpan.FromSeconds(0.6f), refresh: false, applyChemical: true);
+        _audio.PlayPredicted(xeno.Comp.ChargeWindupSound, xeno, xeno);
         _doAfter.TryStartDoAfter(doAfter);
     }
 
     private void StopCrusherCharge(Entity<XenoChargeComponent> xeno)
     {
-        if (_physicsQuery.TryGetComponent(xeno, out var physics) &&
-            _thrownItemQuery.TryGetComponent(xeno, out var thrown))
+        if (_physicsQuery.TryGetComponent(xeno, out var physics))
         {
-            _thrownItem.LandComponent(xeno, thrown, physics, true);
-            _thrownItem.StopThrow(xeno, thrown);
+            _physics.SetLinearVelocity(xeno, Vector2.Zero, body: physics);
+            _physics.SetBodyStatus(xeno, physics, BodyStatus.OnGround);
         }
 
         if (_timing.IsFirstTimePredicted && xeno.Comp.Charge is { } charge)
@@ -366,12 +377,36 @@ public sealed partial class XenoChargeSystem : EntitySystem
             _xenoAnimations.PlayLungeAnimationEvent(xeno, charge);
         }
 
+        _nearbyMobs.Clear();
+        _lookup.GetEntitiesInRange(_transform.GetMapCoordinates(xeno), xeno.Comp.SlowRange, _nearbyMobs);
+        foreach (var slower in _nearbyMobs)
+        {
+            if (!_xeno.CanAbilityAttackTarget(xeno, slower))
+                continue;
+
+            if (!_yautjaSlow.TryApply(slower, xeno.Comp.YautjaSlow)) // CMU14
+                _slow.TrySlowdown(slower, xeno.Comp.SlowTime, ignoreDurationModifier: true);
+        }
+
+        RemCompDeferred<XenoChargingComponent>(xeno);
         xeno.Comp.AlreadyHit.Clear();
+        xeno.Comp.PrimaryTarget = null; // CMU14: the completed charge no longer owns a target.
+        Dirty(xeno);
     }
 
-    private void OnXenoChargeHit(Entity<XenoChargeComponent> xeno, ref ThrowDoHitEvent args)
+    private void OnChargingCollide(Entity<XenoChargingComponent> ent, ref StartCollideEvent args)
     {
-        var targetId = args.Target;
+        if (!TryComp(ent, out XenoChargeComponent? charge))
+            return;
+
+        ProcessChargeHit((ent, charge), args.OtherEntity);
+    }
+
+    private void ProcessChargeHit(Entity<XenoChargeComponent> xeno, EntityUid targetId)
+    {
+        if (xeno.Comp.Charge == null)
+            return;
+
         if (_mobState.IsDead(targetId))
             return;
 
@@ -387,6 +422,9 @@ public sealed partial class XenoChargeSystem : EntitySystem
             return;
         }
 
+        var savedChargeDir = xeno.Comp.Charge?.Normalized();
+        var origin = _transform.GetMapCoordinates(xeno);
+
         StopCrusherCharge(xeno);
 
         if (_net.IsServer)
@@ -401,12 +439,29 @@ public sealed partial class XenoChargeSystem : EntitySystem
         }
 
         var finalDamage = _xeno.TryApplyXenoSlashDamageMultiplier(targetId, structDamage);
-        var damage = _damageable.TryChangeDamage(targetId, finalDamage, origin: xeno, tool: xeno);
+        // CMU14: retain cursor charge movement and route chassis hits through hardpoint integrity.
+        var isVehicle = HasComp<VehicleWheelSlotsComponent>(targetId);
+        DamageSpecifier? damage;
+        if (isVehicle)
+        {
+            damage = _hardpoints.DamageHardpoint(targetId, targetId, xeno.Comp.VehicleDamage.GetTotal().Float())
+                ? xeno.Comp.VehicleDamage
+                : null;
+            if (_net.IsServer)
+            {
+                if (savedChargeDir is { } direction && !_vehicleWheels.HasAnyFunctionalWheel(targetId))
+                    _gridVehicleMover.TryShoveVehicle(targetId, xeno, direction);
+                if (TryComp(targetId, out GridVehicleMoverComponent? mover))
+                    _rmcVehicles.DoInteriorCrashEffect(targetId, mover.MaxSpeed, mover.MaxSpeed);
+            }
+        }
+        else
+            damage = _damageable.TryChangeDamage(targetId, finalDamage, origin: xeno, tool: xeno);
 
         if (damage?.GetTotal() > FixedPoint2.Zero && !TerminatingOrDeleted(targetId))
         {
             var filter = Filter.Pvs(targetId, entityManager: EntityManager).RemoveWhereAttachedEntity(o => o == xeno.Owner);
-            _colorFlash.RaiseEffect(Color.Red, new List<EntityUid> { targetId }, filter);
+            RaiseColorFlash(targetId, filter);
         }
 
         if (crush != null && crush.DestroyDamage != null)
@@ -414,7 +469,8 @@ public sealed partial class XenoChargeSystem : EntitySystem
             if (TryComp<DamageableComponent>(targetId, out var damageable))
             {
                 if (damage != null && crush.PassOnDestroy &&
-                    crush.DestroyDamage > FixedPoint2.Zero && damageable.TotalDamage >= crush.DestroyDamage)
+                    crush.DestroyDamage > FixedPoint2.Zero &&
+                    _damageable.GetTotalDamage((targetId, damageable)) >= crush.DestroyDamage)
                 {
                     if (_net.IsClient)
                         _transform.DetachEntity(targetId, Transform(targetId));
@@ -422,9 +478,10 @@ public sealed partial class XenoChargeSystem : EntitySystem
             }
         }
 
-        _rmcPulling.TryStopAllPullsFromAndOn(targetId);
+        if (!isValidTarget || isVehicle)
+            return;
 
-        var origin = _transform.GetMapCoordinates(xeno);
+        _rmcPulling.TryStopAllPullsFromAndOn(targetId);
 
         var distanceTraveled = xeno.Comp.ChargeOrigin != null
             ? (origin.Position - xeno.Comp.ChargeOrigin.Value).Length()
@@ -435,7 +492,18 @@ public sealed partial class XenoChargeSystem : EntitySystem
         _stun.TryParalyze(targetId, xeno.Comp.StunTime, true);
         _rmcObstacleSlamming.ApplyBonuses(targetId, TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(3));
         EnsureComp<ChargeFlungComponent>(targetId);
-        _sizeStun.KnockBack(targetId, origin, knockback, knockback, knockBackSpeed: 15);
+
+        var targetPos = _transform.GetMapCoordinates(targetId);
+        var chargeDir = savedChargeDir ?? (targetPos.Position - origin.Position).Normalized();
+        var flingVec = chargeDir * knockback;
+
+        if (TryComp(targetId, out PhysicsComponent? targetPhysics))
+        {
+            _physics.SetLinearVelocity(targetId, Vector2.Zero, body: targetPhysics);
+            _physics.SetAngularVelocity(targetId, 0f, body: targetPhysics);
+        }
+
+        _throwing.TryThrow(targetId, flingVec, 15, animated: false, playSound: false, compensateFriction: true);
     }
 
     private void OnChargeFlungHit(Entity<ChargeFlungComponent> ent, ref ThrowDoHitEvent args)
@@ -460,7 +528,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
         _damageable.TryChangeDamage(target, ent.Comp.CollisionDamage, origin: ent);
 
         var filter = Filter.Pvs(target, entityManager: EntityManager);
-        _colorFlash.RaiseEffect(Color.Red, new List<EntityUid> { target }, filter);
+        RaiseColorFlash(target, filter);
 
         _stun.TryParalyze(target, ent.Comp.KnockdownTime, true);
         _slow.TrySlowdown(target, TimeSpan.FromSeconds(1.5));
@@ -478,24 +546,28 @@ public sealed partial class XenoChargeSystem : EntitySystem
 
     private void OnXenoChargePreventCollide(Entity<XenoChargeComponent> xeno, ref PreventCollideEvent args)
     {
-        if (xeno.Comp.Charge == null)
+        var cancel = false;
+        if (xeno.Comp.Charge == null || TerminatingOrDeleted(args.OtherEntity))
             return;
 
-        if (TerminatingOrDeleted(args.OtherEntity))
-            return;
+        // Only pass through entities explicitly tagged for it.
+        if (TryComp(args.OtherEntity, out XenoCrusherChargableComponent? crush) &&
+            crush.InstantDestroy && crush.PassOnDestroy)
+        {
+            if (_net.IsServer)
+                _destruct.DestroyEntity(args.OtherEntity);
+            else if (_net.IsClient)
+                _transform.DetachEntity(args.OtherEntity, Transform(args.OtherEntity));
+            cancel = true;
+        }
 
-        if (!TryComp(args.OtherEntity, out XenoCrusherChargableComponent? crush))
-            return;
+        // Charge leap over low obstacles (ignore blocking computers etc.)
+        else if (_physicsQuery.TryComp(args.OtherEntity, out PhysicsComponent? physics))
+            cancel = (physics.CollisionLayer & (int)CollisionGroup.LowImpassable) != 0
+                  && (physics.CollisionLayer & (int)(CollisionGroup.MidImpassable | CollisionGroup.HighImpassable | CollisionGroup.Impassable)) == 0;
 
-        if (!crush.InstantDestroy || !crush.PassOnDestroy)
-            return;
-
-        if (_net.IsServer)
-            _destruct.DestroyEntity(args.OtherEntity);
-        else if (_net.IsClient)
-            _transform.DetachEntity(args.OtherEntity, Transform(args.OtherEntity));
-
-        args.Cancelled = true;
+        if (cancel)
+            args.Cancelled = true;
     }
 
     private void OnXenoChargeDoAfterEvent(Entity<XenoChargeComponent> xeno, ref XenoChargeDoAfterEvent args)
@@ -512,8 +584,10 @@ public sealed partial class XenoChargeSystem : EntitySystem
 
         // Find the closest valid mob target near the click position.
         xeno.Comp.PrimaryTarget = null;
-        float closestDist = float.MaxValue;
-        foreach (var mob in _lookup.GetEntitiesInRange<MobStateComponent>(targetMap, 2f))
+        var closestDist = float.MaxValue;
+        _nearbyMobs.Clear();
+        _lookup.GetEntitiesInRange(targetMap, 2f, _nearbyMobs);
+        foreach (var mob in _nearbyMobs)
         {
             if (!_xeno.CanAbilityAttackTarget(xeno, mob))
                 continue;
@@ -522,7 +596,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
                 continue;
 
             var mobMap = _transform.GetMapCoordinates(mob);
-            var dist = (mobMap.Position - targetMap.Position).Length();
+            var dist = (mobMap.Position - targetMap.Position).LengthSquared();
             if (dist < closestDist)
             {
                 closestDist = dist;
@@ -540,7 +614,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
             var direction = diff.Normalized();
             var results = _physics.IntersectRay(
                 origin.MapId,
-                new CollisionRay(origin.Position, direction, (int) CollisionGroup.BarricadeImpassable),
+                new CollisionRay(origin.Position, direction, (int)(CollisionGroup.BarricadeImpassable | CollisionGroup.MidImpassable)),
                 diff.Length(),
                 xeno.Owner,
                 false
@@ -553,58 +627,47 @@ public sealed partial class XenoChargeSystem : EntitySystem
                 if (chargable.InstantDestroy)
                     continue;
 
-                // Apply damage manually since we're stopping before impact
-                if (chargable.SetDamage != null)
-                {
-                    xeno.Comp.AlreadyHit.Add(result.HitEntity);
-                    _damageable.TryChangeDamage(result.HitEntity, chargable.SetDamage, origin: xeno, tool: xeno);
-                    _audio.PlayPvs(xeno.Comp.Sound, xeno);
-                }
-                else
-                {
-                    _damageable.TryChangeDamage(result.HitEntity, xeno.Comp.Damage, origin: xeno, tool: xeno);
-                    _audio.PlayPvs(xeno.Comp.Sound, xeno);
-                }
+                var chargeDamage = chargable.SetDamage ?? xeno.Comp.Damage;
+                xeno.Comp.AlreadyHit.Add(result.HitEntity);
+                _damageable.TryChangeDamage(result.HitEntity, chargeDamage, origin: xeno, tool: xeno);
+                _audio.PlayPvs(xeno.Comp.Sound, xeno);
 
                 diff = direction * Math.Max(0, result.Distance - 0.5f);
                 break;
             }
-
         }
 
         xeno.Comp.Charge = diff;
         xeno.Comp.ChargeOrigin = origin.Position;
         Dirty(xeno);
 
-        EnsureComp<XenoChargingComponent>(xeno);
-
-        _rmcObstacleSlamming.MakeImmune(xeno);
-        _throwing.TryThrow(xeno, diff, xeno.Comp.Strength, animated: false, compensateFriction: true);
-    }
-
-    private void OnXenoChargeStop(Entity<XenoChargeComponent> xeno, ref StopThrowEvent args)
-    {
-        if (xeno.Comp.Charge == null)
+        if (!_physicsQuery.TryGetComponent(xeno, out var physics))
             return;
 
-        foreach (var slower in _lookup.GetEntitiesInRange<MobStateComponent>(_transform.GetMapCoordinates(xeno), xeno.Comp.SlowRange))
+        var charging = EnsureComp<XenoChargingComponent>(xeno);
+        charging.ChargeEndTime = _timing.CurTime + TimeSpan.FromSeconds(diff.Length() / xeno.Comp.Strength);
+
+        _rmcObstacleSlamming.MakeImmune(xeno);
+
+        var impulse = diff.Normalized() * xeno.Comp.Strength * physics.Mass;
+        _physics.ApplyLinearImpulse(xeno, impulse, body: physics);
+        _physics.SetBodyStatus(xeno, physics, BodyStatus.InAir);
+
+        // StartCollideEvent only fires when contact begins.
+        // Entities already touching (e.g. adjacent door) need explicit processing.
+        foreach (var ent in _physics.GetContactingEntities(xeno.Owner, physics))
         {
-            if (!_xeno.CanAbilityAttackTarget(xeno, slower))
-                continue;
+            if (xeno.Comp.Charge == null)
+                break;
 
-            _slow.TrySlowdown(slower, xeno.Comp.SlowTime, ignoreDurationModifier: true);
+            ProcessChargeHit(xeno, ent);
         }
-
-        xeno.Comp.Charge = null;
-        RemComp<XenoChargingComponent>(xeno);
-        Dirty(xeno);
     }
+
 
     private void OnXenoToggleChargingAction(Entity<XenoToggleChargingComponent> ent, ref XenoToggleChargingActionEvent args)
     {
-        if (_timing.ApplyingState)
-            return;
-
+        // Original behavior preserved below
         if (RemComp<ActiveXenoToggleChargingComponent>(ent))
             return;
 
@@ -615,7 +678,6 @@ public sealed partial class XenoChargeSystem : EntitySystem
         var active = new ActiveXenoToggleChargingComponent();
         AddComp(ent, active, true);
 
-        // Moving diagonally
         if ((direction & (direction - 1)) != DirectionFlag.None)
             return;
 
@@ -625,7 +687,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
 
     private void OnActiveToggleChargingMapInit(Entity<ActiveXenoToggleChargingComponent> ent, ref MapInitEvent args)
     {
-        _movementSpeed.RefreshMovementSpeedModifiers(ent);
+        _movementSpeed.RefreshMovementSpeedModifiers((ent.Owner, null));
 
         foreach (var action in _rmcActions.GetActionsWithEvent<XenoToggleChargingActionEvent>(ent))
         {
@@ -635,7 +697,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
 
     private void OnActiveToggleChargingRemove(Entity<ActiveXenoToggleChargingComponent> ent, ref ComponentRemove args)
     {
-        _movementSpeed.RefreshMovementSpeedModifiers(ent);
+        _movementSpeed.RefreshMovementSpeedModifiers((ent.Owner, null));
 
         foreach (var action in _rmcActions.GetActionsWithEvent<XenoToggleChargingActionEvent>(ent))
         {
@@ -755,7 +817,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
         }
 
         Dirty(ent);
-        _movementSpeed.RefreshMovementSpeedModifiers(ent);
+        _movementSpeed.RefreshMovementSpeedModifiers((ent.Owner, null));
     }
 
     private void OnActiveToggleChargingCollide(Entity<ActiveXenoToggleChargingComponent> ent, ref StartCollideEvent args)
@@ -788,7 +850,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
             xeno.Comp.Direction = DirectionFlag.None;
 
         Dirty(xeno);
-        _movementSpeed.RefreshMovementSpeedModifiers(xeno);
+        _movementSpeed.RefreshMovementSpeedModifiers((xeno.Owner, null));
     }
 
     private void ResetStage(Entity<ActiveXenoToggleChargingComponent> xeno)
@@ -798,7 +860,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
         xeno.Comp.Stage = 0;
 
         Dirty(xeno);
-        _movementSpeed.RefreshMovementSpeedModifiers(xeno);
+        _movementSpeed.RefreshMovementSpeedModifiers((xeno.Owner, null));
     }
 
     private void IncrementStages(Entity<ActiveXenoToggleChargingComponent> ent, int increment)
@@ -809,7 +871,7 @@ public sealed partial class XenoChargeSystem : EntitySystem
             ent.Comp.Stage = Math.Min(charging.MaxStage, ent.Comp.Stage);
 
         Dirty(ent);
-        _movementSpeed.RefreshMovementSpeedModifiers(ent);
+        _movementSpeed.RefreshMovementSpeedModifiers((ent.Owner, null));
     }
 
     private DirectionFlag GetHeldButton(EntityUid mover, MoveButtons button)
@@ -826,6 +888,16 @@ public sealed partial class XenoChargeSystem : EntitySystem
     public override void Update(float frameTime)
     {
         var time = _timing.CurTime;
+
+        var chargeQuery = EntityQueryEnumerator<XenoChargingComponent, XenoChargeComponent>();
+        while (chargeQuery.MoveNext(out var uid, out var charging, out var charge))
+        {
+            if (time < charging.ChargeEndTime)
+                continue;
+
+            StopCrusherCharge((uid, charge));
+        }
+
         try
         {
             foreach (var hit in _hit)
@@ -868,5 +940,12 @@ public sealed partial class XenoChargeSystem : EntitySystem
             else if (time >= active.LastMovedAt + charging.LastMovedGrace)
                 ResetCharging((uid, active), false);
         }
+    }
+
+    private void RaiseColorFlash(EntityUid target, Filter filter)
+    {
+        _colorFlashTargets.Clear();
+        _colorFlashTargets.Add(target);
+        _colorFlash.RaiseEffect(Color.Red, _colorFlashTargets, filter);
     }
 }

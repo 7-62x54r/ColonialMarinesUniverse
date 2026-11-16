@@ -1,3 +1,4 @@
+using Content.Shared.CMU14.ZLevelBuilding;
 using Content.Shared._RMC14.Construction.Prototypes;
 using Content.Shared._RMC14.Dropship;
 using Content.Shared._RMC14.Emplacements;
@@ -5,6 +6,10 @@ using Content.Shared._RMC14.Entrenching;
 using Content.Shared._RMC14.Ladder;
 using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Marines.Skills;
+using Content.Shared._RMC14.Vehicle;
+using Content.Shared._RMC14.Water;
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
+using Content.Shared.Construction;
 using Content.Shared.Construction.Components;
 using Content.Shared.Coordinates;
 using Content.Shared.DoAfter;
@@ -16,6 +21,7 @@ using Content.Shared.Physics;
 using Content.Shared.Popups;
 using Content.Shared.Stacks;
 using Robust.Shared.Map;
+using Robust.Shared.GameStates;
 using Robust.Shared.Map.Components;
 using Robust.Shared.Network;
 using Robust.Shared.Physics.Collision.Shapes;
@@ -29,11 +35,13 @@ namespace Content.Shared._RMC14.Construction;
 public sealed partial class RMCConstructionSystem : EntitySystem
 {
     [Dependency] private IComponentFactory _componentFactory = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
     [Dependency] private FixtureSystem _fixture = default!;
     [Dependency] private SharedMapSystem _map = default!;
     [Dependency] private TurfSystem _turf = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
     [Dependency] private RMCMapSystem _rmcMap = default!;
+    [Dependency] private RMCWaterSystem _water = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private SkillsSystem _skills = default!;
     [Dependency] private SharedUserInterfaceSystem _ui = default!;
@@ -57,6 +65,8 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         SubscribeLocalEvent<DropshipHijackLandedEvent>(OnDropshipHijackLanded);
 
         SubscribeLocalEvent<RMCConstructionPreventCollideComponent, PreventCollideEvent>(OnConstructionPreventCollide);
+        SubscribeLocalEvent<RMCConstructionPreventCollideComponent, ComponentGetState>(OnPreventCollideGetState);
+        SubscribeLocalEvent<RMCConstructionPreventCollideComponent, ComponentHandleState>(OnPreventCollideHandleState);
 
         SubscribeLocalEvent<RMCConstructionItemComponent, UseInHandEvent>(OnUseInHand);
         SubscribeLocalEvent<RMCConstructionItemComponent, RMCConstructionBuildDoAfterEvent>(OnBuildDoAfter);
@@ -81,18 +91,38 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         if (_net.IsClient)
             return;
 
+        // CMU14 Begin: Del and Spawn below mutate the table this enumerates,
+        // which throws mid-enumeration; snapshot the uids first.
+        var toReplace = new List<EntityUid>();
         var query = EntityQueryEnumerator<RMCReplaceOnHijackLandComponent>();
-        while (query.MoveNext(out var uid, out var comp))
+        // CMU14
+        while (query.MoveNext(out var uid, out _))
         {
+            toReplace.Add(uid);
+        }
+
+        foreach (var uid in toReplace)
+        {
+            if (TerminatingOrDeleted(uid)
+                || !TryComp(uid, out RMCReplaceOnHijackLandComponent? comp))
+                continue;
+        // CMU14 End
+
+            if (!TryComp(uid, out TransformComponent? xform)
+                || !_zLevels.IsSameZNetwork(xform.MapUid, ev.Map)) // CMU14
+                continue;
+
             if (comp.Id is not { } id)
             {
                 Del(uid);
                 continue;
             }
 
-            var coordinates = _transform.GetMoverCoordinates(uid);
+            var coordinates = _transform.GetMoverCoordinates(uid, xform);
+            var rotation = xform.LocalRotation;
             Del(uid);
-            Spawn(id, coordinates);
+            var spawned = Spawn(id, coordinates);
+            _transform.SetLocalRotation(spawned, rotation);
         }
     }
 
@@ -121,7 +151,10 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         if (!TryComp(user, out TransformComponent? transform))
             return false;
 
-        if (proto.Skill is { } skill && !_skills.HasSkill(user, skill, proto.RequiredSkillLevel))
+        // CMU14: selected construction recipes also accept specialist training.
+        // if (proto.Skill is { } skill && !_skills.HasSkill(user, skill, proto.RequiredSkillLevel))
+        if (proto.Skill is { } skill && !_skills.HasSkill(user, skill, proto.RequiredSkillLevel) &&
+            !(proto.AlternativeSkill is { } alternative && _skills.HasSkill(user, alternative, proto.AlternativeSkillLevel)))
         {
             var message = Loc.GetString("rmc-construction-untrained-build");
             _popup.PopupEntity(message, ent, user, PopupType.SmallCaution);
@@ -148,6 +181,9 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         {
             var totalAmount = amount / proto.Amount;
             var cost = (amount == proto.Amount) ? materialCost : totalAmount * materialCost;
+            var costEv = new RMCConstructionCostEvent(user, stack.StackTypeId, cost, cost);
+            RaiseLocalEvent(user, ref costEv, true);
+            cost = Math.Max(1, costEv.Cost);
 
             if (stack.Count < cost)
             {
@@ -168,6 +204,11 @@ public sealed partial class RMCConstructionSystem : EntitySystem
 
         var skillMultiplier = _skills.HasSkill(user, proto.DelaySkill, 2) ? 1 : 2;
         var delay = proto.DoAfterTime * skillMultiplier;
+
+        var delayEv = new RMCConstructionDelayEvent(user, delay, delay);
+        RaiseLocalEvent(user, ref delayEv, true);
+        delay = delayEv.Delay;
+
         var doAfterTime = Math.Max(delay.TotalSeconds, proto.DoAfterTimeMin.TotalSeconds);
 
         var doAfter = new DoAfterArgs(EntityManager, user, TimeSpan.FromSeconds(doAfterTime), ev, ent, ent)
@@ -233,14 +274,23 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         var totalAmount = args.Amount / entry.Amount; // So a stack of 20 with an amount of 4 and a cost of 1 is correctly 5 cost
         var cost = (args.Amount == entry.Amount) ? entry.MaterialCost : totalAmount * entry.MaterialCost;
 
+        var materialShortfall = 0;
+        var stackType = string.Empty;
         if (TryComp<StackComponent>(ent.Owner, out var stack))
         {
-            if (!_stack.Use(ent.Owner, cost ?? 1, stack))
+            var baseCost = cost ?? 1;
+            var costEv = new RMCConstructionCostEvent(args.User, stack.StackTypeId, baseCost, baseCost);
+            RaiseLocalEvent(args.User, ref costEv, true);
+            var paidCost = Math.Max(1, costEv.Cost);
+            if (!_stack.TryUse((ent.Owner, stack), paidCost))
             {
                 var message = Loc.GetString("rmc-construction-more-material", ("material", ent.Owner), ("object", entry.Name));
                 _popup.PopupEntity(message, args.User, args.User, PopupType.SmallCaution);
                 return;
             }
+
+            materialShortfall = Math.Max(0, baseCost - paidCost);
+            stackType = stack.StackTypeId;
         }
         else if (_net.IsServer)
         {
@@ -250,13 +300,15 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         if (!Deleted(ent))
             UpdateStackAmountUI(ent);
 
+        var builtEntities = new List<EntityUid>();
         if (args.Amount > 1)
         {
-            SpawnMultiple(entry.Prototype, args.Amount, coordinates);
+            builtEntities.AddRange(SpawnMultiple(entry.Prototype, args.Amount, coordinates));
         }
         else
         {
             var built = SpawnAtPosition(entry.Prototype, coordinates);
+            builtEntities.Add(built);
 
             if (!entry.NoRotate)
                 _transform.SetLocalRotation(built, args.Direction.ToAngle());
@@ -265,6 +317,24 @@ public sealed partial class RMCConstructionSystem : EntitySystem
             // Removes collision with the construction until you leave
             if (!HasComp<BarricadeComponent>(built))
                 MakeConstructionImmuneToCollision(built, args.User);
+
+        }
+
+        for (var i = 0; i < builtEntities.Count; i++)
+        {
+            var built = builtEntities[i];
+            var perEntityShortfall = builtEntities.Count == 0
+                ? 0
+                : materialShortfall / builtEntities.Count + (i < materialShortfall % builtEntities.Count ? 1 : 0);
+            var transactionEv = new RMCConstructionTransactionCompletedEvent(
+                built,
+                args.User,
+                stackType,
+                perEntityShortfall);
+            RaiseLocalEvent(built, ref transactionEv, broadcast: true);
+
+            var completedEv = new ConstructionCompletedEvent(built, args.User);
+            RaiseLocalEvent(built, ref completedEv, broadcast: true);
         }
     }
 
@@ -291,7 +361,7 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         {
             var entity = SpawnAtPosition(entityPrototype, spawnPosition);
             spawnedEnts.Add(entity);
-            _stack.SetCount(entity, count);
+            _stack.SetCount((entity, null), count);
         }
 
         return spawnedEnts;
@@ -306,7 +376,7 @@ public sealed partial class RMCConstructionSystem : EntitySystem
     public List<int> CalculateSpawns(string entityPrototype, int amount)
     {
         var proto = _prototype.Index<EntityPrototype>(entityPrototype);
-        proto.TryGetComponent<StackComponent>(out var stack, EntityManager.ComponentFactory);
+        proto.TryComp<StackComponent>(out var stack, EntityManager.ComponentFactory);
         var maxCountPerStack = _stack.GetMaxCount(stack);
         var amounts = new List<int>();
         while (amount > 0)
@@ -387,7 +457,7 @@ public sealed partial class RMCConstructionSystem : EntitySystem
 
         if (!CanBuildAt(ent.Owner.ToCoordinates(), Name(ent), out var popup, true))
         {
-            _popup.PopupClient(popup, ent, args.User, PopupType.SmallCaution);
+            _popup.PopupEntity(popup, ent, args.User, PopupType.SmallCaution);
             args.Cancel();
         }
     }
@@ -409,10 +479,24 @@ public sealed partial class RMCConstructionSystem : EntitySystem
     public bool CanBuildAt(EntityCoordinates coordinates, EntProtoId prototype, out string? popup, bool anchoring = false, Direction direction = Direction.Invalid, CollisionGroup? collision = null, EntityUid? user = null)
     {
         popup = default;
+
+        if (user != null && HasComp<VehicleInteriorOccupantComponent>(user.Value))
+        {
+            popup = Loc.GetString("construction-system-inside-container");
+            return false;
+        }
+
         if (!_prototype.TryIndex<EntityPrototype>(prototype, out var proto))
             return false;
 
-        var canBuild = CanBuildAt(coordinates, proto.Name, out popup, anchoring, direction, collision);
+        // AU14: laying a floor is precisely how you make unbuildable terrain buildable, so a tile applier is
+        // not subject to the terrain's own blockConstruction/blockAnchoring flags - otherwise beach, coast and
+        // water-shore tiles (whose abstract parents carry those flags, so every variant inherits them) refuse
+        // the tile ghost outright and the player just sees nothing appear. Structures, barricades and every
+        // other recipe stay blocked exactly as before; they can be built once a floor is down.
+        var isTileApplier = proto.TryComp<TileApplierComponent>(out _, _componentFactory);
+
+        var canBuild = CanBuildAt(coordinates, proto.Name, out popup, anchoring, direction, collision, isTileApplier);
         if (!canBuild)
             return false;
 
@@ -422,15 +506,27 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         if (!TryComp(gridId, out MapGridComponent? grid))
             return true;
 
-        if (proto.TryGetComponent(out BarricadeComponent? barricade, _componentFactory))
+        if (proto.TryComp(out BarricadeComponent? barricade, _componentFactory))
         {
+            var anchored = _rmcMap.GetAnchoredEntitiesEnumerator(coordinates);
+            while (anchored.MoveNext(out var uid))
+            {
+                if (!_water.IsActiveWater(uid, user ?? uid))
+                    continue;
+
+                popup = Loc.GetString("rmc-construction-not-proper-surface", ("construction", proto.Name));
+                return false;
+            }
+
             return !_weaponMount.HasWeaponMountNearbyPopup((gridId, grid), coordinates, proto, user: user);
         }
 
         return canBuild;
     }
 
-    public bool CanBuildAt(EntityCoordinates coordinates, string? prototypeName, out string? popup, bool anchoring = false, Direction direction = Direction.Invalid, CollisionGroup? collision = null)
+    /// <param name="ignoreBlockedTerrain">Skips the tile's own blockConstruction/blockAnchoring veto. Set for
+    /// tile appliers, which exist to replace that terrain.</param>
+    public bool CanBuildAt(EntityCoordinates coordinates, string? prototypeName, out string? popup, bool anchoring = false, Direction direction = Direction.Invalid, CollisionGroup? collision = null, bool ignoreBlockedTerrain = false)
     {
         popup = default;
         if (_transform.GetGrid(coordinates) is not { } gridId)
@@ -453,9 +549,9 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         if (!_map.TryGetTileDef(grid, indices, out var def))
             return true;
 
-        var invalid = def is ContentTileDefinition { BlockConstruction: true };
+        var invalid = !ignoreBlockedTerrain && def is ContentTileDefinition { BlockConstruction: true };
         if (anchoring)
-            invalid = def is ContentTileDefinition { BlockAnchoring: true };
+            invalid = !ignoreBlockedTerrain && def is ContentTileDefinition { BlockAnchoring: true };
 
         if (invalid || _rmcMap.HasAnchoredEntityEnumerator<LadderComponent>(coordinates))
         {
@@ -478,3 +574,19 @@ public sealed partial class RMCConstructionSystem : EntitySystem
         return true;
     }
 }
+
+/// <summary>Extension point for server-authoritative material pricing without coupling RMC construction to a fork.</summary>
+[ByRefEvent]
+public record struct RMCConstructionCostEvent(EntityUid User, string StackType, int BaseCost, int Cost);
+
+/// <summary>Extension point for construction delay modifiers.</summary>
+[ByRefEvent]
+public record struct RMCConstructionDelayEvent(EntityUid User, TimeSpan BaseDelay, TimeSpan Delay);
+
+/// <summary>Reports the exact material delta associated with one newly-built entity.</summary>
+[ByRefEvent]
+public record struct RMCConstructionTransactionCompletedEvent(
+    EntityUid Built,
+    EntityUid User,
+    string StackType,
+    int MaterialShortfall);

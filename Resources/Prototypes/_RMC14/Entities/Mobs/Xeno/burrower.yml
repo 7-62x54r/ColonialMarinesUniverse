@@ -11,14 +11,19 @@
   name: Burrower
   description: A hefty alien with sharp claws.
   components:
+  - type: FiremanCarriable # CMU14: Yautja can aggressively grab, carry and throw this caste, matching
+    canThrow: true           # CM-SS13's grab gate (mob_grab.dm:82-89: Yautja reach MOB_SIZE_XENO, 3).
+    carrierWhitelist:
+      components:
+      - Yautja
   - type: CanBuildThickFromConstructNode
   - type: GuideHelp
     guides:
     - RMCGuideRoleBurrower
   - type: GhostRole
-    name: cm-job-name-xeno-burrower
+    name: cmu-job-name-xeno-unknown
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Burrower/burrower.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Burrower/burrower.rsi # AU14-Edit
   - type: MobState
     allowedStates:
     - Alive
@@ -33,6 +38,24 @@
       0: Alive
       500: Critical
       600: Dead
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 300
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 300
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 1
   - type: Xeno
     role: CMXenoBurrower
     actionIds:
@@ -41,6 +64,7 @@
     - ActionXenoWatch
     - ActionXenoTailStab
     - ActionXenoAcidNormal
+    - ActionXenoPheromones
     - ActionXenoOrderConstruction
     - ActionXenoDigTunnel
     - ActionXenoPlantWeeds
@@ -66,10 +90,13 @@
     xenoArmor: 25
     explosionArmor: 40
   - type: XenoDevour
+  - type: XenoPheromones
+    pheromonesMultiplier: 2
   - type: XenoStomp
     selfEffect: CMEffectSelfStomp
     shortRange: 0
     range: 4
+    stompsThroughBarricades: true
     plasmaCost: 100
     paralyzeTime: 2
     slowBigInsteadOfStun: true
@@ -79,12 +106,16 @@
   - type: XenoBurrow
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 27.5
+      types:
+        Blunt: 9.16
+        Slash: 9.17
+        Piercing: 9.17
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 36
+      types:
+        Blunt: 12
+        Slash: 12
+        Piercing: 12
   - type: Tackle
     min: 3
     max: 5
@@ -128,7 +159,7 @@
   - type: IntelRecoverCorpseObjectiveOnDeath
     value: 0.2
   - type: FixedIdentity
-    name: cm-job-name-xeno-burrower
+    name: cmu-job-name-xeno-unknown
   - type: RMCSurgeryXenoHeart
     item: RMCOrganXenoHeartT2
   - type: VentCrawler

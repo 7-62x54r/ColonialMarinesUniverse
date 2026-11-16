@@ -1,0 +1,194 @@
+# Ambassador Consoles - Used by third parties for diplomatic functions
+# These consoles allow factions to call in third party support
+
+# Base Ambassador Console
+- type: entity
+  abstract: true
+  parent: RMCCommunicationsConsoleBase
+  id: AU14AmbassadorConsoleBase
+  name: ambassador console
+  description: A console for diplomatic functions and third party communication.
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Machines/computer.rsi
+    state: terminal1_old
+  - type: InteractionOutline
+  - type: ApcPowerReceiver
+    powerLoad: 0
+    needsPower: false
+  - type: ActivatableUI
+    key: enum.AmbassadorConsoleUi.Key
+  - type: AmbassadorConsole
+    budget: 1000
+    replenishAmount: 0 # no passive income: budget comes from city income, missions and cash
+    replenishInterval: 60
+  - type: UserInterface
+    interfaces:
+      enum.AmbassadorConsoleUi.Key:
+        type: AmbassadorConsoleBui
+      enum.AmbassadorThirdPartyUi.Key:
+        type: AmbassadorThirdPartyBui
+      enum.AmbassadorWorldMapUi.Key: # RUMC: the window of the world map
+        type: AmbassadorWorldMapBui
+      enum.AmbassadorMotherUi.Key: # RUMC: the window of the exchange with the mother faction
+        type: AmbassadorMotherBui
+  - type: ItemSlots
+    slots:
+      CashSlot:
+        whitelist:
+          tags:
+          - Currency
+  - type: ContainerContainer
+    containers:
+      CashSlot: !type:ContainerSlot {}
+  - type: ActivatableUIRequiresAccess
+  - type: AccessReader
+    access: [["AU14AccessColonyAmbassador"]]
+
+# UPP Ambassador Console - Can call in GROM and BEAR
+- type: entity
+  id: AU14AmbassadorConsoleUPP
+  parent: AU14AmbassadorConsoleBase
+  name: UPP diplomatic console
+  description: A Union of Progressive Peoples diplomatic console. Can request MSS, Militsiya or migrant support.
+  suffix: UPP, GROM, BEAR
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Machines/computer.rsi
+    state: terminal1_old
+  # Only the UPP ambassador can use it.
+  - type: AccessReader
+    access: [["AU14AccessAmbassadorUPP"]]
+  - type: AmbassadorConsole
+    factionName: UPP
+    languages: # the faction's own; callers' parties that speak their caller's language learn these
+    - Mandarin
+    - Russian
+    budget: 1000
+    replenishAmount: 0 # no passive income: budget comes from city income, missions and cash
+    replenishInterval: 60
+    callableParties:
+      MSSOperationalGroup: 7000
+      CMUUPPMilitsiya: 4950 # same as the CMB investigation party on the colony admin console
+      Migrant_UPP: 1000 #They don’t speak English.
+      CMUEmbassyStaff: 2000
+      CMUUnionOrganisers: 2000
+
+
+# UA Ambassador Console - Can call in US Army
+- type: entity
+  id: AU14AmbassadorConsoleUA
+  parent: AU14AmbassadorConsoleBase
+  name: UA diplomatic console
+  description: A United Americas diplomatic console. Can request Marine Security Guard or CMB support.
+  suffix: UA, Army
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Machines/computer.rsi
+    state: terminal1_old
+  # Only the UA ambassador can use it.
+  - type: AccessReader
+    access: [["AU14AccessAmbassadorUA"]]
+  - type: AmbassadorConsole
+    factionName: United Americas
+    languages: # the faction's own; callers' parties that speak their caller's language learn these
+    - English
+    - Spanish
+    budget: 1000
+    replenishAmount: 0 # no passive income: budget comes from city income, missions and cash
+    replenishInterval: 60
+    callableParties:
+      MarineSecurityGuard: 2000
+      CMBInvestigationParty: 3000
+      CMUCMBTacticalTeam: 9000
+      MigratingCivs: 1000
+      CMUEmbassyStaff: 2000
+      CMUArchaeologyTeam: 2500
+      CMUFEMAResponseTeam: 3000
+
+# TWE Ambassador Console - Three World Empire
+- type: entity
+  id: AU14AmbassadorConsoleTWE
+  parent: AU14AmbassadorConsoleBase
+  name: TWE diplomatic console
+  description: A Three World Empire diplomatic console. Can request NSPA support.
+  suffix: TWE, PMC
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Machines/computer.rsi
+    state: terminal1_old
+  # Only the TWE ambassador can use it.
+  - type: AccessReader
+    access: [["AU14AccessAmbassadorTWE"]]
+  - type: AmbassadorConsole
+    factionName: Three World Empire
+    languages: # the faction's own; callers' parties that speak their caller's language learn these
+    - English
+    - Japanese
+    budget: 1000
+    replenishAmount: 0 # no passive income: budget comes from city income, missions and cash
+    replenishInterval: 60
+    callableParties:
+      NSPAInvestigationParty: 7000
+      CMUNSPATacticalTeam: 9000
+      MigratingCivs: 1000
+      CMUEmbassyStaff: 2000
+      CMUArchaeologyTeam: 2500
+
+# Independent Systems Ambassador Console
+- type: entity
+  id: AU14AmbassadorConsoleIS
+  parent: AU14AmbassadorConsoleBase
+  name: ICSC diplomatic console
+  description: An Independent Core System Colonies diplomatic console.
+  suffix: ICSC, PMC
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Machines/computer.rsi
+    state: terminal1_old
+  # Only the ICSC ambassador can use it.
+  - type: AccessReader
+    access: [["AU14AccessAmbassadorICSC"]]
+  - type: AmbassadorConsole
+    factionName: Independent Core System Colonies
+    languages: # the faction's own; callers' parties that speak their caller's language learn these
+    - French
+    - English
+    budget: 1000
+    replenishAmount: 0 # no passive income: budget comes from city income, missions and cash
+    replenishInterval: 60
+    callableParties:
+      Freelancers: 20000
+      MissionariesParty: 1500
+      ReturningCivs: 1500
+      NewsCrewThirdParty: 1500
+      MigratingCivs: 1000
+      CMUEmbassyStaff: 2000
+      CMUTradeDelegation: 2500
+
+# Central Confederation of Africa Console
+- type: entity
+  id: AU14AmbassadorConsoleCCA
+  parent: AU14AmbassadorConsoleBase
+  name: CCA diplomatic console
+  description: A Central Confederation of Africa diplomatic console.
+  suffix: CCA, PMC
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Machines/computer.rsi
+    state: terminal1_old
+  - type: AmbassadorConsole
+    factionName: Central Confederation of Africa
+    languages: # the faction's own; callers' parties that speak their caller's language learn these
+    - Swahili
+    - English
+    budget: 1000
+    replenishAmount: 0 # no passive income: budget comes from city income, missions and cash
+    replenishInterval: 60
+    callableParties:
+      MissionariesParty: 1500
+      MigratingCivs: 1000
+      CMUEmbassyStaff: 2000
+      CMUTradeDelegation: 2500
+      CMUUnionOrganisers: 2000
+      

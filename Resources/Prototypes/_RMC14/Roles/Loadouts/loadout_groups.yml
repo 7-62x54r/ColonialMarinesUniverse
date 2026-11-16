@@ -18,6 +18,14 @@
   - MarineLeatherSatchel
 
 - type: loadoutGroup
+  id: LiaisonBackpackRMC
+  name: rmc-loadout-group-backpack
+  minLimit: 1
+  hidden: true
+  loadouts:
+  - LiaisonSecureSatchel
+
+- type: loadoutGroup
   id: MarineTechnicianBackpack
   name: rmc-loadout-group-backpack
   minLimit: 1
@@ -54,8 +62,20 @@
   id: EyewearRMC
   name: rmc-loadout-group-eyewear
   minLimit: 0
-  maxLimit: 12
+  maxLimit: 3
   loadouts:
+  - GogglesM1A1ClearAU14
+  - GogglesM1A1AU14
+  - GogglesM1A1DarkAU14
+  - GogglesM1A1LaserAU14
+  - GogglesM1A1OrangeAU14
+  - GogglesM1A1PolarizedAU14
+  - GogglesM1A1ClearPrescriptionAU14
+  - GogglesM1A1PrescriptionAU14
+  - GogglesM1A1DarkPrescriptionAU14
+  - GogglesM1A1LaserPrescriptionAU14
+  - GogglesM1A1OrangePrescriptionAU14
+  - GogglesM1A1PolarizedPrescriptionAU14
   - AviatorsRMC
   - EyepatchRMC
   - GlassesRPGRMC
@@ -69,10 +89,15 @@
   - GogglesAdvancedRMC
   - GogglesM1A1RMC
   - PersonalShadesRMC
-  - SunglassesRMC # TODO prescription sunglasses
+  - PersonalShadesPrescriptionRMC
+  - SunglassesRMC
+  - SunglassesPrescriptionRMC
   - GlassesTriMaxYellowRMC
+  - GlassesTriMaxYellowPrescriptionRMC
   - GlassesTriMaxBronzeRMC
+  - GlassesTriMaxBronzePrescriptionRMC
   - GlassesTriMaxBlackRMC
+  - GlassesTriMaxBlackPrescriptionRMC
   - GogglesRedRMC
   - GogglesBlueRMC
   - GogglesPurpleRMC
@@ -92,32 +117,43 @@
   id: EyewearRMCPVE
   name: rmc-loadout-group-eyewear
   minLimit: 0
-  maxLimit: 1
+  maxLimit: 3
   loadouts:
+  - GogglesM1A1ClearAU14
+  - GogglesM1A1AU14
+  - GogglesM1A1DarkAU14
+  - GogglesM1A1LaserAU14
+  - GogglesM1A1OrangeAU14
+  - GogglesM1A1PolarizedAU14
+  - GogglesM1A1ClearPrescriptionAU14
+  - GogglesM1A1PrescriptionAU14
+  - GogglesM1A1DarkPrescriptionAU14
+  - GogglesM1A1LaserPrescriptionAU14
+  - GogglesM1A1OrangePrescriptionAU14
+  - GogglesM1A1PolarizedPrescriptionAU14
   - AviatorsRMC
   - EyepatchRMC
   - GlassesRPGRMC
   - GlassesRPGRMCOld
   - GlassesPrescriptionRMC
   - HippieGlassesRMC
-  - GogglesRMC
-  - GogglesPrescriptionRMC
-  - GogglesBlackRMC
-  - GogglesOrangeRMC # TODO add prescription variants of all the goggles
-  - GogglesAdvancedRMC
-  - GogglesM1A1RMC
   - PersonalShadesRMC
-  - SunglassesRMC # TODO prescription sunglasses
+  - PersonalShadesPrescriptionRMC
+  - SunglassesRMC
+  - SunglassesPrescriptionRMC
   - GlassesTriMaxYellowRMC
+  - GlassesTriMaxYellowPrescriptionRMC
   - GlassesTriMaxBronzeRMC
+  - GlassesTriMaxBronzePrescriptionRMC
   - GlassesTriMaxBlackRMC
+  - GlassesTriMaxBlackPrescriptionRMC
 
 # Masks
 - type: loadoutGroup
   id: MasksRMC
   name: rmc-loadout-group-masks
   minLimit: 0
-  maxLimit: 21
+  maxLimit: 3
   loadouts:
   - BalaclavaRMC
   - BalaclavaGreenRMC
@@ -128,7 +164,6 @@
   - MaskScarfGrayRMC
   - MaskScarfGreenRMC
   - MaskScarfTanRMC
-  - GasMaskRMC
   - TornScarfBlackRMC
   - TornScarfDesertRMC
   - TornScarfGreenRMC
@@ -160,7 +195,7 @@
   id: MasksRMCPVE
   name: rmc-loadout-group-masks
   minLimit: 0
-  maxLimit: 1
+  maxLimit: 3
   loadouts:
   - BalaclavaRMC
   - CoifRMC
@@ -169,7 +204,6 @@
   - MaskScarfGrayRMC
   - MaskScarfGreenRMC
   - MaskScarfTanRMC
-  - GasMaskRMC
   - KeffiyehRMC
   - KeffiyehBlackRMC
   - KeffiyehBlueRMC
@@ -182,7 +216,7 @@
   id: HeadwearRMC
   name: rmc-loadout-group-headwear
   minLimit: 0
-  maxLimit: 10
+  maxLimit: 3
   loadouts:
   - SquadBeretRMC
   - GreenBeretRMC
@@ -206,7 +240,7 @@
   id: HeadwearRMCPVE
   name: rmc-loadout-group-headwear
   minLimit: 0
-  maxLimit: 1
+  maxLimit: 3
   loadouts:
   - BrownHeadbandRMC
   - GreenHeadbandRMC
@@ -224,22 +258,10 @@
   loadouts:
   - FakeNVGRMC
   - FakeNVGPVERMC
-  - NettingRMC
-  - NettingUrbanRMC
-  - NettingDesertRMC
-  - NettingJungleRMC
-  - RaincoverRMC
-  - RaincoverUrbanRMC
-  - RaincoverDesertRMC
-  - RaincoverJungleRMC
   - BuckshotSpentRMC
   - FlechetteSpentRMC
   - SlugSpentRMC
   - CartridgeSpentRMC
-  - HelmetGasmaskRMC
-  - HelmetGasmaskDesertRMC
-  - HelmetGasmaskJungleRMC
-  - HelmetGasmaskUrbanRMC
   - FeatherRMC
   - FeatherRedRMC
   - FeatherBlueRMC
@@ -251,9 +273,6 @@
   - TrimmedWireRMC
   - ChaplainPatchRMC
   - PeaceFlairRMC
-  - IoFlairRMC
-  - TerraTekFlairRMC
-  - UNMCFlairRMC
   - MovieTicketRMC
 
 - type: loadoutGroup
@@ -262,15 +281,10 @@
   minLimit: 0
   maxLimit: 2
   loadouts:
-  - FakeNVGPVERMC
   - BuckshotSpentRMC
   - FlechetteSpentRMC
   - SlugSpentRMC
   - CartridgeSpentRMC
-  - HelmetGasmaskRMC
-  - HelmetGasmaskDesertRMC
-  - HelmetGasmaskJungleRMC
-  - HelmetGasmaskUrbanRMC
   - FeatherRMC
   - FeatherRedRMC
   - FeatherBlueRMC
@@ -282,10 +296,9 @@
   - TrimmedWireRMC
   - ChaplainPatchRMC
   - PeaceFlairRMC
-  - IoFlairRMC
-  - TerraTekFlairRMC
-  - UNMCFlairRMC
   - MovieTicketRMC
+  - FakeNVGRMC
+  - FakeNVGPVERMC
 
 # Accessories
 - type: loadoutGroup
@@ -297,6 +310,7 @@
   - UNMCSquadPatchRMC
   - SquadArmbandRMC
   - PatchPeaceRMC
+  - PDTLKitRMC
 
 # Accessories
 - type: loadoutGroup
@@ -321,7 +335,7 @@
   id: PaperworkRMC
   name: rmc-loadout-group-paperwork
   minLimit: 0
-  maxLimit: 9
+  maxLimit: 2
   loadouts:
   - PenRMC
   - PenFountainRMC
@@ -358,7 +372,7 @@
   id: RecreationalRMC
   name: rmc-loadout-group-recreational
   minLimit: 0
-  maxLimit: 7
+  maxLimit: 2
   loadouts:
   - CassettePlayerRMC
   - MagazineBootsN54RMC
@@ -397,6 +411,9 @@
   - CustomM44RMC
   - HG45AguilaCaseRMC
   - HG45MarinaCaseRMC
+  # cmu edit start
+  - TPR9CivilianCaseCMU
+  # cmu edit end
 
 # SPP Weapons
 - type: loadoutGroup
@@ -413,7 +430,7 @@
   id: CannedDrinksRMC
   name: rmc-loadout-group-canned-drinks
   minLimit: 0
-  maxLimit: 14
+  maxLimit: 1
   loadouts:
   - BottledWaterRMC
   - GrapeJuiceRMC
@@ -446,7 +463,7 @@
   id: SmokablesRMC
   name: rmc-loadout-group-smokables
   minLimit: 0
-  maxLimit: 11
+  maxLimit: 2
   loadouts:
   - LuckySlothsPackRMC
   - ArcturianAcePackRMC
@@ -577,10 +594,11 @@
   id: LiaisonRoleSpecificRMC
   name: rmc-loadout-group-role-specific
   minLimit: 0
-  maxLimit: 3
+  maxLimit: 4
   loadouts:
   - RMCWeYaClipboard
   - RMCWeYaThermos
+  - WEYABagPhoneSatchel
   - RMCJacketWindbreakerWEYA
 
 # Chief MP
@@ -629,7 +647,7 @@
   id: SynthGlassesRMC
   name: rmc-loadout-group-synthetic-glasses
   minLimit: 0
-  maxLimit: 2
+  maxLimit: 3
   loadouts:
   - AviatorsRMC
   - EyepatchRMC
@@ -643,10 +661,15 @@
   - GogglesAdvancedRMC
   - GogglesM1A1RMC
   - PersonalShadesRMC
-  - SunglassesRMC # TODO prescription sunglasses
+  - PersonalShadesPrescriptionRMC
+  - SunglassesRMC
+  - SunglassesPrescriptionRMC
   - GlassesTriMaxYellowRMC
+  - GlassesTriMaxYellowPrescriptionRMC
   - GlassesTriMaxBronzeRMC
+  - GlassesTriMaxBronzePrescriptionRMC
   - GlassesTriMaxBlackRMC
+  - GlassesTriMaxBlackPrescriptionRMC
   - GogglesRedRMC
   - GogglesBlueRMC
   - GogglesPurpleRMC
@@ -675,7 +698,7 @@
   id: SynthHeadwearRMC
   name: rmc-loadout-group-synthetic-headwear
   minLimit: 0
-  maxLimit: 2
+  maxLimit: 3
   loadouts:
   - SquadBeretRMC
   - GreenBeretRMC
@@ -748,6 +771,7 @@
   id: SynthMasksRMC
   name: rmc-loadout-group-masks
   minLimit: 1
+  maxLimit: 3
   loadouts:
   - MaskScarfSquadRMC
   - MaskScarfRedRMC
@@ -767,6 +791,55 @@
   - NeckerchiefGreenRMC
   - NeckerchiefWhiteRMC
   - NeckerchiefRedRMC
+
+# Watches
+- type: loadoutGroup
+  id: WatchesBasicRMC
+  name: rmc-loadout-group-watches
+  minLimit: 0
+  maxLimit: 1
+  loadouts:
+  - WatchCheapRMC
+  - WatchBasicRMC
+  - WatchSurvRMC
+  - WatchPilotRMC
+
+- type: loadoutGroup
+  id: WatchesSynthRMC
+  name: rmc-loadout-group-watches
+  minLimit: 0
+  maxLimit: 1
+  loadouts:
+  - WatchCheapRMC
+  - WatchBasicRMC
+  - WatchSurvRMC
+  - WatchPilotRMC
+  - WatchSynthRMC
+
+- type: loadoutGroup
+  id: WatchesLiaisonRMC
+  name: rmc-loadout-group-watches
+  minLimit: 0
+  maxLimit: 1
+  loadouts:
+  - WatchCheapRMC
+  - WatchBasicRMC
+  - WatchSurvRMC
+  - WatchPilotRMC
+  - WatchLiaisonRMC
+
+- type: loadoutGroup
+  id: WatchesCommandingOfficerRMC
+  name: rmc-loadout-group-watches
+  minLimit: 0
+  maxLimit: 1
+  loadouts:
+  - WatchCheapRMC
+  - WatchBasicRMC
+  - WatchSurvRMC
+  - WatchPilotRMC
+  - WatchLiaisonRMC
+  - WatchSynthRMC
 
 # Civilian
 - type: loadoutGroup

@@ -51,6 +51,7 @@ public sealed partial class TacticalMapControl : TextureRect
     private const float PingMaxAlpha = 0.65f;
     private const float PingRingThickness = 1.5f;
 
+    private static readonly Color VehicleOccupantCountColor = Color.FromHex("#FFD84D");
 
     [Dependency] private IResourceCache _resourceCache = default!;
     [Dependency] private IEntityManager _entityManager = default!;
@@ -74,9 +75,10 @@ public sealed partial class TacticalMapControl : TextureRect
     private Vector2 _panOffset = Vector2.Zero;
 
     private bool _dragging;
-    private Vector2i? _lastDrag;
-    private Vector2i? _dragStart;
-    private Vector2i? _previewEnd;
+    // CMU14: retain subpixel pencil positions until conversion to world coordinates.
+    private Vector2? _lastDrag;
+    private Vector2? _dragStart;
+    private Vector2? _previewEnd;
     private bool _rightClickPanning;
     private Vector2? _lastPanPosition;
 
@@ -104,6 +106,8 @@ public sealed partial class TacticalMapControl : TextureRect
     public Action<Vector2i, string>? OnBlipRightClicked;
     public Action? OnUserInteraction;
     public Action<Vector2i>? OnQueenEyeMove;
+    public Func<int, bool>? CanQueenWatchBlip;
+    public Action<int>? OnQueenWatch;
     public Action<Vector2i, string>? OnCreateLabel;
     public Action<Vector2i, string>? OnEditLabel;
     public Action<Vector2i>? OnDeleteLabel;
@@ -242,7 +246,8 @@ public sealed partial class TacticalMapControl : TextureRect
 
     public Vector2 IndicesToPosition(Vector2i indices)
     {
-        return GetDrawPosition(indices) * MapScale;
+        // CMU14: overlays identify the tile center, matching the 3D map.
+        return (GetDrawPosition(indices) + new Vector2(0.5f)) * MapScale;
     }
 
     public Vector2i PositionToIndices(Vector2 controlPosition)
@@ -373,6 +378,9 @@ public sealed partial class TacticalMapControl : TextureRect
     }
 
     private TacticalMapBlip? GetBlipAtPosition(Vector2 controlPosition)
+        => GetBlipIndexAtPosition(controlPosition) is { } index ? _blips![index] : null;
+
+    private int? GetBlipIndexAtPosition(Vector2 controlPosition)
     {
         if (_blips == null || Texture == null)
             return null;
@@ -381,10 +389,12 @@ public sealed partial class TacticalMapControl : TextureRect
         (Vector2 actualSize, Vector2 actualTopLeft, float overlayScale) = GetDrawParameters();
         float clickTolerance = ClickTolerance * overlayScale;
 
-        foreach (TacticalMapBlip blip in _blips)
+        for (var i = 0; i < _blips.Length; i++)
         {
+            var blip = _blips[i];
             Vector2 blipPosition = IndicesToPosition(blip.Indices) * overlayScale + actualTopLeft;
             float scaledBlipSize = GetScaledBlipSize(overlayScale);
+            blipPosition -= new Vector2(scaledBlipSize / 2); // CMU14: match the centered icon rectangle.
 
             UIBox2 blipRect = UIBox2.FromDimensions(
                 blipPosition - new Vector2(clickTolerance, clickTolerance),
@@ -392,7 +402,7 @@ public sealed partial class TacticalMapControl : TextureRect
             );
 
             if (blipRect.Contains(pixelPosition))
-                return blip;
+                return i;
         }
 
         return null;
@@ -447,34 +457,45 @@ public sealed partial class TacticalMapControl : TextureRect
         };
     }
 
-    private Vector2i SnapToStraightLine(Vector2i start, Vector2i end)
+    // CMU14 method: canvas coordinates remain fractional when snapping a straight stroke.
+    private Vector2 SnapToStraightLine(Vector2 start, Vector2 end)
     {
-        int deltaX = end.X - start.X;
-        int deltaY = end.Y - start.Y;
-        int absDeltaX = Math.Abs(deltaX);
-        int absDeltaY = Math.Abs(deltaY);
+        var deltaX = end.X - start.X;
+        var deltaY = end.Y - start.Y;
+        var absDeltaX = Math.Abs(deltaX);
+        var absDeltaY = Math.Abs(deltaY);
 
         if (absDeltaX > absDeltaY * 2)
         {
-            return new Vector2i(end.X, start.Y);
+            return new Vector2(end.X, start.Y);
         }
         else if (absDeltaY > absDeltaX * 2)
         {
-            return new Vector2i(start.X, end.Y);
+            return new Vector2(start.X, end.Y);
         }
         else
         {
-            int diagDist = Math.Min(absDeltaX, absDeltaY);
-            return new Vector2i(
+            var diagDist = Math.Min(absDeltaX, absDeltaY);
+            return new Vector2(
                 start.X + (deltaX >= 0 ? diagDist : -diagDist),
                 start.Y + (deltaY >= 0 ? diagDist : -diagDist)
             );
         }
     }
 
-    private void AddLineToCanvas(Vector2i start, Vector2i end)
+    // CMU14 method: use the texture transform without snapping the pencil to tile indices.
+    private Vector2 PixelToCanvas(Vector2 pixel)
     {
-        Lines.Add(new TacticalMapLine(start, end, Color, LineThickness));
+        var (_, topLeft, scale) = GetDrawParameters();
+        return (pixel - topLeft) / scale;
+    }
+
+    private void AddLineToCanvas(Vector2 start, Vector2 end) // CMU14
+    {
+        // CMU14: retain fractional world coordinates for the shared 2D/3D canvas.
+        Lines.Add(new TacticalMapLine(start.Floored(), end.Floored(), Color, LineThickness,
+            [Content.Shared.CMU14.TacticalMap.Reconstruction.CMUReconDrawingCoordinates.ToWorld(start, _min, _min + _delta),
+             Content.Shared.CMU14.TacticalMap.Reconstruction.CMUReconDrawingCoordinates.ToWorld(end, _min, _min + _delta)]));
         LineThicknesses.Add(LineThickness);
 
         while (LineLimit >= 0 && Lines.Count > LineLimit)
@@ -530,13 +551,15 @@ public sealed partial class TacticalMapControl : TextureRect
             // Attempt to get the background frame. If this fails (RSI missing/corrupt), skip blip drawing.
             background = system.Frame0(backgroundRsi);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Don't let a resource failure crash the entire UI. Skip drawing blips.
             DrawModeBorder(handle, Vector2.Zero, Vector2.Zero, 1f); // still draw border if appropriate
             DrawLines(handle, 1f, Vector2.Zero);
             DrawPreviewLine(handle, 1f, Vector2.Zero);
             DrawLabels(handle, 1f, Vector2.Zero);
+
+            Logger.GetSawmill("tacmap").Error($"[DrawBackgrounds] Failed to render backgrounds (missing/corrupt RSI): {ex}");
             return;
         }
 
@@ -546,15 +569,14 @@ public sealed partial class TacticalMapControl : TextureRect
         handle.DrawTextureRect(Texture, textureRect);
 
         DrawModeBorder(handle, actualTopLeft, actualSize, overlayScale);
-        // Wrap DrawBlips in a try/catch as an extra safety net for any runtime resource issues.
         try
         {
+            // Wrap DrawBlips in a try/catch as an extra safety net for any runtime resource issues.
             DrawBlips(handle, system, background, defibbableRsi, defibbableRsi2, defibbableRsi3, defibbableRsi4, undefibbableRsi, hiveLeaderRsi, actualTopLeft, overlayScale, curTime);
         }
-        catch (Exception)
-        {
-            // swallow—blips are non-critical; the rest of the UI should render.
-        }
+        // swallow—blips are non-critical; the rest of the UI should render.
+        catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBlips] Failed to run: {ex}"); }
+
         DrawLines(handle, overlayScale, actualTopLeft);
         DrawPreviewLine(handle, overlayScale, actualTopLeft);
         DrawLabels(handle, overlayScale, actualTopLeft);
@@ -597,33 +619,33 @@ public sealed partial class TacticalMapControl : TextureRect
         {
             TacticalMapBlip blip = _blips[i];
             Vector2 position = IndicesToPosition(blip.Indices) * overlayScale + actualTopLeft;
+            // CMU14: relay annotations arrive only in the authorized faction view.
+            if (blip.CMUFobLabel is { } label)
+                DrawLabelAtPosition(handle, label, position - new Vector2(0, 12 * overlayScale), overlayScale, false);
             float scaledBlipSize = GetScaledBlipSize(overlayScale);
+            position -= new Vector2(scaledBlipSize / 2); // CMU14: keep the icon center fixed as its size changes.
             UIBox2 rect = UIBox2.FromDimensions(position, new Vector2(scaledBlipSize, scaledBlipSize));
 
-            // Draw background / base frame but protect against resource failures per-frame
             try
             {
+                // Draw background / base frame but protect against resource failures per-frame
                 Texture bgTex = blip.Background != null ? system.GetFrame(blip.Background, curTime) : background;
                 handle.DrawTextureRect(bgTex, rect, blip.Color);
             }
-            catch (Exception)
-            {
-                // ignore and continue—don't crash the UI for missing background frames
-            }
+            // ignore and continue—don't crash the UI for missing background frames
+            catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBackground] Failed to render (missing background frames): {ex}"); }
 
-            // Draw main blip image safely
             try
             {
+                // Draw main blip image safely
                 if (blip.Image != null)
                 {
                     var frame = system.GetFrame(blip.Image, curTime);
                     handle.DrawTextureRect(frame, rect);
                 }
             }
-            catch (Exception)
-            {
-                // skip drawing this blip image if the frame cannot be loaded
-            }
+            // skip drawing this blip image if the frame cannot be loaded
+            catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBlips] Failed to render blip image (missing/corrupt state) '{(blip.Image as SpriteSpecifier.Rsi)?.RsiState ?? "?"}': {ex}"); }
 
             if (_localPlayerEntityId.HasValue && _blipEntityIds != null && i < _blipEntityIds.Length)
             {
@@ -640,10 +662,7 @@ public sealed partial class TacticalMapControl : TextureRect
                     var hiveTex = system.GetFrame(hiveLeaderRsi, curTime);
                     handle.DrawTextureRect(hiveTex, rect);
                 }
-                catch (Exception)
-                {
-                    // ignore
-                }
+                catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBlips] Failed to render HiveLeader (missing/corrupt blip): {ex}"); }
             }
 
             var defibTexture = blip.Status switch
@@ -663,10 +682,7 @@ public sealed partial class TacticalMapControl : TextureRect
                     if (dtex != null)
                         handle.DrawTextureRect(dtex, rect);
                 }
-                catch (Exception)
-                {
-                    // ignore
-                }
+                catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBlips] Failed to render defibTexture (missing/corrupt blip): {ex}"); }
             }
 
             if (blip.OccupantCount > 0)
@@ -680,11 +696,9 @@ public sealed partial class TacticalMapControl : TextureRect
                     Vector2 badgeOrigin = position + new Vector2(scaledBlipSize - measured.X - 1f, -measured.Y * 0.15f);
                     UIBox2 badgeRect = UIBox2.FromDimensions(badgeOrigin - new Vector2(2f, 0f), measured + new Vector2(4f, 1f));
                     handle.DrawRect(badgeRect, Color.Black.WithAlpha(0.75f));
-                    handle.DrawString(countFont, badgeOrigin, countText, Color.White);
+                    handle.DrawString(countFont, badgeOrigin, countText, VehicleOccupantCountColor);
                 }
-                catch (Exception)
-                {
-                }
+                catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBlips] Failed to render vehicle OccupantCount (missing/corrupt blip/font or count): {ex}"); }
             }
 
             if (blip.FireteamNumber > 0)
@@ -700,9 +714,7 @@ public sealed partial class TacticalMapControl : TextureRect
                     handle.DrawRect(badgeRect, Color.Black.WithAlpha(0.75f));
                     handle.DrawString(ftFont, badgeOrigin, ftText, Color.White);
                 }
-                catch (Exception)
-                {
-                }
+                catch (Exception ex) { Logger.GetSawmill("tacmap").Error($"[DrawBlips] Failed to render Fireteam numbers (missing/corrupt blip/font or fireteam): {ex}"); }
             }
         }
     }
@@ -749,7 +761,18 @@ public sealed partial class TacticalMapControl : TextureRect
             TacticalMapLine line = Lines[i];
             float thickness = line.Thickness > 0 ? line.Thickness :
                            (i < LineThicknesses.Count ? LineThicknesses[i] : 2.0f);
-            DrawLineWithThickness(handle, line, overlayScale, actualTopLeft, thickness);
+            // CMU14: render shared freehand strokes in classic map coordinates.
+            if (line.WorldPoints is { Length: > 0 } points)
+            {
+                Vector2 Canvas(Vector2 point) =>
+                    Content.Shared.CMU14.TacticalMap.Reconstruction.CMUReconDrawingCoordinates.ToCanvas(point, _min, _min + _delta);
+                for (var point = 1; point < points.Length; point++)
+                    DrawLineWithThickness(handle, Canvas(points[point - 1]), Canvas(points[point]), line.Color,
+                        overlayScale, actualTopLeft, thickness);
+                if (points.Length == 1)
+                    handle.DrawCircle((Vector2) Canvas(points[0]) * overlayScale + actualTopLeft, thickness * overlayScale / 2, line.Color);
+            }
+            else DrawLineWithThickness(handle, line.Start, line.End, line.Color, overlayScale, actualTopLeft, thickness); // CMU14
         }
     }
 
@@ -758,20 +781,14 @@ public sealed partial class TacticalMapControl : TextureRect
         if (!_dragging || !Drawing || !StraightLineMode || _dragStart == null || _previewEnd == null || Texture == null)
             return;
 
-        Vector2i diff = _previewEnd.Value - _dragStart.Value;
-        if (diff.Length < MinDragDistance)
+        var diff = _previewEnd.Value - _dragStart.Value; // CMU14
+        if (diff.Length() < MinDragDistance) // CMU14
             return;
 
-        Vector2i startIndices = PositionToIndices(PixelToLogical(new Vector2(_dragStart.Value.X, _dragStart.Value.Y)));
-        Vector2i endIndices = PositionToIndices(PixelToLogical(new Vector2(_previewEnd.Value.X, _previewEnd.Value.Y)));
-
-        endIndices = SnapToStraightLine(startIndices, endIndices);
-
-        Vector2i lineStart = ConvertIndicesToLineCoordinates(startIndices);
-        Vector2i lineEnd = ConvertIndicesToLineCoordinates(endIndices);
-        TacticalMapLine previewLine = new(lineStart, lineEnd, Color.WithAlpha(0.5f), LineThickness);
-
-        DrawLineWithThickness(handle, previewLine, overlayScale, actualTopLeft, LineThickness);
+        // CMU14: preview and submitted stroke use the same continuous canvas coordinates.
+        var start = PixelToCanvas(_dragStart.Value);
+        var end = SnapToStraightLine(start, PixelToCanvas(_previewEnd.Value));
+        DrawLineWithThickness(handle, start, end, Color.WithAlpha(0.5f), overlayScale, actualTopLeft, LineThickness);
     }
 
     private void DrawLabels(DrawingHandleScreen handle, float overlayScale, Vector2 actualTopLeft)
@@ -813,10 +830,12 @@ public sealed partial class TacticalMapControl : TextureRect
         handle.DrawString(labelFont, position, label, Color.White);
     }
 
-    private void DrawLineWithThickness(DrawingHandleScreen handle, TacticalMapLine line, float overlayScale, Vector2 actualTopLeft, float thickness)
+    // CMU14 method: shared world-space strokes must not be rounded back to canvas pixels.
+    private void DrawLineWithThickness(DrawingHandleScreen handle, Vector2 canvasStart, Vector2 canvasEnd, Color color,
+        float overlayScale, Vector2 actualTopLeft, float thickness)
     {
-        Vector2 start = new Vector2(line.Start.X, line.Start.Y) * overlayScale + actualTopLeft;
-        Vector2 end = new Vector2(line.End.X, line.End.Y) * overlayScale + actualTopLeft;
+        Vector2 start = canvasStart * overlayScale + actualTopLeft;
+        Vector2 end = canvasEnd * overlayScale + actualTopLeft;
         Vector2 diff = end - start;
 
         if (diff.Length() < 1.0f)
@@ -834,7 +853,7 @@ public sealed partial class TacticalMapControl : TextureRect
         _reusableLineVectors[4] = boxRotated.TopLeft;
         _reusableLineVectors[5] = boxRotated.TopRight;
 
-        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _reusableLineVectors, line.Color);
+        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _reusableLineVectors, color); // CMU14
     }
 
     protected override void KeyBindDown(GUIBoundKeyEventArgs args)
@@ -843,6 +862,14 @@ public sealed partial class TacticalMapControl : TextureRect
 
         if (args.Function == EngineKeyFunctions.UIClick)
         {
+            if (!Drawing && !IsCanvas && CanQueenWatchBlip != null &&
+                GetBlipIndexAtPosition(args.RelativePosition) is { } index &&
+                _blipEntityIds != null && index < _blipEntityIds.Length && CanQueenWatchBlip(_blipEntityIds[index]))
+            {
+                OnQueenWatch?.Invoke(_blipEntityIds[index]);
+                args.Handle();
+                return;
+            }
             if (HandleQueenEyeClick(args))
                 return;
 
@@ -921,7 +948,7 @@ public sealed partial class TacticalMapControl : TextureRect
         if (Drawing && !LabelEditMode)
         {
             _dragging = true;
-            _dragStart = LogicalToPixel(args.RelativePosition).Floored();
+            _dragStart = LogicalToPixel(args.RelativePosition); // CMU14
             _lastDrag = _dragStart;
             _previewEnd = _dragStart;
             OnUserInteraction?.Invoke();
@@ -998,20 +1025,14 @@ public sealed partial class TacticalMapControl : TextureRect
             {
                 if (_dragStart != null && StraightLineMode)
                 {
-                    Vector2i currentPos = LogicalToPixel(args.RelativePosition).Floored();
-                    Vector2i diff = currentPos - _dragStart.Value;
+                    var currentPos = LogicalToPixel(args.RelativePosition); // CMU14
+                    var diff = currentPos - _dragStart.Value; // CMU14
 
-                    if (diff.Length >= MinDragDistance)
+                    if (diff.Length() >= MinDragDistance) // CMU14
                     {
-                        Vector2i startIndices = PositionToIndices(PixelToLogical(new Vector2(_dragStart.Value.X, _dragStart.Value.Y)));
-                        Vector2i endIndices = PositionToIndices(args.RelativePosition);
-
-                        if (StraightLineMode)
-                            endIndices = SnapToStraightLine(startIndices, endIndices);
-
-                        Vector2i lineStart = ConvertIndicesToLineCoordinates(startIndices);
-                        Vector2i lineEnd = ConvertIndicesToLineCoordinates(endIndices);
-                        AddLineToCanvas(lineStart, lineEnd);
+                        // CMU14: preserve the exact start while snapping only the line's direction.
+                        var start = PixelToCanvas(_dragStart.Value);
+                        AddLineToCanvas(start, SnapToStraightLine(start, PixelToCanvas(currentPos)));
                     }
                 }
 
@@ -1041,7 +1062,7 @@ public sealed partial class TacticalMapControl : TextureRect
         }
         else if (_dragging && Drawing && !LabelEditMode)
         {
-            Vector2i currentPos = LogicalToPixel(args.RelativePosition).Floored();
+            var currentPos = LogicalToPixel(args.RelativePosition); // CMU14
 
             if (StraightLineMode)
             {
@@ -1051,14 +1072,10 @@ public sealed partial class TacticalMapControl : TextureRect
             {
                 if (_lastDrag != null)
                 {
-                    Vector2i diff = currentPos - _lastDrag.Value;
-                    if (diff.Length >= MinDragDistance)
+                    var diff = currentPos - _lastDrag.Value; // CMU14
+                    if (diff.Length() >= MinDragDistance) // CMU14
                     {
-                        Vector2i startIndices = PositionToIndices(PixelToLogical(new Vector2(_lastDrag.Value.X, _lastDrag.Value.Y)));
-                        Vector2i endIndices = PositionToIndices(args.RelativePosition);
-                        Vector2i lineStart = ConvertIndicesToLineCoordinates(startIndices);
-                        Vector2i lineEnd = ConvertIndicesToLineCoordinates(endIndices);
-                        AddLineToCanvas(lineStart, lineEnd);
+                        AddLineToCanvas(PixelToCanvas(_lastDrag.Value), PixelToCanvas(currentPos)); // CMU14
                         _lastDrag = currentPos;
                     }
                 }

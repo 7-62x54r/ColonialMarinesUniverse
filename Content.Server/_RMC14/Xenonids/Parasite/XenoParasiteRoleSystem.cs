@@ -1,13 +1,11 @@
-using Content.Server.GameTicking;
 using Content.Server.Ghost.Roles;
-using Content.Shared._RMC14.CCVar;
+using Content.Server.Ghost.Roles.Components; // CMU14
 using Content.Shared._RMC14.Xenonids.Construction.EggMorpher;
 using Content.Shared._RMC14.Xenonids.Egg;
 using Content.Shared._RMC14.Xenonids.Parasite;
 using Content.Shared._RMC14.Xenonids.Projectile.Parasite;
-using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
 using Content.Shared.Popups;
-using Robust.Shared.Configuration;
 using Robust.Shared.Network;
 using Robust.Shared.Player;
 using Robust.Shared.Timing;
@@ -16,19 +14,15 @@ namespace Content.Server._RMC14.Xenonids.Parasite;
 
 public sealed partial class XenoEggRoleSystem : EntitySystem
 {
-    private TimeSpan _parasiteSpawnDelay;
-
     [Dependency] private ActorSystem _actor = default!;
     [Dependency] private XenoEggSystem _eggSystem = default!;
     [Dependency] private XenoParasiteThrowerSystem _throwerSystem = default!;
     [Dependency] private EggMorpherSystem _eggMorpherSystem = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
-    [Dependency] private IGameTiming _gameTiming = default!;
     [Dependency] private GhostRoleSystem _ghostRole = default!;
+    [Dependency] private IGameTiming _timing = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private SharedUserInterfaceSystem _ui = default!;
-    [Dependency] private GameTicker _gameTicker = default!;
-    [Dependency] private IConfigurationManager _config = default!;
 
     public override void Initialize()
     {
@@ -51,13 +45,17 @@ public sealed partial class XenoEggRoleSystem : EntitySystem
         {
             subs.Event<XenoParasiteGhostBuiMsg>(OnParasiteGhostBuiChosen);
         });
-
-        Subs.CVar(_config, RMCCVars.RMCParasiteSpawnInitialDelayMinutes, v => _parasiteSpawnDelay = TimeSpan.FromMinutes(v), true);
     }
 
     private void OnXenoEggGhostBuiChosen(Entity<XenoEggComponent> ent, ref XenoParasiteGhostBuiMsg args)
     {
         var user = args.Actor;
+
+        if (!ent.Comp.CanSpawnGhostParasite)
+        {
+            _ui.CloseUi(ent.Owner, XenoParasiteGhostUI.Key);
+            return;
+        }
 
         if (!SharedChecks(ent, user))
             return;
@@ -114,6 +112,10 @@ public sealed partial class XenoEggRoleSystem : EntitySystem
         if (!SharedChecks(ent, user))
             return;
 
+        // CMU14: a parasite can lose its role while the selection window is open.
+        if (!TryComp<GhostRoleComponent>(ent, out var role) || role.Taken)
+            return;
+
         if (_actor.TryGetSession(user, out var session) && session != null)
         {
             _ghostRole.GhostRoleInternalCreateMindAndTransfer(session, ent.Owner, ent.Owner);
@@ -130,26 +132,22 @@ public sealed partial class XenoEggRoleSystem : EntitySystem
         if (_net.IsClient)
             return false;
 
-        if (!TryComp(user, out GhostComponent? ghostComp))
+        if (!TryComp(user, out GhostComponent? ghost))
             return false;
 
-        // Checks if the round has been going on long enough to allow player controlled parasites.
-        if (_gameTicker.RoundDuration() <= _parasiteSpawnDelay)
-        {
-            _popup.PopupEntity(Loc.GetString("rmc-xeno-egg-ghost-need-time-round", ("seconds", (int)(_parasiteSpawnDelay.TotalSeconds - _gameTicker.RoundDuration().TotalSeconds))), user, user, PopupType.MediumCaution);
-            return false;
-        }
-
-        // If the player previously successfully infected someone, they bypass the timer check entirely
         if (HasComp<InfectionSuccessComponent>(user))
             return true;
 
-        var timeSinceDeath = _gameTiming.CurTime.Subtract(ghostComp.TimeOfDeath);
-
-        // Must have been dead for 3 minutes
-        if (timeSinceDeath < TimeSpan.FromMinutes(3))
+        var timeSinceDeath = _timing.RealTime - ghost.TimeOfDeath;
+        var requiredTime = TimeSpan.FromMinutes(3);
+        if (timeSinceDeath < requiredTime)
         {
-            _popup.PopupEntity(Loc.GetString("rmc-xeno-egg-ghost-need-time", ("seconds", 180 - (int)timeSinceDeath.TotalSeconds)), user, user, PopupType.MediumCaution);
+            var remaining = (int) Math.Ceiling((requiredTime - timeSinceDeath).TotalSeconds);
+            _popup.PopupEntity(
+                Loc.GetString("rmc-xeno-egg-ghost-need-time", ("seconds", remaining)),
+                user,
+                user,
+                PopupType.MediumCaution);
             return false;
         }
 

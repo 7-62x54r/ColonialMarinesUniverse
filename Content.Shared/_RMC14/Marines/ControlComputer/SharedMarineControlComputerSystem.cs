@@ -1,4 +1,6 @@
 using Content.Shared._RMC14.AlertLevel;
+using Content.Shared._RMC14.ARES;
+using Content.Shared._RMC14.ARES.Logs;
 using Content.Shared._RMC14.Marines.Announce;
 using Content.Shared._RMC14.Commendations;
 using Content.Shared._RMC14.Dialog;
@@ -9,6 +11,7 @@ using Content.Shared._RMC14.Xenonids;
 using Content.Shared.CCVar;
 using Content.Shared.Database;
 using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
 using Content.Shared.Popups;
 using Content.Shared.UserInterface;
 using System.Globalization;
@@ -28,6 +31,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
     [Dependency] private RMCAlertLevelSystem _alertLevel = default!;
     [Dependency] private SharedCommendationSystem _commendation = default!;
     [Dependency] private IConfigurationManager _config = default!;
+    [Dependency] private ARESCoreSystem _core = default!;
     [Dependency] private DialogSystem _dialog = default!;
     [Dependency] private SharedEvacuationSystem _evacuation = default!;
     [Dependency] private SharedMarineAnnounceSystem _marineAnnounce = default!;
@@ -39,7 +43,16 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
     [Dependency] private SharedUserInterfaceSystem _ui = default!;
     [Dependency] private WarshipSystem _warship = default!;
 
+    private static readonly EntProtoId<ARESLogTypeComponent> LogCat = "ARESTabAnnouncementLogs";
+
     private int _characterLimit = 1000;
+
+    // CMU14: Admin command tablet flips the computer's announcement faction.
+    public void SetComputerFaction(Entity<MarineControlComputerComponent> computer, string faction)
+    {
+        computer.Comp.Faction = faction;
+        Dirty(computer);
+    }
 
     public override void Initialize()
     {
@@ -106,7 +119,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
 
             if (marine == actor)
             {
-                _popup.PopupClient(Loc.GetString("rmc-medal-error-self-award"), actor, PopupType.MediumCaution);
+                _popup.PopupSelf(Loc.GetString("rmc-medal-error-self-award"), actor, PopupType.MediumCaution);
                 return;
             }
         }
@@ -251,7 +264,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
 
     private void OnAlertLevel(Entity<MarineControlComputerComponent> ent, ref MarineControlComputerAlertLevelMsg args)
     {
-        var current = _alertLevel.Get();
+        var current = _alertLevel.Get(ent); // CMU14
         var options = new List<DialogOption>();
         foreach (var level in Enum.GetValues<RMCAlertLevels>())
         {
@@ -299,14 +312,18 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
 
         ent.Comp.LastShipAnnouncement = _timing.CurTime;
         var map = _warship.TryGetWarshipMap(ent, out var warshipMap) ? warshipMap : _transform.GetMapId(ent.Owner);
+        var faction = SharedMarineAnnounceSystem.ResolveAnnouncementFaction(ent.Comp.Faction);
         _marineAnnounce.AnnounceSigned(
             user,
             args.Message,
             Loc.GetString("rmc-announcement-author-shipside"),
             sound: SharedMarineAnnounceSystem.AresAnnouncementSound,
-            filter: Filter.BroadcastMap(map).RemoveWhereAttachedEntity(e => !HasComp<MarineComponent>(e) && !HasComp<GhostComponent>(e)),
-            excludeSurvivors: false
+            filter: Filter.BroadcastMap(map).RemoveWhereAttachedEntity(e => !IsShipAnnouncementRecipient(e, faction)),
+            excludeSurvivors: false,
+            faction: faction
         );
+
+        _core.CreateARESLog(ent, LogCat, (string) $"{Name(user)} sent a Warship Announcement: {args.Message}");
     }
 
     private void OnMedal(Entity<MarineControlComputerComponent> ent, ref MarineControlComputerMedalMsg args)
@@ -323,7 +340,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
     {
         if (!HasComp<CommendationGiverComponent>(args.Actor))
         {
-            _popup.PopupClient(Loc.GetString("rmc-medal-error-officer-only"), args.Actor, PopupType.MediumCaution);
+            _popup.PopupSelf(Loc.GetString("rmc-medal-error-officer-only"), args.Actor, PopupType.MediumCaution);
             return;
         }
 
@@ -370,7 +387,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
     {
         if (!HasComp<CommendationGiverComponent>(args.Actor))
         {
-            _popup.PopupClient(Loc.GetString("rmc-medal-error-officer-only"), args.Actor, PopupType.MediumCaution);
+            _popup.PopupSelf(Loc.GetString("rmc-medal-error-officer-only"), args.Actor, PopupType.MediumCaution);
             return;
         }
 
@@ -418,7 +435,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
     {
         if (!HasComp<CommendationGiverComponent>(args.Actor))
         {
-            _popup.PopupClient(Loc.GetString("rmc-medal-error-officer-only"), args.Actor, PopupType.MediumCaution);
+            _popup.PopupSelf(Loc.GetString("rmc-medal-error-officer-only"), args.Actor, PopupType.MediumCaution);
             return;
         }
 
@@ -446,7 +463,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
 
         if (!HasComp<CommendationGiverComponent>(actor))
         {
-            _popup.PopupClient(Loc.GetString("rmc-medal-error-officer-only"), actor, PopupType.MediumCaution);
+            _popup.PopupSelf(Loc.GetString("rmc-medal-error-officer-only"), actor, PopupType.MediumCaution);
             return;
         }
 
@@ -548,8 +565,6 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
         if (_net.IsClient)
             return;
 
-        var globalRedOrDelta = _alertLevel.IsRedOrDeltaAlert();
-
         // Build a lookup of faction → evacuation state from all active EvacuationProgressComponents
         var evacuations = new Dictionary<string, EvacuationProgressComponent>();
         var evacQuery = EntityQueryEnumerator<EvacuationProgressComponent>();
@@ -562,6 +577,7 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
         var computers = EntityQueryEnumerator<MarineControlComputerComponent>();
         while (computers.MoveNext(out var uid, out var computer))
         {
+            var redOrDelta = _alertLevel.IsRedOrDeltaAlert(uid); // CMU14
             bool canEvacuate;
             bool evacuating;
 
@@ -569,12 +585,12 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
             if (evacuations.TryGetValue(factionKey, out var matchedProgress))
             {
                 evacuating = matchedProgress.Enabled;
-                canEvacuate = matchedProgress.DropShipCrashed || evacuating || globalRedOrDelta;
+                canEvacuate = matchedProgress.DropShipCrashed || evacuating || redOrDelta;
             }
             else
             {
                 evacuating = false;
-                canEvacuate = globalRedOrDelta;
+                canEvacuate = redOrDelta;
             }
 
             computer.Evacuating = evacuating;
@@ -590,11 +606,19 @@ public abstract partial class SharedMarineControlComputerSystem : EntitySystem
             _timing.CurTime < ent.Comp.LastShipAnnouncement + cooldown)
         {
             var msg = Loc.GetString("rmc-announcement-cooldown", ("seconds", (int) cooldown.TotalSeconds));
-            _popup.PopupClient(msg, user);
+            _popup.PopupSelf(msg, user);
             return false;
         }
 
         return true;
+    }
+
+    private bool IsShipAnnouncementRecipient(EntityUid uid, string faction)
+    {
+        if (TryComp<MarineComponent>(uid, out var marine))
+            return SharedMarineAnnounceSystem.IsMarineAnnouncementRecipient(marine.Faction, faction);
+
+        return HasComp<GhostComponent>(uid);
     }
 
     public bool TryAddAwardRecommendation(MarineAwardRecommendationInfo recommendation)

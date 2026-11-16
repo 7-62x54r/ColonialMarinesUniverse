@@ -28,15 +28,14 @@ public sealed partial class MarineSystem : SharedMarineSystem
         if (!_prototypes.TryIndex<JobPrototype>(jobId, out var job) || !job.IsCM)
             return;
 
-        SpriteSpecifier? icon = null;
-        if (job.HasIcon && _prototypes.TryIndex(job.Icon, out var jobIcon))
-            icon = jobIcon.Icon;
-
-        MakeMarine(args.Mob, icon);
+        // SpriteSpecifier? icon = null;
+        // if (job.HasIcon && _prototypes.TryIndex(job.Icon, out var jobIcon))
+        //     icon = jobIcon.Icon;
+        MakeMarine(args.Mob, null, hideIcon: true);
 
         if (!_idCard.TryFindIdCard(ent, out var card))
             return;
 
-        card.Comp.OriginalOwner = ent.Owner;
+        _idCard.TryChangeOriginalOwner(card, ent.Owner, card.Comp);
     }
 }

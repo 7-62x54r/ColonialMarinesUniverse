@@ -4,6 +4,8 @@ using Content.Shared._RMC14.Marines.Skills;
 using Content.Shared._RMC14.Medical.Unrevivable;
 using Content.Shared._RMC14.ShakeStun;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Damage.Prototypes;
 using Content.Shared.DoAfter;
 using Content.Shared.Examine;
@@ -15,6 +17,7 @@ using Content.Shared.Mind;
 using Content.Shared.Mobs.Components;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Popups;
+using Content.Shared.Roles;
 using Content.Shared.Roles.Jobs;
 using Content.Shared.Verbs;
 using Robust.Shared.Network;
@@ -40,6 +43,9 @@ public sealed partial class CPRSystem : EntitySystem
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private RMCUnrevivableSystem _unrevivable = default!;
+    // cmu edit start
+    [Dependency] private Content.Shared.CMU14.Medical.CPR.CMUCPRMaskSystem _cmuCPRMask = default!;
+    // cmu edit end
 
     // TODO RMC14 move this to a component
     private static readonly ProtoId<DamageTypePrototype> HealType = "Asphyxiation";
@@ -100,20 +106,27 @@ public sealed partial class CPRSystem : EntitySystem
         }
 
         _unrevivable.AddRevivableTime(target, CPRCooldownSeconds);
+        // cmu edit start
+        _cmuCPRMask.AddMaskBonus(target, CPRCooldownSeconds);
+        // cmu edit end
 
-        if (!TryComp(target, out DamageableComponent? damageable) ||
-            !damageable.Damage.DamageDict.TryGetValue(HealType, out damage))
+        // cmu edit start
+        if (TryComp(target, out DamageableComponent? damageable) &&
+            _damageable.GetAllDamage((target, damageable)).DamageDict.TryGetValue(HealType, out damage))
         {
-            return;
+            var heal = -FixedPoint2.Min(damage, HealAmount);
+            var healSpecifier = new DamageSpecifier();
+            healSpecifier.DamageDict.Add(HealType, heal);
+            _damageable.TryChangeDamage(target, healSpecifier, true);
         }
-
-        var heal = -FixedPoint2.Min(damage, HealAmount);
-        var healSpecifier = new DamageSpecifier();
-        healSpecifier.DamageDict.Add(HealType, heal);
-        _damageable.TryChangeDamage(target, healSpecifier, true);
+        // cmu edit end
 
         var received = EnsureComp<CPRReceivedComponent>(target);
         received.Last = _timing.CurTime;
+
+        // cmu edit start: hair and skin samples between performer and patient
+        EntityManager.System<Content.Shared.Forensics.Systems.ForensicsSystem>().CMUApplyPersonContact(performer, target);
+        // cmu edit end
 
         if (_net.IsClient)
             return;
@@ -376,17 +389,25 @@ public sealed partial class CPRSystem : EntitySystem
 
     private void TryResetDummyCounter(Entity<CPRDummyComponent> ent, EntityUid user)
     {
+        bool hasAccess = false;
         _mind.TryGetMind(user, out var mindId, out _);
-        if (!_job.MindTryGetJobId(mindId, out var jobId) || !ent.Comp.ResetCPRCounterJobs.Contains(jobId!.Value))
+        if (_job.MindTryGetJobId(mindId, out var jobId))
         {
-            if (_net.IsClient)
-                return;
+            hasAccess = ent.Comp.ResetCPRCounterJobs.Contains(jobId!.Value);
+            if (!hasAccess
+                && _prototypes.TryIndex(jobId.Value, out JobPrototype? jobProto)
+                && jobProto != null)
+            {
+                var firstParent = jobProto.Parents?.FirstOrDefault();
+                if (firstParent != null)
+                    hasAccess = ent.Comp.ResetCPRCounterJobs.Contains(firstParent);
+            }
+        }
 
-            var jobNames = ent.Comp.ResetCPRCounterJobs
-                .Select(job => _prototypes.Index(job).LocalizedName)
-                .ToList();
-            var jobsString = string.Join("; ", jobNames);
-            _popups.PopupEntity(Loc.GetString("rmc-cpr-dummy-reset-denied", ("jobs", jobsString)), ent, user, PopupType.MediumCaution);
+        if (!hasAccess)
+        {
+            if (!_net.IsClient)
+                ShowResetDeniedPopup(ent, user);
             return;
         }
 
@@ -394,9 +415,14 @@ public sealed partial class CPRSystem : EntitySystem
         ent.Comp.CPRFailed = 0;
         Dirty(ent);
 
-        if (_net.IsClient)
-            return;
+        if (!_net.IsClient)
+            _popups.PopupEntity(Loc.GetString("rmc-cpr-dummy-reset-success"), ent, user, PopupType.Medium);
+    }
 
-        _popups.PopupEntity(Loc.GetString("rmc-cpr-dummy-reset-success"), ent, user, PopupType.Medium);
+    private void ShowResetDeniedPopup(Entity<CPRDummyComponent> ent, EntityUid user)
+    {
+        var jobNames = ent.Comp.ResetCPRCounterJobs.Select(job => _prototypes.Index(job).LocalizedName).ToList();
+        var jobsString = string.Join("; ", jobNames);
+        _popups.PopupEntity(Loc.GetString("rmc-cpr-dummy-reset-denied", ("jobs", jobsString)), ent, user, PopupType.MediumCaution);
     }
 }

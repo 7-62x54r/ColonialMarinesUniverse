@@ -1,5 +1,5 @@
 using System.Linq;
-using Content.Shared._CMU14.Blackfoot;
+using Content.Shared.CMU14.Blackfoot;
 using Content.Shared._RMC14.Atmos;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Damage;
@@ -7,11 +7,14 @@ using Content.Shared._RMC14.Entrenching;
 using Content.Shared._RMC14.IdentityManagement;
 using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Medical.Scanner;
+using Content.Shared._RMC14.Mentor.ImaginaryFriend;
 using Content.Shared._RMC14.NightVision;
+using Content.Shared._RMC14.QueenSpawned;
 using Content.Shared._RMC14.Rules;
 using Content.Shared._RMC14.Tackle;
 using Content.Shared._RMC14.Vendors;
 using Content.Shared._RMC14.Weapons.Melee;
+using Content.Shared._RMC14.Xenonids.Construction;
 using Content.Shared._RMC14.Xenonids.Construction.Nest;
 using Content.Shared._RMC14.Xenonids.Devour;
 using Content.Shared._RMC14.Xenonids.Egg;
@@ -32,6 +35,7 @@ using Content.Shared.Buckle.Components;
 using Content.Shared.Chat;
 using Content.Shared.CombatMode;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
 using Content.Shared.Damage.Prototypes;
 using Content.Shared.Damage.Systems;
 using Content.Shared.DragDrop;
@@ -62,6 +66,8 @@ namespace Content.Shared._RMC14.Xenonids;
 
 public sealed partial class XenoSystem : EntitySystem
 {
+    private const string SpawnMuteStatus = "Muted";
+
     [Dependency] private SharedActionsSystem _action = default!;
     [Dependency] private IConfigurationManager _config = default!;
     [Dependency] private DamageableSystem _damageable = default!;
@@ -70,6 +76,7 @@ public sealed partial class XenoSystem : EntitySystem
     [Dependency] private SharedHandsSystem _hands = default!;
     [Dependency] private SharedXenoHiveSystem _hive = default!;
     [Dependency] private HiveLeaderSystem _hiveLeader = default!;
+    [Dependency] private SharedImaginaryFriendSystem _imaginaryFriend = default!;
     [Dependency] private MobStateSystem _mobState = default!;
     [Dependency] private MobThresholdSystem _mobThresholds = default!;
     [Dependency] private MovementSpeedModifierSystem _movementSpeed = default!;
@@ -174,13 +181,18 @@ public sealed partial class XenoSystem : EntitySystem
         }
 
         if (!MathHelper.CloseTo(_xenoSpeedMultiplier, 1))
-            _movementSpeed.RefreshMovementSpeedModifiers(xeno);
+            _movementSpeed.RefreshMovementSpeedModifiers((xeno.Owner, null));
 
         if (xeno.Comp.MuteOnSpawn)
-            _status.TryAddStatusEffect(xeno, "Muted", _xenoSpawnMuteDuration, true, "Muted");
+            _status.TryAddStatusEffect(xeno, SpawnMuteStatus, _xenoSpawnMuteDuration, true, SpawnMuteStatus);
 
         _eye.RefreshVisibilityMask(xeno.Owner);
         Dirty(xeno);
+
+        if (xeno.Comp.Role == "CMXenoQueen")
+        {
+            RaiseLocalEvent(new QueenSpawnedEvent(xeno.Owner));
+        }
     }
 
     private void OnXenoGetAdditionalAccess(Entity<XenoComponent> xeno, ref GetAccessTagsEvent args)
@@ -203,16 +215,50 @@ public sealed partial class XenoSystem : EntitySystem
     {
         var oldRotation = _transform.GetWorldRotation(args.OldXeno);
         _transform.SetWorldRotation(newXeno, oldRotation);
+
+        TransferSpawnMute(args.OldXeno, newXeno);
+        _imaginaryFriend.TryTransferFriends(args.OldXeno, newXeno);
     }
 
     private void OnXenoDevolved(Entity<XenoComponent> newXeno, ref XenoDevolvedEvent args)
     {
         var oldRotation = _transform.GetWorldRotation(args.OldXeno);
         _transform.SetWorldRotation(newXeno, oldRotation);
+
+        TransferSpawnMute(args.OldXeno, newXeno);
+        _imaginaryFriend.TryTransferFriends(args.OldXeno, newXeno);
+    }
+
+    private void TransferSpawnMute(EntityUid oldXeno, Entity<XenoComponent> newXeno)
+    {
+        if (!newXeno.Comp.MuteOnSpawn)
+            return;
+
+        if (!_status.TryGetTime(oldXeno, SpawnMuteStatus, out var oldMuteTime))
+        {
+            _status.TryRemoveStatusEffect(newXeno, SpawnMuteStatus);
+            return;
+        }
+
+        var remaining = oldMuteTime.Value.Item2 - _timing.CurTime;
+        if (remaining <= TimeSpan.Zero)
+        {
+            _status.TryRemoveStatusEffect(newXeno, SpawnMuteStatus);
+            return;
+        }
+
+        _status.TryRemoveStatusEffect(newXeno, SpawnMuteStatus);
+        _status.TryAddStatusEffect(newXeno, SpawnMuteStatus, remaining, true, SpawnMuteStatus);
     }
 
     private void OnXenoHealthScannerAttemptTarget(Entity<XenoComponent> ent, ref HealthScannerAttemptTargetEvent args)
     {
+        // CMU14: yautja analyzers are built to read xeno physiology
+        if (args.Scanner is { } scannerUid
+            && TryComp<HealthScannerComponent>(scannerUid, out var scannerComp)
+            && scannerComp.AllowXenoTargets)
+            return;
+
         args.Popup = "The scanner can't make sense of this creature.";
         args.Cancelled = true;
     }
@@ -229,7 +275,9 @@ public sealed partial class XenoSystem : EntitySystem
 
         // TODO RMC14 this still falsely plays the hit red flash effect on xenos if others are hit in a wide swing
         if ((_xenoFriendlyQuery.HasComp(target) && _hive.FromSameHive(xeno.Owner, target)) ||
-            _mobState.IsDead(target))
+            _mobState.IsDead(target) ||
+            (_hive.IsAllyOfHive(target, _hive.GetHive(xeno.Owner)) && !HasComp<XenoConstructComponent>(target) &&
+            !HasComp<HiveConstructionNodeComponent>(target)))
         {
             if (!args.Disarm)
                 args.Cancel();
@@ -248,7 +296,10 @@ public sealed partial class XenoSystem : EntitySystem
     {
         if (!TryComp<XenoNestComponent>(GetEntity(args.Target), out var nest) ||
             nest.Nested == null ||
-            !_hive.FromSameHive(xeno.Owner, GetEntity(args.Target)))
+            !_hive.FromSameHive(xeno.Owner, GetEntity(args.Target)) ||
+            (!_hive.IsAllyOfHive(GetEntity(args.Target), _hive.GetHive(xeno.Owner)) &&
+            !HasComp<XenoConstructComponent>(GetEntity(args.Target)) &&
+            !HasComp<HiveConstructionNodeComponent>(GetEntity(args.Target))))
         {
             return;
         }
@@ -312,10 +363,14 @@ public sealed partial class XenoSystem : EntitySystem
 
     private void OnXenoMeleeHit(Entity<XenoComponent> xeno, ref MeleeHitEvent args)
     {
+        // CMU14 XenoClawSlash: mark the swing so CMArmorSystem can apply the XVX slash multiplier per target -
+        // a swing that catches a marine and a xeno must not boost the marine.
+        if (args.IsHit)
+            args.Impact = args.Impact with { Context = args.Impact.Context | DamageImpactContext.XenoClaw };
+
         foreach (var hit in args.HitEntities)
         {
-            SharedEntityStorageComponent? storage = null;
-            if (!_entityStorage.ResolveStorage(hit, ref storage))
+            if (!TryComp<EntityStorageComponent>(hit, out var storage))
                 continue;
 
             if (_weldable.IsWelded(hit))
@@ -407,7 +462,7 @@ public sealed partial class XenoSystem : EntitySystem
         var xenos = EntityQueryEnumerator<XenoComponent, MovementSpeedModifierComponent>();
         while (xenos.MoveNext(out var uid, out _, out var comp))
         {
-            _movementSpeed.RefreshMovementSpeedModifiers(uid, comp);
+            _movementSpeed.RefreshMovementSpeedModifiers((uid, comp));
         }
     }
 
@@ -458,11 +513,12 @@ public sealed partial class XenoSystem : EntitySystem
         if (_rmcFlammable.IsOnFire(xeno.Owner))
             return;
 
-        if (!_damageableQuery.Resolve(xeno, ref xeno.Comp, false) ||
-            xeno.Comp.Damage.GetTotal() <= FixedPoint2.Zero)
-        {
+        if (!_damageableQuery.Resolve(xeno, ref xeno.Comp, false))
             return;
-        }
+
+        var currentDamage = _damageable.GetAllDamage(xeno);
+        if (currentDamage.GetTotal() <= FixedPoint2.Zero)
+            return;
 
         if (_mobStateQuery.TryGetComponent(xeno, out var mobState) &&
             _mobState.IsDead(xeno, mobState))
@@ -510,6 +566,11 @@ public sealed partial class XenoSystem : EntitySystem
 
         return HasComp<MarineComponent>(target) || HasComp<XenoComponent>(target);
     }
+
+    // CMU14 method: the Blackfoot is a valid ability target so strikes and spits can damage
+    // it, but hitting it must never pay out xeno rewards; those come from creatures only
+    public bool CanGainRewardsFromTarget(EntityUid xeno, EntityUid target)
+        => CanAbilityAttackTarget(xeno, target) && !HasComp<BlackfootFlightComponent>(target);
 
     public bool CanHeal(EntityUid xeno)
     {

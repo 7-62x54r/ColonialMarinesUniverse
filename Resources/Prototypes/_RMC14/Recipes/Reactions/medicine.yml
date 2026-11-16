@@ -68,6 +68,7 @@
 
 - type: reaction
   id: CMDexalin
+  quantized: true
   reactants:
     RMCOxygen:
       amount: 2
@@ -183,6 +184,110 @@
     CMUOxycodone: 3
 
 - type: reaction
+  id: CMUFentanylPrecursor
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  reactants:
+    CMUOxycodone:
+      amount: 1
+    RMCCLF3:
+      amount: 1
+  products:
+    CMUFentanylPrecursor: 2
+
+- type: reaction
+  id: CMUFentanyl
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  minTemp: 370 # CMU14: the cooking step needs a heat source
+  reactants:
+    CMUFentanylPrecursor:
+      amount: 1
+    CMEpinephrine:
+      amount: 1
+    RMCPhosphorus:
+      amount: 1
+  # CMU14 Begin: cooking gas leak cut, colony cook rooms have no atmos counterplay
+  # effects:
+  # - !type:CreateGas
+  #   gas: NitrousOxide
+  #   moles: 1
+  # CMU14 End
+  products:
+    CMUFentanyl: 1
+
+- type: reaction
+  id: CMUMethPrecursor
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  reactants:
+    RMCMethylphenidate:
+      amount: 2
+    RMCChlorine:
+      amount: 1
+    RMCPhosphorus:
+      amount: 1
+  # CMU14 Begin: cooking gas leak cut
+  # effects:
+  # - !type:CreateGas
+  #   gas: Ammonia
+  #   moles: 1
+  # CMU14 End
+  products:
+    CMUMethPrecursor: 3
+
+- type: reaction
+  id: CMUMethBase
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  minTemp: 380 # CMU14: heated reduction at 380 K (above a microwave's 373 K); any heat source works
+  reactants:
+    CMUMethPrecursor:
+      amount: 1
+    RMCSulphuricAcid:
+      amount: 1
+    RMCCarbon:
+      amount: 1
+  products:
+    CMUMethBase: 2
+
+- type: reaction
+  id: CMUMethamphetamine
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  minTemp: 380 # CMU14: heated reduction at 380 K (above a microwave's 373 K); any heat source works
+  reactants:
+    CMUMethBase:
+      amount: 1
+    RMCEthanol:
+      amount: 1
+  products:
+    CMUMethamphetamine: 2
+
+- type: reaction
+  id: CMUSleen
+  reactants:
+    CMUOxycodone:
+      amount: 1
+    CMUTramadol:
+      amount: 1
+    RMCEthanol:
+      amount: 1
+    CMInaprovaline:
+      amount: 1
+  products:
+    CMUSleen: 4
+
+- type: reaction
+  id: CMUSoporific
+  reactants:
+    RMCChloralhydrate:
+      amount: 1
+    RMCChlorine:
+      amount: 1
+    RMCEthanol:
+      amount: 1
+    RMCSugar:
+      amount: 1
+  products:
+    CMUSoporific: 4
+
+- type: reaction
   id: CMUHepatocytin
   reactants:
     CMDylovene:
@@ -243,7 +348,21 @@
     CMUOsteoCalc: 3
 
 - type: reaction
+  id: CMUAlkysine
+  reactants:
+    RMCChlorine:
+      amount: 1
+    RMCNitrogen:
+      amount: 1
+    CMDylovene:
+      amount: 1
+  products:
+    CMUAlkysine: 3
+
+- type: reaction
   id: CMUBiogenicMatrix
+  requiredMixerCategories: # CMU14: only reacts when mixed (lid-closed Mix verb or a detonating payload)
+  - CMUMix
   reactants:
     CMBicaridine:
       amount: 2
@@ -301,8 +420,6 @@
 - type: reaction
   id: RMCMethylphenidate
   reactants:
-    RMCBlackGoo: # TODO RMC14 remove this later
-      amount: 0.5
     RMCMindbreakerToxin:
       amount: 1
     RMCHydrogen:
@@ -313,8 +430,6 @@
 - type: reaction
   id: RMCCitalopram
   reactants:
-    RMCBlackGoo: # TODO RMC14 remove this later
-      amount: 0.5
     RMCMindbreakerToxin:
       amount: 1
     RMCCarbon:
@@ -325,8 +440,6 @@
 - type: reaction
   id: RMCParoxetine
   reactants:
-    RMCBlackGoo: # TODO RMC14 remove this later
-      amount: 0.5
     RMCMindbreakerToxin:
       amount: 1
     RMCOxygen:
@@ -347,3 +460,17 @@
       amount: 1
   products:
     RMCLipozine: 3
+
+- type: reaction
+  id: RMCRussianRed
+  reactants:
+    RMCEthanol:
+      amount: 1
+    CMArithrazine:
+      amount: 1
+    CMTricordrazine:
+      amount: 1
+  products:
+    RMCRussianRed: 3
+
+

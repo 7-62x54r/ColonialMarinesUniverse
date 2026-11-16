@@ -1,12 +1,102 @@
+using Content.Shared._RMC14.Dropship.AttachmentPoint;
+using Content.Shared.CMU14.Dropship.DirectFire;
+using Content.Shared.CMU14.Dropship.Cas;
 using Robust.Shared.GameStates;
+using Robust.Shared.Map;
 using Robust.Shared.Serialization;
 
 namespace Content.Shared._RMC14.Dropship.Weapon;
 
 [RegisterComponent, NetworkedComponent, AutoGenerateComponentState(true)]
-[Access(typeof(SharedDropshipWeaponSystem))]
+[Access(typeof(SharedDropshipWeaponSystem), typeof(DropshipFireControlBootSystem), typeof(CMUCasRequestSystem), typeof(MohawkChinGunSystem))]
 public sealed partial class DropshipTerminalWeaponsComponent : Component
 {
+    [DataField, AutoNetworkedField]
+    public bool Gunnery; // CMU14: dedicated chin-gun console
+
+    // CMU14: fire control boot status, shown on the weapons console.
+    [DataField, AutoNetworkedField] public bool FireControlBooting;
+    [DataField, AutoNetworkedField] public string FireControlStatus = "";
+
+    [DataField, AutoNetworkedField]
+    public List<CMUCasRequest> CasRequests = new();
+
+    public EntityCoordinates? DangerCloseTarget;
+    public TimeSpan DangerCloseExpires;
+    // CMU14 Begin: dedicated M90 gunnery state.
+    [DataField, AutoNetworkedField]
+    public EntityUid? ChinGunOperator;
+
+    [DataField, AutoNetworkedField]
+    public EntityUid? ChinGunEye;
+
+    [DataField, AutoNetworkedField]
+    public EntityUid? TrackedTarget;
+
+    [DataField, AutoNetworkedField]
+    public bool TrackingFireConfirmed;
+
+    [DataField, AutoNetworkedField]
+    public MohawkTargetPriority ChinGunPriority;
+
+    [DataField, AutoNetworkedField]
+    public bool ChinGunAirborne;
+
+    [DataField, AutoNetworkedField]
+    public float ChinGunFlareRadius = 10f;
+
+    [DataField, AutoNetworkedField]
+    public int ChinGunFreeFireCooldown;
+
+    [DataField, AutoNetworkedField]
+    public bool ChinGunDisabled;
+
+    [DataField, AutoNetworkedField]
+    public int ChinGunHealth = 2000;
+
+    [DataField, AutoNetworkedField]
+    public bool ChinGunAr;
+
+    [DataField, AutoNetworkedField] public bool ChinGunIff = true;
+    [DataField, AutoNetworkedField] public MohawkIffOverride ChinGunIffOverride;
+    [DataField, AutoNetworkedField] public bool ChinGunSetupReady;
+    [DataField, AutoNetworkedField] public bool ChinGunAiEnabled;
+    [DataField, AutoNetworkedField] public EntityUid? ChinGunAiTarget;
+    [DataField, AutoNetworkedField] public bool ChinGunAiApproved;
+    [DataField, AutoNetworkedField] public MohawkChinGunVisionMode ChinGunVision;
+
+    /// <summary>The ship is in flight, so AI-selected chin gun targets need gunner approval.</summary>
+    [DataField, AutoNetworkedField] public bool ChinGunInFlight;
+    [DataField, AutoNetworkedField] public int ChinGunHeat;
+    [DataField, AutoNetworkedField] public int ChinGunMaxHeat = 100;
+    [DataField, AutoNetworkedField] public bool ChinGunOverheated;
+
+    /// <summary>Flare the gunner has locked with the chin gun, shared with every console on the ship.</summary>
+    [DataField, AutoNetworkedField] public EntityUid? GunnerFlare;
+
+    /// <summary>Flare the pilot has selected for CAS, shared with every console on the ship.</summary>
+    [DataField, AutoNetworkedField] public EntityUid? PilotFlare;
+
+    [DataField, AutoNetworkedField]
+    public int ChinGunFeed;
+
+    [DataField, AutoNetworkedField]
+    public bool ChinGunAlternateFeeds;
+
+    [DataField, AutoNetworkedField]
+    public string ChinGunFeedOne = "";
+
+    [DataField, AutoNetworkedField]
+    public string ChinGunFeedTwo = "";
+
+    [DataField, AutoNetworkedField]
+    public string ChinGunFeedThree = "";
+
+    /// <summary>Feeds under a quarter of a full crate, shown as a warning to the gunner.</summary>
+    [DataField, AutoNetworkedField]
+    public string ChinGunLowAmmo = "";
+    // CMU14 End
+
     [DataField, AutoNetworkedField]
     public Screen ScreenOne;
 
@@ -43,13 +133,87 @@ public sealed partial class DropshipTerminalWeaponsComponent : Component
     [DataField, AutoNetworkedField]
     public bool NightVision;
 
+    /// <summary>
+    ///     The entity being looked at by the camera view.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public EntityUid? CameraTarget;
+
+    /// <summary>
+    ///     A list of all fire missions currently stored on this component.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public List<FireMissionData> FireMissions = [];
+
+    /// <summary>
+    ///     The ID of the fire mission currently being viewed or edited on screen one.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public int? ScreenOneViewingFireMissionId;
+
+    /// <summary>
+    ///     The ID of the fire mission currently being viewed or edited on screen two.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public int? ScreenTwoViewingFireMissionId;
+
+    /// <summary>
+    ///     The lowest timing at which a weapon offset can be set.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public int MinTiming = 1;
+
+    /// <summary>
+    ///     The maximum length of the fire mission.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public int MaxTiming = 12;
+
+    /// <summary>
+    ///     The offsets allowed to be used for a weapon during a fire mission based on the <see cref="DropshipWeaponPointLocation"/>
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public Dictionary<DropshipWeaponPointLocation, List<int?>> AllowedOffsets = new()
+    {
+        { DropshipWeaponPointLocation.PortFore, new List<int?> { -6, -5, -4, -3, -2, -1, 0, null } },
+        { DropshipWeaponPointLocation.PortWing, new List<int?> { -6, -5, -4, -3, -2, -1, 0, null } },
+        { DropshipWeaponPointLocation.StarboardFore, new List<int?> { null, 0, 1, 2, 3, 4, 5, 6 } },
+        { DropshipWeaponPointLocation.StarboardWing, new List<int?> { null, 0, 1, 2, 3, 4, 5, 6 } },
+        { DropshipWeaponPointLocation.Internal, new List<int?> { -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, null } },
+    };
+
+    /// <summary>
+    ///     The direction in which the fire mission will advance.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public Direction StrikeVector = Direction.North;
+
+    [DataField, AutoNetworkedField]
+    public int ScreenOneFireMissionPage;
+
+    [DataField, AutoNetworkedField]
+    public int ScreenTwoFireMissionPage;
+
+    /// <summary>
+    ///     The max length of a fire mission's name. Values higher than 40 might mess up how some of the UI looks.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public int MaxFireMissionNameLength = 40;
+
     [DataRecord]
     [Serializable, NetSerializable]
-    public partial record struct Screen(
-        DropshipTerminalWeaponsScreen State,
-        NetEntity? Weapon,
-        NetEntity? System
-    );
+    public partial record struct Screen
+    {
+        public Screen()
+        {
+        }
+
+        public DropshipTerminalWeaponsScreen State { get; set; }
+        public NetEntity? Weapon { get; set; }
+        public NetEntity? System { get; set; }
+        public int? FireMissionId { get; set; }
+        public bool QuickMode { get; set; }
+    }
 
     [DataRecord]
     [Serializable, NetSerializable]
@@ -57,4 +221,35 @@ public sealed partial class DropshipTerminalWeaponsComponent : Component
         NetEntity Id,
         string Name
     );
+}
+
+[Serializable, NetSerializable]
+public readonly record struct WeaponOffsetData(
+    NetEntity WeaponId,
+    int Step,
+    int? Offset
+);
+
+[Serializable, NetSerializable]
+public readonly record struct FireMissionData(
+    int Id,
+    string Name,
+    List<WeaponOffsetData> WeaponOffsets
+);
+
+public sealed class WeaponDisplayInfo
+{
+    public string Name { get; set; } = "";
+    public int Ammo { get; set; }
+    public int MaxAmmo { get; set; }
+    public int AmmoConsumption { get; set; }
+    public int FireDelay { get; set; }
+    public List<WeaponOffsetData> Offsets { get; set; } = [];
+}
+
+[Serializable, NetSerializable]
+public enum DropshipWeaponStrikeType
+{
+    Direct,
+    FireMission,
 }

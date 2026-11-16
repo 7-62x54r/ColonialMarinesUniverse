@@ -1,6 +1,7 @@
-﻿- type: entity
+- type: entity
   id: RMCGeneratorFusionFake
   name: permanently destroyed S-52 fusion reactor
+  suffix: RMC # CMU14
   placement:
     mode: SnapgridCenter
   components:
@@ -31,6 +32,7 @@
   parent: RMCGeneratorFusionFake
   id: RMCGeneratorFusion
   name: S-52 fusion reactor
+  suffix: RMC # CMU14
   placement:
     mode: SnapgridCenter
   components:
@@ -68,6 +70,7 @@
   parent: RMCGeneratorFusion
   id: RMCGeneratorFusionColony
   name: G-11 geothermal generator
+  suffix: RMC # CMU14
   description: A thermoelectric generator sitting atop a plasma-filled borehole.
   components:
   - type: RMCFusionReactor
@@ -101,7 +104,7 @@
 - type: entity
   parent: RMCGeneratorFusionColony
   id: RMCGeneratorFusionColonyNoMapIcon
-  suffix: No Map Icon
+  suffix: RMC, No Map Icon # CMU14
   components:
   - type: RemoveComponents
     components:
@@ -117,7 +120,8 @@
   parent: BaseItem
   id: RMCGeneratorFusionCell
   name: WL-6 universal fuel cell
-  description: A rechargeable fuel cell.
+  suffix: RMC # CMU14
+  description: A rechargeable fuel cell for fusion reactors. # CMU14: cells no longer expire
   components:
   - type: Sprite
     sprite: _RMC14/Objects/Power/fusion_fuel_cell.rsi
@@ -125,12 +129,18 @@
   - type: Item
     size: Normal
   - type: RMCFusionCell
+  # CMU14: fuel cell no longer expires
+  #- type: AUFusionCellExpiry
 
 - type: entity
   abstract: true
-  id: RMCPortableGeneratorBase # TODO RMC14 - Functionality
   parent: [ BaseMachine, SmallConstructibleMachine, StructureWheeled]
+  id: RMCPortableGeneratorBase
+  suffix: RMC # CMU14
   components:
+    - type: XenoCrusherChargable
+      instantDestroy: true
+      passOnDestroy: true
     - type: GuideHelp
       guides:
       - RMCGuideRoleCombatTechnician
@@ -153,6 +163,26 @@
     - type: Sprite
       sprite: _RMC14/Structures/Power/generators.rsi
       noRot: true
+    - type: InteractionOutline
+    - type: Corrodible
+      isCorrodible: false
+    - type: RMCPortableGenerator
+    - type: UserInterface
+      interfaces:
+        enum.RMCPortableGeneratorUiKey.Key:
+          type: RMCPortableGeneratorBui
+    - type: ActivatableUI
+      key: enum.RMCPortableGeneratorUiKey.Key
+    - type: ActivatableUIBlacklist
+      blacklist:
+        components:
+        - Xeno
+    - type: AmbientSound
+      range: 5
+      volume: -5
+      sound:
+        path: /Audio/Ambience/Objects/engine_hum.ogg
+      enabled: false
     - type: Destructible
       thresholds:
         - trigger:
@@ -178,19 +208,39 @@
   id: RMCPortableGenerator
   name: "P.A.C.M.A.N.-type Portable Generator"
   description: A portable generator for emergency backup power.
+  suffix: RMC # CMU14
   components:
     - type: Sprite
       state: portgen0
     - type: Machine
       board: RMCPortableGeneratorPacmanMachineCircuitBoard
+    - type: RMCPortableGenerator
+      watts: 5000
+      timePerSheet: 70
+      fuelStackType: CMPhoron
+      fuelEntity: CMSheetPhoron1
+      fuelName: phoron
+      explosionIntensity: 50
+      explosionSlope: 5
+      explosionMaxIntensity: 10
 
 - type: entity
   parent: RMCPortableGeneratorBase
   id: RMCPortableGenerator2
   name: "S.U.P.E.R.P.A.C.M.A.N.-type Portable Generator"
   description: A portable generator for emergency backup power.
+  suffix: RMC # CMU14
   components:
     - type: Sprite
       state: portgen1
     - type: Machine
       board: RMCPortableGeneratorSuperPacmanMachineCircuitboard
+    - type: RMCPortableGenerator
+      watts: 15000
+      timePerSheet: 120
+      fuelStackType: Uranium
+      fuelEntity: SheetUranium1
+      fuelName: uranium
+      explosionIntensity: 80
+      explosionSlope: 3
+      explosionMaxIntensity: 15

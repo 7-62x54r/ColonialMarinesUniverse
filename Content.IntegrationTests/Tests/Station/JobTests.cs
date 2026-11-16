@@ -1,14 +1,18 @@
 using System.Linq;
-using Robust.Shared.Prototypes;
+using Content.IntegrationTests.Fixtures;
+using Content.Server.Jobs;
+using Content.Shared._RMC14.Chat;
 using Content.Shared.Roles;
 using Content.Shared.Roles.Jobs;
+using Robust.Shared.Prototypes;
 
 namespace Content.IntegrationTests.Tests.Station;
 
 [TestFixture]
 [TestOf(typeof(SharedJobSystem))]
-public sealed class JobTest
+public sealed class JobTest : GameTest
 {
+
     /// <summary>
     /// Ensures that every job belongs to at most 1 primary department.
     /// Having no primary or multiple EditorHidden departments is ok.
@@ -16,14 +20,14 @@ public sealed class JobTest
     [Test]
     public async Task PrimaryDepartmentsTest()
     {
-        await using var pair = await PoolManager.GetServerClient();
+        var pair = Pair;
         var server = pair.Server;
 
         var prototypeManager = server.ResolveDependency<IPrototypeManager>();
 
         await server.WaitAssertion(() =>
         {
-            var exemptDepartments = new[] { "AU14DepartmentColonyCommand", "AU14DepartmentThreat" };
+            var exemptDepartments = new[] { "AU14DepartmentColonyCommand", "AU14DepartmentThreat", "AU14DepartmentThirdParty" };
 
             // only checking primary departments so don't bother with others
             var departments = prototypeManager.EnumeratePrototypes<DepartmentPrototype>()
@@ -47,6 +51,6 @@ public sealed class JobTest
                 }
             }
         });
-        await pair.CleanReturnAsync();
     }
+
 }

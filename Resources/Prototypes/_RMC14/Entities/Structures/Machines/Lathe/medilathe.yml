@@ -131,9 +131,10 @@
   - CMBoneGel
   #    - RMC Spray bottle (500 plastic)->(625)
   - CMBloodPack
+  - CMUSynthBloodPack # CMU14
   - RMCBeakerHighCapacity
   - CMBonesetter
-  #    - FixOVein (5000 Plastic)->(6250)
+  - CMUFixOVein
   - CMStasisBag
   - CMRollerBed
   - AU14PortableSurgicalBed
@@ -144,6 +145,7 @@
   - CMHandLabeler
   - CMSurgicalCase
   - RMCSurgicalTrayEmpty
+  - RMCVial
   - RMCVialBox
   - CMScalpel
   - CMCircularSaw
@@ -156,3 +158,4 @@
   - AU14IVFoldableFolded
   - CMUSplintItem
   - CMUOrganClamp
+  - CMU14StandardMedkitRecipe

@@ -1,11 +1,17 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
+using Content.Client.Administration.Managers;
 using Content.Client.Administration.Systems;
+using Content.Client.CMU14.HelpRelay.BugHelp; // CMU14: bug report window, opened from the third choice card
+using Content.Client.CMU14.Interface; // CMU14: CRT palette, colors the mentor help intro header
 using Content.Client.Lobby.UI;
 using Content.Client.Stylesheets;
 using Content.Client.UserInterface.Systems.Bwoink;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Mentor;
+using Content.Shared.CMU14.HelpRelay.BugHelp; // CMU14: promotion message from the staff window
+using Content.Shared.CCVar;
 using Content.Shared.Input;
 using Robust.Client.Audio;
 using Robust.Client.Graphics;
@@ -28,6 +34,8 @@ namespace Content.Client._RMC14.Mentor;
 public sealed partial class StaffHelpUIController : UIController, IOnSystemChanged<BwoinkSystem>
 {
     [Dependency] private AHelpUIController _aHelp = default!;
+    [Dependency] private BugHelpUIController _bugHelp = default!; // CMU14
+    [Dependency] private IClientAdminManager _adminManager = default!; // CMU14
     [Dependency] private IClyde _clyde = default!;
     [Dependency] private IConfigurationManager _config = default!;
     [Dependency] private INetManager _net = default!;
@@ -39,6 +47,8 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
     private readonly Dictionary<NetUserId, string> _destinationNames = new();
     private readonly Dictionary<NetUserId, (List<string> People, CancellationTokenSource Cancel)> _peopleTyping = new();
     private readonly Dictionary<NetUserId, List<string>> _claims = new();
+    private readonly Dictionary<NetUserId, bool> _unreadByPlayer = new();
+    private readonly Dictionary<NetUserId, DateTime> _lastMessageTime = new();
 
     public bool IsMentor { get; private set; }
     private bool _canReMentor;
@@ -46,6 +56,7 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
     private MentorHelpWindow? _mentorHelpWindow;
     private MentorWindow? _mentorWindow;
     private SoundSpecifier? _mHelpSound;
+    private bool _bwoinkSoundEnabled; // CMU14
     private bool _unread;
     private (TimeSpan Timestamp, bool Typing) _lastTypingUpdateSent;
 
@@ -65,8 +76,13 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         _net.RegisterNetMessage<MentorClientUnclaimMsg>();
         _net.RegisterNetMessage<MentorClaimMsg>(OnMentorClaim);
         _net.RegisterNetMessage<MentorUnclaimMsg>(OnMentorUnclaim);
+        _net.RegisterNetMessage<MentorClientTeleportMsg>();
+        _net.RegisterNetMessage<BugHelpPromoteMsg>(); // CMU14
 
         _config.OnValueChanged(RMCCVars.RMCMentorHelpSound, v => _mHelpSound = new SoundPathSpecifier(v), true);
+
+        // CMU14: honor the AHelp notification sound toggle for mentorhelp too
+        _config.OnValueChanged(CCVars.BwoinkSoundEnabled, v => _bwoinkSoundEnabled = v, true);
     }
 
     private void OnMentorStatus(MentorStatusMsg msg)
@@ -110,14 +126,24 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
             }
 
             if (IsMentor &&
-                _mentorWindow is not { IsOpen: true })
+                _mentorWindow is not { IsOpen: true } &&
+                other)
             {
                 _unread = true;
-                _aHelp.UnreadAHelpReceived();
+                _aHelp.UnreadMHelpReceived();
             }
 
             _destinationNames.TryAdd(message.Destination, message.DestinationName);
             _messages.GetOrNew(message.Destination).Add(message);
+
+            if (message.Author != null)
+                _lastMessageTime[message.Destination] = message.Time;
+
+            if (_mentorWindow?.SelectedPlayer != message.Destination && other)
+                _unreadByPlayer[message.Destination] = true;
+
+            UpdatePlayerButton(message.Destination);
+
             if (_mentorWindow is { IsOpen: true })
             {
                 MentorAddPlayerButton(message.Destination);
@@ -139,15 +165,22 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
             }
         }
 
+        SortPlayerButtons();
+
         if (other)
         {
-            _audio?.PlayGlobal(_mHelpSound, Filter.Local(), false);
+            // CMU14: honor the AHelp notification sound toggle for mentorhelp too
+            if (_mHelpSound != null && (_bwoinkSoundEnabled || !_adminManager.IsActive()))
+                _audio?.PlayGlobal(_mHelpSound, Filter.Local(), false);
             _clyde.RequestWindowAttention();
 
             if (!IsMentor)
             {
                 if (OpenWindow(ref _mentorHelpWindow,
-                        CreateMentorHelpWindow,
+                        // CMU14: CreateMentorHelpWindow takes an optional title now, so the bare
+                        // method group no longer converts to Func<MentorHelpWindow>.
+                        // CreateMentorHelpWindow,
+                        () => CreateMentorHelpWindow(),
                         () => _mentorHelpWindow = null,
                         window => window.Chat,
                         _ => _player.LocalUser))
@@ -247,12 +280,18 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         SetAHelpButtonPressed(true);
         _staffHelpWindow = new StaffHelpWindow();
         ApplyCrtChrome(_staffHelpWindow);
-        _staffHelpWindow.OnClose += () => _staffHelpWindow = null;
+        _staffHelpWindow.OnClose += () =>
+        {
+            _staffHelpWindow = null;
+            SetAHelpButtonPressed(false);
+        };
         _staffHelpWindow.OpenCentered();
         UIManager.ClickSound();
 
-        if (_unread)
-            _staffHelpWindow.MentorHelpButton.AddStyleClass(StyleNano.StyleClassButtonColorRed);
+        // Not a style class any more: the choice cards style their buttons with a StyleBoxOverride,
+        // which beats every stylesheet rule, so ButtonColorRed would have been added and never
+        // drawn. See StaffHelpWindow.SetMentorUnread.
+        _staffHelpWindow.SetMentorUnread(_unread);
 
         _staffHelpWindow.AdminHelpButton.OnPressed += _ =>
         {
@@ -266,12 +305,36 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
             OpenMentorOrHelpWindow();
             _staffHelpWindow.Close();
         };
+
+        // CMU14: bug report choice.
+        _staffHelpWindow.BugHelpButton.OnPressed += _ =>
+        {
+            if (_bugHelp.IsEnabled)
+            {
+                _bugHelp.OpenWindow();
+                _staffHelpWindow.Close();
+                SetAHelpButtonPressed(false);
+            }
+        };
+        _staffHelpWindow.BugHelpButton.Visible = _bugHelp.IsEnabled;
     }
 
-    private void OpenMentorOrHelpWindow()
+    // CMU14: bughelp config can flip mid-session; keep the choice card honest while the window is open.
+    public void RefreshBugHelpButton()
+    {
+        if (_staffHelpWindow != null)
+            _staffHelpWindow.BugHelpButton.Visible = _bugHelp.IsEnabled;
+    }
+
+    // CMU14: public entry for the bug report window's Talk-to-staff button. The title retitles
+    // the player chat window for the door it was opened from (mockup pane 3: "Staff Help" from
+    // the bug door); null keeps the mentor card's "Mentor Help". Staff never see it - they get
+    // the console regardless of door.
+    public void OpenMentorOrHelpWindow(string? title = null)
     {
         SetAHelpButtonPressed(false);
         _unread = false;
+        _aHelp.UnreadMHelpRead();
         if (IsMentor)
         {
             if (OpenWindow(ref _mentorWindow,
@@ -280,7 +343,11 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
                     window => window.Chat,
                     window => window.SelectedPlayer))
             {
-                foreach (var destination in _messages.Keys)
+                var ordered = _messages.Keys
+                    .OrderByDescending(player => _lastMessageTime.GetValueOrDefault(player))
+                    .ToList();
+
+                foreach (var destination in ordered)
                 {
                     MentorAddPlayerButton(destination);
                 }
@@ -291,7 +358,7 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         else
         {
             if (OpenWindow(ref _mentorHelpWindow,
-                    CreateMentorHelpWindow,
+                    () => CreateMentorHelpWindow(title),
                     () => _mentorHelpWindow = null,
                     window => window.Chat,
                     _ => _player.LocalUser))
@@ -301,9 +368,13 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         }
     }
 
-    private MentorHelpWindow CreateMentorHelpWindow()
+    private MentorHelpWindow CreateMentorHelpWindow(string? title = null)
     {
         var window = new MentorHelpWindow();
+        // CMU14: retitle for the bug report door - a player asking about a stuck flamer should
+        // not land in a window titled "Mentor Help" (design §4.1, §12.6).
+        if (title != null)
+            window.Title = title;
         ApplyCrtChrome(window);
         window.ReMentorButton.OnPressed += _ => _net.ClientSendMessage(new ReMentorMsg());
         window.ReMentorButton.Visible = _canReMentor;
@@ -317,6 +388,9 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
             _net.ClientSendMessage(msg);
         };
 
+        // CMU14: the AHelp window's "before you send this" intro, retargeted at mentor help.
+        window.Messages.AddMessage(BuildMentorIntroText());
+
         if (_player.LocalUser is { } local && _messages.TryGetValue(local, out var messages))
         {
             foreach (var message in messages)
@@ -327,6 +401,15 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         }
 
         return window;
+    }
+
+    // CMU14: mentor help's mirror of AHelpUIController.BuildIntroText, same caution-colored header.
+    private static FormattedMessage BuildMentorIntroText()
+    {
+        var header = Loc.GetString("cmu-mentor-help-intro-header");
+        var body = Loc.GetString("cmu-mentor-help-intro-message");
+        return FormattedMessage.FromMarkupPermissive(
+            $"[bold][color={CrtTerminalPalette.Caution.ToHex()}]{header}[/color][/bold]\n{body}");
     }
 
     private MentorWindow CreateMentorWindow()
@@ -357,6 +440,24 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
             _net.ClientSendMessage(message);
         };
 
+        window.TeleportButton.OnPressed += _ =>
+        {
+            _net.ClientSendMessage(new MentorClientTeleportMsg
+            {
+                Destination = window.SelectedPlayer,
+            });
+        };
+
+        // CMU14: promote the selected conversation into a bug report; the server declines with
+        // a SERVER line in this conversation when the player is offline or nothing was said.
+        window.PromoteButton.OnPressed += _ =>
+        {
+            _net.ClientSendMessage(new BugHelpPromoteMsg
+            {
+                Destination = window.SelectedPlayer,
+            });
+        };
+
         return window;
     }
 
@@ -367,7 +468,7 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
 
         if (_mentorWindow.PlayerDict.TryGetValue(player, out var button))
         {
-            button.SetPositionFirst();
+            UpdatePlayerButton(player);
             return;
         }
 
@@ -386,8 +487,12 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
                 return;
 
             _mentorWindow.SelectedPlayer = player;
+            _unreadByPlayer.Remove(player);
+            UpdatePlayerButton(player);
             _mentorWindow.Messages.Clear();
             _mentorWindow.Chat.Editable = true;
+            _mentorWindow.TeleportButton.Visible = _mentorWindow.SelectedPlayer != default;
+            _mentorWindow.PromoteButton.Visible = _mentorWindow.SelectedPlayer != default; // CMU14
             UpdateClaimIndicator(player);
             UpdateTypingIndicator();
             if (!_messages.TryGetValue(player, out var authorMessages))
@@ -401,8 +506,8 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         };
 
         _mentorWindow.Players.AddChild(playerButton);
-        playerButton.SetPositionFirst();
         _mentorWindow.PlayerDict[player] = playerButton;
+        UpdatePlayerButton(player);
     }
 
     private static void ApplyCrtChrome(DefaultWindow window)
@@ -461,9 +566,9 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         else if (message.Author.Value != message.Destination)
         {
             if (message.IsAdmin)
-                author = $"[bold][color=red]{author}[/color][/bold]";
+                author = $"[bold][color=red](Admin) {author}[/color][/bold]";
             else if (message.IsMentor)
-                author = $"[bold][color=orange]{author}[/color][/bold]";
+                author = $"[bold][color=orange](Mentor) {author}[/color][/bold]";
 
             text = $"{message.Time:HH:mm} {author}: {FormattedMessage.EscapeText(message.Text)}";
         }
@@ -480,8 +585,8 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         if (_aHelp.GameAHelpButton != null)
             _aHelp.GameAHelpButton.Pressed = pressed;
 
-        if (_aHelp.GameAHelpButton != null)
-            _aHelp.GameAHelpButton.Pressed = pressed;
+        if (_aHelp.LobbyAHelpButton != null)
+            _aHelp.LobbyAHelpButton.Pressed = pressed;
     }
 
     private void UpdateTypingIndicator()
@@ -537,5 +642,41 @@ public sealed partial class StaffHelpUIController : UIController, IOnSystemChang
         }
 
         _mentorWindow.ClaimIndicator.Text = $"Claimed by {string.Join(", ", claims)}";
+    }
+
+    private void UpdatePlayerButton(NetUserId player)
+    {
+        if (_mentorWindow is null)
+            return;
+
+        if (!_mentorWindow.PlayerDict.TryGetValue(player, out var button))
+            return;
+
+        var unread = _unreadByPlayer.TryGetValue(player, out var isUnread) && isUnread;
+
+        if (unread)
+        {
+            button.AddStyleClass(StyleNano.StyleClassButtonColorRed);
+        }
+        else
+            button.RemoveStyleClass(StyleNano.StyleClassButtonColorRed);
+    }
+
+    private void SortPlayerButtons()
+    {
+        if (_mentorWindow == null)
+            return;
+
+        var ordered = _messages.Keys
+            .OrderByDescending(player => _lastMessageTime.GetValueOrDefault(player))
+            .ToList();
+
+        _mentorWindow.Players.RemoveAllChildren();
+
+        foreach (var player in ordered)
+        {
+            if (_mentorWindow.PlayerDict.TryGetValue(player, out var button))
+                _mentorWindow.Players.AddChild(button);
+        }
     }
 }

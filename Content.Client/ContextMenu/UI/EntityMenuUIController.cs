@@ -47,10 +47,13 @@ namespace Content.Client.ContextMenu.UI
         [Dependency] private ContextMenuUIController _context = default!;
         [Dependency] private VerbMenuUIController _verb = default!;
 
-        [UISystemDependency] private VerbSystem _verbSystem = default!;
-        [UISystemDependency] private ExamineSystem _examineSystem = default!;
-        [UISystemDependency] private TransformSystem _xform = default!;
-        [UISystemDependency] private CombatModeSystem _combatMode = default!;
+        [UISystemDependency] private readonly VerbSystem _verbSystem = default!;
+        [UISystemDependency] private readonly ExamineSystem _examineSystem = default!;
+        [UISystemDependency] private readonly TransformSystem _xform = default!;
+        [UISystemDependency] private readonly CombatModeSystem _combatMode = default!;
+
+        private EntityQuery<TransformComponent> _xformQuery;
+        private EntityQuery<SpriteComponent> _spriteQuery;
 
         private bool _updating;
 
@@ -66,11 +69,15 @@ namespace Content.Client.ContextMenu.UI
         {
             _updating = true;
             _cfg.OnValueChanged(CCVars.EntityMenuGroupingType, OnGroupingChanged, true);
+            _context.OnContextClosed += OnContextClosed;
             _context.OnContextKeyEvent += OnKeyBindDown;
 
             CommandBinds.Builder
                 .Bind(EngineKeyFunctions.UseSecondary,  new PointerInputCmdHandler(HandleOpenEntityMenu, outsidePrediction: true))
                 .Register<EntityMenuUIController>();
+
+            _xformQuery = _entityManager.GetEntityQuery<TransformComponent>();
+            _spriteQuery = _entityManager.GetEntityQuery<SpriteComponent>();
         }
 
         public void OnStateExited(GameplayState state)
@@ -78,8 +85,14 @@ namespace Content.Client.ContextMenu.UI
             _updating = false;
             Elements.Clear();
             _cfg.UnsubValueChanged(CCVars.EntityMenuGroupingType, OnGroupingChanged);
+            _context.OnContextClosed -= OnContextClosed;
             _context.OnContextKeyEvent -= OnKeyBindDown;
             CommandBinds.Unregister<EntityMenuUIController>();
+        }
+
+        private void OnContextClosed()
+        {
+            Elements.Clear();
         }
 
         /// <summary>
@@ -182,6 +195,7 @@ namespace Content.Client.ContextMenu.UI
         /// <summary>
         ///     Check that entities in the context menu are still visible. If not, remove them from the context menu.
         /// </summary>
+        // CMU14 method: reuse mutation-safe snapshots and entry-owned examine predicates.
         public override void FrameUpdate(FrameEventArgs args)
         {
             if (!_updating || _context.RootMenu == null)
@@ -211,25 +225,8 @@ namespace Content.Client.ContextMenu.UI
             visibility = ev.Visibility;
 
             _entityManager.TryGetComponent(player, out ExaminerComponent? examiner);
-            var xformQuery = _entityManager.GetEntityQuery<TransformComponent>();
 
-            foreach (var entity in Elements.Keys.ToList())
-            {
-                if (!xformQuery.TryGetComponent(entity, out var xform))
-                {
-                    // entity was deleted
-                    RemoveEntity(entity);
-                    continue;
-                }
-
-                if ((visibility & MenuVisibility.NoFov) == MenuVisibility.NoFov)
-                    continue;
-
-                var pos = new MapCoordinates(_xform.GetWorldPosition(xform, xformQuery), xform.MapID);
-
-                if (!_examineSystem.CanExamine(player, pos, e => e == player || e == entity, entity, examiner))
-                    RemoveEntity(entity);
-            }
+            CMUUpdateVisibility(player, visibility, examiner);
         }
 
         /// <summary>
@@ -293,7 +290,7 @@ namespace Content.Client.ContextMenu.UI
             var element = new EntityMenuElement(entity);
             element.SubMenu = new ContextMenuPopup(_context, element);
             element.SubMenu.OnPopupOpen += () => _verb.OpenVerbMenu(entity, popup: element.SubMenu);
-            element.SubMenu.OnPopupHide += element.SubMenu.MenuBody.DisposeAllChildren;
+            element.SubMenu.OnPopupHide += element.SubMenu.MenuBody.RemoveAllChildren;
             _context.AddElement(menu, element);
             Elements.TryAdd(entity, element);
         }
@@ -312,11 +309,11 @@ namespace Content.Client.ContextMenu.UI
 
             // remove the element
             var parent = element.ParentMenu?.ParentElement;
-            element.Orphan();
             Elements.Remove(entity);
+            OrphanIfAlive(element);
 
             // update any parent elements
-            if (parent is EntityMenuElement e)
+            if (parent is EntityMenuElement { Disposed: false } e)
                 UpdateElement(e);
 
             // If this was the last entity, close the entity menu
@@ -332,15 +329,16 @@ namespace Content.Client.ContextMenu.UI
         /// </remarks>
         private void UpdateElement(EntityMenuElement element)
         {
-            if (element.SubMenu == null)
+            if (element is { Disposed: true } ||
+                element.SubMenu is not { Disposed: false } subMenu)
                 return;
 
             // Get the first entity in the sub-menus
-            var entity = GetFirstEntityOrNull(element.SubMenu);
+            var entity = GetFirstEntityOrNull(subMenu);
             if (entity == null)
             {
                 // This whole element has no associated entities. We should remove it
-                element.Orphan();
+                OrphanIfAlive(element);
                 return;
             }
 
@@ -352,14 +350,14 @@ namespace Content.Client.ContextMenu.UI
                 // There was only one entity in the sub-menu. So we will just remove the sub-menu and point directly to
                 // that entity.
                 element.Entity = entity;
-                element.SubMenu.Orphan();
+                OrphanIfAlive(subMenu);
                 element.SubMenu = null;
                 Elements[entity.Value] = element;
             }
 
             // update the parent element, so that it's count and entity icon gets updated.
             var parent = element.ParentMenu?.ParentElement;
-            if (parent is EntityMenuElement e)
+            if (parent is EntityMenuElement { Disposed: false } e)
                 UpdateElement(e);
         }
 
@@ -368,7 +366,7 @@ namespace Content.Client.ContextMenu.UI
         /// </summary>
         private EntityUid? GetFirstEntityOrNull(ContextMenuPopup? menu)
         {
-            if (menu == null)
+            if (menu is not { Disposed: false })
                 return null;
 
             foreach (var element in menu.MenuBody.Children)
@@ -390,6 +388,12 @@ namespace Content.Client.ContextMenu.UI
             }
 
             return null;
+        }
+
+        private static void OrphanIfAlive(Control? control)
+        {
+            if (control is { Disposed: false })
+                control.Orphan();
         }
     }
 }

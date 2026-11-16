@@ -8,17 +8,18 @@ using Content.Server._RMC14.Marines;
 using Content.Server._RMC14.Power;
 using Content.Server._RMC14.Stations;
 using Content.Server._RMC14.Xenonids.Hive;
+using Content.Server._RMC14.Xenonids.JoinXeno;
 using Content.Server.Administration.Logs;
 using Content.Server.Administration.Managers;
-using Content.Server.AU14.Round;
+using Content.Server.CMU14.Round;
 using Content.Server.Chat.Managers;
 using Content.Server.Fax;
 using Content.Server.GameTicking;
 using Content.Server.GameTicking.Rules;
 using Content.Server.Ghost;
 using Content.Server.Ghost.Roles.Components;
-using Content.Server.Maps;
 using Content.Server.Mind;
+using Content.Server.Nutrition.EntitySystems;
 using Content.Server.Players.PlayTimeTracking;
 using Content.Server.Popups;
 using Content.Server.Power.Components;
@@ -49,6 +50,8 @@ using Content.Shared._RMC14.Item;
 using Content.Shared._RMC14.Light;
 using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Marines;
+using Content.Shared.CMU14.Marines; // CMU14
+using Content.Shared.CMU14.Threats.Mobs.Wendigo.Lab; // CMU14
 using Content.Shared._RMC14.Marines.HyperSleep;
 using Content.Shared._RMC14.Marines.Squads;
 using Content.Shared._RMC14.Rules;
@@ -68,8 +71,9 @@ using Content.Shared._RMC14.Xenonids.Hive;
 using Content.Shared._RMC14.Xenonids.JoinXeno;
 using Content.Shared._RMC14.Xenonids.Maturing;
 using Content.Shared._RMC14.Xenonids.Parasite;
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
 using Content.Shared.Actions;
-using Content.Shared.AU14;
+using Content.Shared.CMU14;
 using Content.Shared.CCVar;
 using Content.Shared.Coordinates;
 using Content.Shared.Database;
@@ -77,6 +81,7 @@ using Content.Shared.Destructible;
 using Content.Shared.Fax.Components;
 using Content.Shared.GameTicking;
 using Content.Shared.GameTicking.Components;
+using Content.Shared.Maps;
 using Content.Shared.Mind;
 using Content.Shared.Mind.Components;
 using Content.Shared.Mobs;
@@ -88,7 +93,8 @@ using Content.Shared.Popups;
 using Content.Shared.Preferences;
 using Content.Shared.Random.Helpers;
 using Content.Shared.Roles;
-using Content.Shared.StatusEffect;
+using Content.Shared.Roles.Components;
+using Content.Shared.Station.Components;
 using Robust.Server.Audio;
 using Robust.Server.Containers;
 using Robust.Server.GameObjects;
@@ -98,6 +104,7 @@ using Robust.Shared.Collections;
 using Robust.Shared.Configuration;
 using Robust.Shared.EntitySerialization.Systems;
 using Robust.Shared.Map;
+using Robust.Shared.Map.Components;
 using Robust.Shared.Network;
 using Robust.Shared.Player;
 using Robust.Shared.Prototypes;
@@ -109,9 +116,12 @@ namespace Content.Server._RMC14.Rules;
 
 public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistressSignalRuleComponent>
 {
+    // cmu edit start
+    [Dependency] private Content.Server.CMU14.Ship.CMUAdriftSystem _cmuAdrift = default!;
+    // cmu edit end
     [Dependency] private SharedActionsSystem _actions = default!;
     [Dependency] private IAdminLogManager _adminLog = default!;
-    [Dependency] private ARESSystem _ares = default!;
+    [Dependency] private ARESCoreSystem _aresCore = default!;
     [Dependency] private AudioSystem _audio = default!;
     [Dependency] private IBanManager _bans = default!;
     [Dependency] private IChatManager _chatManager = default!;
@@ -122,10 +132,10 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
     [Dependency] private FaxSystem _fax = default!;
     [Dependency] private GunIFFSystem _gunIFF = default!;
     [Dependency] private XenoHiveSystem _hive = default!;
-    [Dependency] private HungerSystem _hunger = default!;
+    [Dependency] private ServerSatiationSystem _satiation = default!;
     [Dependency] private ItemCamouflageSystem _camo = default!;
+    [Dependency] private LarvaQueueSystem _larvaQueue = default!;
     [Dependency] private MapLoaderSystem _mapLoader = default!;
-    [Dependency] private IMapManager _mapManager = default!;
     [Dependency] private MapSystem _mapSystem = default!;
     [Dependency] private MarineAnnounceSystem _marineAnnounce = default!;
     [Dependency] private MindSystem _mind = default!;
@@ -164,6 +174,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
     [Dependency] private GhostSystem _ghost = default!;
     [Dependency] private ISerializationManager _serialization = default!;
     [Dependency] private XenoMaturingSystem _maturing = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
 
     private readonly HashSet<string> _operationNames = new();
     private readonly HashSet<string> _operationPrefixes = new();
@@ -205,8 +216,10 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
     [ViewVariables]
     private RMCPlanet? SelectedPlanetMap { get; set; }
 
+    private string? _cmuPlanetMapName;
+
     [ViewVariables]
-    public string? SelectedPlanetMapName => SelectedPlanetMap?.Proto.Name;
+    public string? SelectedPlanetMapName => SelectedPlanetMap?.Proto.Name ?? _cmuPlanetMapName;
 
     [ViewVariables]
     public string? OperationName { get; private set; }
@@ -229,6 +242,8 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             before: [typeof(ArrivalsSystem), typeof(SpawnPointSystem)]);
         SubscribeLocalEvent<RoundEndMessageEvent>(OnRoundEndMessage);
         SubscribeLocalEvent<RoundRestartCleanupEvent>(OnRoundRestartCleanup);
+        SubscribeLocalEvent<DropshipLandedOnPlanetEvent>(OnDropshipLandedOnPlanet);
+        SubscribeLocalEvent<DropshipHijackDeclinedEvent>(OnDropshipHijackDeclined);
         SubscribeLocalEvent<DropshipHijackStartEvent>(OnDropshipHijackStart);
         SubscribeLocalEvent<DropshipHijackLandedEvent>(OnDropshipHijackLanded);
 
@@ -275,7 +290,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
     private void OnMapLoading(LoadingMapsEvent ev)
     {
 
-       // SelectRandomPlanet();
+        // SelectRandomPlanet();
         //Just in case the info text is not updated previousely
         GameTicker.UpdateInfoText();
     }
@@ -373,7 +388,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             EntityUid SpawnXenoEnt(EntProtoId ent, ICommonSession player, bool doBurst = false)
             {
                 var leader = _prototypes.TryIndex(ent, out var proto) &&
-                             proto.TryGetComponent(out XenoComponent? xeno, _compFactory) &&
+                             proto.TryComp(out XenoComponent? xeno, _compFactory) &&
                              xeno.SpawnAtLeaderPoint;
 
                 var point = _random.Pick(leader ? xenoLeaderSpawnPoints : xenoSpawnPoints);
@@ -419,9 +434,9 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 return xenoEnt;
             }
 
-            var totalXenos = (int) Math.Round(Math.Max(1, ev.PlayerPool.Count / _marinesPerXeno));
-            var totalSurvivors = (int) Math.Round(ev.PlayerPool.Count / _marinesPerSurvivor);
-            totalSurvivors = (int) Math.Clamp(totalSurvivors, _minimumSurvivors, _maximumSurvivors);
+            var totalXenos = (int)Math.Round(Math.Max(1, ev.PlayerPool.Count / _marinesPerXeno));
+            var totalSurvivors = (int)Math.Round(ev.PlayerPool.Count / _marinesPerSurvivor);
+            totalSurvivors = (int)Math.Clamp(totalSurvivors, _minimumSurvivors, _maximumSurvivors);
             var marines = ev.PlayerPool.Count - totalXenos - totalSurvivors;
             var jobSlotScaling = _config.GetCVar(RMCCVars.RMCJobSlotScaling);
             if (comp.DoJobSlotScaling && marines > 0 && jobSlotScaling)
@@ -484,7 +499,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 if (jobPriorities.TryGetValue(comp.QueenJob, out var priority) &&
                     priority > JobPriority.Never)
                 {
-                    xenoCandidates[(int) priority].Add(id);
+                    xenoCandidates[(int)priority].Add(id);
                 }
             }
 
@@ -525,7 +540,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                     if (jobPriorities.TryGetValue(comp.XenoSelectableJob, out var priority) &&
                         priority > JobPriority.Never)
                     {
-                        xenoCandidates[(int) priority].Add(id);
+                        xenoCandidates[(int)priority].Add(id);
                     }
                 }
 
@@ -543,7 +558,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 // Any unfilled xeno slots become larva
                 var unfilled = totalXenos - selectedXenos;
                 if (unfilled > 0)
-                    _hive.IncreaseBurrowedLarva(unfilled);
+                    _hive.ChangeBurrowedLarva(unfilled);
             }
 
             if (comp.SpawnSurvivors)
@@ -769,17 +784,23 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 if (TryComp(spawner, out TransformComponent? xform) &&
                     xform.GridUid != null)
                 {
-                    EnsureComp<AlmayerComponent>(xform.GridUid.Value);
+                    EnsureComp<WarshipComponent>(xform.GridUid.Value); // CMU14
                 }
 
-                if (comp.SetHunger && TryComp(ev.SpawnResult, out HungerComponent? hunger))
-                    _hunger.SetHunger(ev.SpawnResult.Value, 50.0f, hunger);
+                if (comp.SetHunger && TryComp(ev.SpawnResult, out SatiationComponent? satiation))
+                {
+                    _satiation.SetValue(
+                        (ev.SpawnResult.Value, satiation),
+                        SatiationSystem.Hunger,
+                        50.0f);
+                }
             }
 
             return;
         }
     }
 
+    // TODO: RoundEndSound
     private void OnRoundEndMessage(RoundEndMessageEvent ev)
     {
         var rules = QueryActiveRules();
@@ -795,7 +816,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 DistressSignalRuleResult.MinorMarineVictory => distress.MinorMarineAudio,
                 DistressSignalRuleResult.MajorXenoVictory => distress.MajorXenoAudio,
                 DistressSignalRuleResult.MinorXenoVictory => distress.MinorXenoAudio,
-                // DistressSignalRuleResult.AllDied => distress.AllDiedAudio,
+                DistressSignalRuleResult.AllDied => distress.AllDiedAudio,
                 _ => null,
             };
 
@@ -808,6 +829,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
     {
 
         _config.SetCVar(CCVars.GameDisallowLateJoins, false);
+        _cmuPlanetMapName = null;
 
         if (!_autoBalance)
             return;
@@ -843,12 +865,24 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
         }
     }
 
+    private void OnDropshipHijackDeclined(ref DropshipHijackDeclinedEvent ev)
+    {
+        ev.Handled = TryEndActiveDistressRound(
+            DistressSignalRuleResult.MinorXenoVictory,
+            "cmu-distress-signal-minorxenovictory-no-hijack");
+    }
+
     private void OnDropshipHijackStart(ref DropshipHijackStartEvent ev)
     {
+        // CMU14: other presets own their cleanup and larva accounting in CMUHijackExtrasSystem.
+        var activeRules = QueryActiveRules();
+        if (!activeRules.MoveNext(out _, out _, out _) || ev.HijackerType == DropshipHijackerType.Other)
+            return;
+
         // For human hijacks, build a set of map IDs belonging to the hijacker's faction ship(s).
         // For xeno hijacks, keep legacy behavior (Almayer maps).
         var targetShipMaps = new HashSet<MapId>();
-        if (ev.IsHumanHijack && !string.IsNullOrEmpty(ev.HijackerFaction))
+        if (ev.HijackerType == DropshipHijackerType.Human && !string.IsNullOrEmpty(ev.HijackerFaction)) // CMU14
         {
             // Scan ShipFactionComponent grids matching the hijacker's faction
             var shipQuery = EntityQueryEnumerator<ShipFactionComponent, TransformComponent>();
@@ -857,45 +891,46 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 if (!string.IsNullOrEmpty(shipFaction.Faction) &&
                     string.Equals(shipFaction.Faction, ev.HijackerFaction, StringComparison.OrdinalIgnoreCase))
                 {
-                    targetShipMaps.Add(shipXform.MapID);
+                    AddShipMapAndConnectedZLevelMapIds(targetShipMaps, shipXform.MapUid);
                 }
             }
 
             // Also include Almayer maps as fallback
-            var almayerQuery = EntityQueryEnumerator<AlmayerComponent, TransformComponent>();
+            var almayerQuery = EntityQueryEnumerator<WarshipComponent, TransformComponent>(); // CMU14
             while (almayerQuery.MoveNext(out _, out var aXform))
             {
-                targetShipMaps.Add(aXform.MapID);
+                AddShipMapAndConnectedZLevelMapIds(targetShipMaps, aXform.MapUid);
             }
         }
         else
         {
-            // Legacy xeno hijack: use Almayer maps
-            foreach (var mapId in _almayerMaps)
-            {
-                targetShipMaps.Add(mapId);
-            }
+            // Xeno hijack: use all ship maps, including connected z-level maps.
+            AddAllShipMapIds(targetShipMaps);
         }
 
         // Only do xeno-specific cleanup for xeno hijacks
-        if (!ev.IsHumanHijack)
+        if (ev.HijackerType != DropshipHijackerType.Human) // CMU14
         {
             var hiveStructures = EntityQueryEnumerator<HiveConstructionLimitedComponent, TransformComponent>();
             while (hiveStructures.MoveNext(out var id, out _, out var xform))
             {
-                EnsureComp<HiveConstructionSuppressAnnouncementsComponent>(id);
-
-                if (xform.ParentUid != ev.Dropship && _rmcPlanet.IsOnPlanet(id.ToCoordinates()))
+                if ((ev.Dropship == null || xform.GridUid != ev.Dropship) && _rmcPlanet.IsOnPlanetLevel(xform)) // CMU14
+                {
+                    EnsureComp<HiveConstructionSuppressAnnouncementsComponent>(id);
                     _destruction.DestroyEntity(id);
+                }
             }
+
+            EntityManager.System<Content.Server.CMU14.Dropship.CMUHijackExtrasSystem>().DestroyUnlimitedPlanetHiveCores(ev.Dropship); // CMU14: blight cores aren't build-limited
 
             var xenoLimitedStructures = EntityQueryEnumerator<XenoSecretionLimitedComponent, TransformComponent>();
             while (xenoLimitedStructures.MoveNext(out var id, out _, out var xform))
             {
-                EnsureComp<HiveConstructionSuppressAnnouncementsComponent>(id);
-
-                if (xform.ParentUid != ev.Dropship && _rmcPlanet.IsOnPlanet(id.ToCoordinates()))
+                if ((ev.Dropship == null || xform.GridUid != ev.Dropship) && _rmcPlanet.IsOnPlanetLevel(xform)) // CMU14
+                {
+                    EnsureComp<HiveConstructionSuppressAnnouncementsComponent>(id);
                     _destruction.DestroyEntity(id);
+                }
             }
 
             var xenos = EntityQueryEnumerator<XenoComponent, MobStateComponent, TransformComponent>();
@@ -907,7 +942,10 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                 if (_mobState.IsDead(xeno))
                     continue;
 
-                if (transformComp.ParentUid != ev.Dropship && _rmcPlanet.IsOnPlanet(xeno.ToCoordinates()))
+                if (HasComp<CMUWendigoLabMadeComponent>(xeno)) // CMU14: lab-made Wendigos are not hive xenos
+                    continue;
+
+                if ((ev.Dropship == null || transformComp.GridUid != ev.Dropship) && _rmcPlanet.IsOnPlanetLevel(transformComp)) // CMU14
                 {
                     if (comp.CountedInSlots)
                         larva++;
@@ -929,6 +967,9 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
                         var origin = _transform.GetMoverCoordinates(xeno);
                         _popup.PopupCoordinates(Loc.GetString("rmc-xeno-hibernation"), origin, Filter.SinglePlayer(session), true, PopupType.MediumXeno);
+
+                        if (comp.CountedInSlots && _hive.GetHive(xeno) is { } hive)
+                            _larvaQueue.AddToLarvaQueueFront(hive, session.UserId);
                     }
 
                     QueueDel(xeno);
@@ -963,7 +1004,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                     !TryComp<MindComponent>(mindContainer.Mind, out var mind))
                     continue;
 
-                foreach (var roleId in mind.MindRoles)
+                foreach (var roleId in mind.MindRoleContainer.ContainedEntities)
                 {
                     if (!TryComp<MindRoleComponent>(roleId, out var mindRole))
                         continue;
@@ -978,15 +1019,23 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             //Get the maximum of either remaining marines or minimum amount
             var surgeAmount = Math.Max((int)Math.Ceiling(totalHostWeights * _hijackShipWeight) - xenoAmount, _hijackMinBurrowed);
             var rules = QueryActiveRules();
-            while (rules.MoveNext(out _, out var rule, out _))
+            // CMU14: hijack rewards apply once per round, a repeat hijack must not refund larva or refill the surge
+            while (rules.MoveNext(out var ruleUid, out _, out var rule, out _))
             {
+                if (rule.HijackBoostsApplied)
+                    continue;
+
+                rule.HijackBoostsApplied = true;
+                Dirty(ruleUid, rule);
+
                 // Reset Hivecore Cooldown
                 var hiveComp = EnsureComp<HiveComponent>(rule.Hive);
-                //Add all the stranded xenos up
-                _hive.IncreaseBurrowedLarva(larva); // TODO RMC14 should prob make sure it's only main hive
+                // Add all the stranded xenos up.
+                _hive.ChangeBurrowedLarva((rule.Hive, hiveComp), larva);
                 _hive.ResetHiveCoreCooldown((rule.Hive, hiveComp));
                 var surge = EnsureComp<HijackBurrowedSurgeComponent>(rule.Hive);
                 surge.PooledLarva = surgeAmount;
+                Dirty(rule.Hive, surge);
             }
         }
         else
@@ -1006,6 +1055,27 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             Log.Info($"Human faction hijack by '{ev.HijackerFaction}': found {crewOnShip} crew on target ship maps, {targetShipMaps.Count} ship map(s) scanned.");
         }
     }
+
+    private void OnDropshipLandedOnPlanet(ref DropshipLandedOnPlanetEvent ev)
+    {
+        var rules = QueryActiveRules();
+        while (rules.MoveNext(out var uid, out _, out var rule, out var gameRule))
+        {
+            if (!GameTicker.IsGameRuleAdded(uid, gameRule))
+                continue;
+
+            if (rule.MarinesLanded)
+                return;
+
+            rule.MarinesLanded = true;
+            Dirty(uid, rule);
+
+            var landedEv = new MarinesLandedChangedEvent(true);
+            RaiseLocalEvent(ref landedEv);
+            return;
+        }
+    }
+
     private void OnDropshipHijackLanded(ref DropshipHijackLandedEvent ev)
     {
         var rules = QueryActiveRules();
@@ -1031,34 +1101,18 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
         var didCameraShake = false;
 
-        // Stun everyone on Almayer grids on the target map
-        var warshipQuery = EntityQueryEnumerator<AlmayerComponent, TransformComponent>();
-        while (warshipQuery.MoveNext(out var uid, out _, out var xform))
+        var targetMaps = new HashSet<MapId>();
+        AddShipMapAndConnectedZLevelMapIds(targetMaps, ev.Map);
+
+        var gridQuery = EntityQueryEnumerator<BecomesStationComponent, MapGridComponent, TransformComponent>();
+        while (gridQuery.MoveNext(out var uid, out _, out _, out var xform))
         {
-            if (_transform.GetMapId(uid) != _transform.GetMapId(ev.Map))
+            var map = _transform.GetMapId(uid);
+            if (!targetMaps.Contains(map))
                 continue;
 
             if (!didCameraShake)
             {
-                var map = _transform.GetMapId(uid);
-                var sameMap = Filter.BroadcastMap(map);
-                _rmcCameraShake.ShakeCamera(sameMap, 10, 2);
-                didCameraShake = true;
-            }
-
-            StunAllOnShip(xform);
-        }
-
-        // Also stun on ShipFactionComponent grids on the target map
-        var shipQuery = EntityQueryEnumerator<ShipFactionComponent, TransformComponent>();
-        while (shipQuery.MoveNext(out var uid, out _, out var xform))
-        {
-            if (_transform.GetMapId(uid) != _transform.GetMapId(ev.Map))
-                continue;
-
-            if (!didCameraShake)
-            {
-                var map = _transform.GetMapId(uid);
                 var sameMap = Filter.BroadcastMap(map);
                 _rmcCameraShake.ShakeCamera(sameMap, 10, 2);
                 didCameraShake = true;
@@ -1095,13 +1149,13 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
         foreach (var prototype in _prototypes.EnumeratePrototypes<EntityPrototype>())
         {
-            if (prototype.TryGetComponent(out RMCDistressSignalNamesComponent? names, _compFactory))
+            if (prototype.TryComp(out RMCDistressSignalNamesComponent? names, _compFactory))
                 _operationNames.UnionWith(names.Names);
 
-            if (prototype.TryGetComponent(out RMCDistressSignalPrefixesComponent? prefixes, _compFactory))
+            if (prototype.TryComp(out RMCDistressSignalPrefixesComponent? prefixes, _compFactory))
                 _operationPrefixes.UnionWith(prefixes.Prefixes);
 
-            if (prototype.TryGetComponent(out RMCDistressSignalSuffixesComponent? suffixes, _compFactory))
+            if (prototype.TryComp(out RMCDistressSignalSuffixesComponent? suffixes, _compFactory))
                 _operationSuffixes.UnionWith(suffixes.Suffixes);
         }
     }
@@ -1123,7 +1177,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             {
                 if (_prefsManager.TryGetCachedPreferences(player.UserId, out var preferences))
                 {
-                    var profile = (HumanoidCharacterProfile) preferences.GetProfile(preferences.SelectedCharacterIndex);
+                    var profile = (HumanoidCharacterProfile)preferences.GetProfile(preferences.SelectedCharacterIndex);
                     var jobPriorities = profile.GetJobPrioritiesForGamemode("DistressSignal");
                     if (jobPriorities.TryGetValue(distress.XenoSelectableJob, out var xenoPriority) &&
                         xenoPriority > JobPriority.Never)
@@ -1188,29 +1242,25 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
             // Collect all ship maps (Almayer + ShipFaction) for the "abandoned" alive check
             _almayerMaps.Clear();
-            var almayerQuery = EntityQueryEnumerator<AlmayerComponent, TransformComponent>();
-            while (almayerQuery.MoveNext(out _, out var xform))
-            {
-                _almayerMaps.Add(xform.MapID);
-            }
-
-            var shipFacQuery = EntityQueryEnumerator<ShipFactionComponent, TransformComponent>();
-            while (shipFacQuery.MoveNext(out _, out var xform))
-            {
-                if (!_almayerMaps.Contains(xform.MapID))
-                    _almayerMaps.Add(xform.MapID);
-            }
+            AddAllShipMapIds(_almayerMaps);
 
             var xenosAlive = false;
             var xenos = EntityQueryEnumerator<ActorComponent, XenoComponent, MobStateComponent, TransformComponent>();
             while (xenos.MoveNext(out var xenoId, out _, out var xeno, out var mobState, out var xform))
             {
+                if (HasComp<CMUWendigoLabMadeComponent>(xenoId)) continue; // CMU14: lab-made Wendigos never decide the round
+
                 if (!xeno.ContributesToVictory)
                     continue;
 
                 if (HasComp<ThunderdomeMapComponent>(xform.MapUid) ||
                     (_containers.IsEntityInContainer(xenoId) && !HasComp<XenoEvolutionGranterComponent>(xenoId))) //Queen counts as alive in tunnels/pipes
                     continue;
+
+                // cmu edit start: adrift in space outside the ship doesn't keep the round going
+                if (_cmuAdrift.IsAdrift(xenoId))
+                    continue;
+                // cmu edit end
 
                 if (_mobState.IsAlive(xenoId, mobState) &&
                     (distress.AbandonedAt == null ||
@@ -1242,6 +1292,11 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
                 if (HasComp<ThunderdomeMapComponent>(xform.MapUid))
                     continue;
+
+                // cmu edit start: adrift in space outside the ship doesn't keep the round going
+                if (_cmuAdrift.IsAdrift(marineId))
+                    continue;
+                // cmu edit end
 
                 if (_mobState.IsAlive(marineId, mobState) &&
                     (distress.AbandonedAt == null ||
@@ -1324,7 +1379,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
             if (Timing.CurTime >= distress.QueenDiedCheck)
             {
-                if (_xenoEvolution.HasLiving<XenoComponent>(4))
+                if (_xenoEvolution.HasLiving<XenoComponent>(4, x => !HasComp<CMUWendigoLabMadeComponent>(x))) // CMU14: lab-made Wendigos never decide the round
                     EndRound(distress, DistressSignalRuleResult.MinorMarineVictory);
                 else
                     EndRound(distress, DistressSignalRuleResult.MajorMarineVictory, "rmc-distress-signal-majormarinevictory-timeout");
@@ -1661,7 +1716,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             component.AresGreetingDone = true;
 
             if (component.StartARESAnnouncements)
-                _marineAnnounce.AnnounceARESStaging(default, "ARES. Online. Good morning, marines.", component.AresGreetingAudio,"rmc-announcement-ares-online");
+                _marineAnnounce.AnnounceARESStaging(default, "APOLLO Nominal. Low-power standby concluded. Crew awakening from transit cryosleep. Good morning.", component.AresGreetingAudio, "rmc-announcement-ares-online");
         }
 
         if (!component.AresMapDone && announcementTime >= component.AresMapDelay)
@@ -1697,7 +1752,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
         if (time >= component.QueenDiedCheck)
         {
-            if (_xenoEvolution.HasLiving<XenoComponent>(4))
+            if (_xenoEvolution.HasLiving<XenoComponent>(4, x => !HasComp<CMUWendigoLabMadeComponent>(x))) // CMU14: lab-made Wendigos never decide the round
                 EndRound(component, DistressSignalRuleResult.MinorMarineVictory);
             else
                 EndRound(component, DistressSignalRuleResult.MajorMarineVictory, "rmc-distress-signal-majormarinevictory-timeout");
@@ -1728,6 +1783,29 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
     {
         OperationName = customname;
         _usingCustomOperationName = true;
+    }
+
+    public void SetCmuRoundInfo(string? planetMapName)
+    {
+        _cmuPlanetMapName = planetMapName;
+        OperationName = GetRandomOperationName();
+    }
+
+    public string? GetWarshipName(GameMapPrototype? map)
+    {
+        if (map == null)
+            return null;
+
+        foreach (var station in map.Stations.Values)
+        {
+            foreach (var entry in station.StationComponentOverrides.Values)
+            {
+                if (entry.Component is StationNameSetupComponent setup)
+                    return setup.StationNameTemplate;
+            }
+        }
+
+        return map.MapName;
     }
 
     private void StartPlanetVote()
@@ -1894,22 +1972,40 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
                     _rmcAmbientLight.SetColor((xenoMap, rmcAmbientComp), colorSequence, _sunriseDuration);
                 }
 
-                var ares = _ares.EnsureARES();
-                _marineAnnounce.AnnounceRadio(ares,
-                    "Bioscan complete. No unknown lifeform signature detected.",
-                    rule.AllClearChannel);
-                _marineAnnounce.AnnounceRadio(ares,
-                    "Saving operational report to archive.",
-                    rule.AllClearChannel);
-                _marineAnnounce.AnnounceRadio(ares,
-                    "Commencing final systems scan in 3 minutes.",
-                    rule.AllClearChannel);
+                if (_aresCore.TryGetMarineARES(out var ares) && ares != null)
+                {
+                    _marineAnnounce.AnnounceRadio(ares.Value.Owner,
+                        "Bioscan complete. No unknown lifeform signature detected.",
+                        rule.AllClearChannel);
+                    _marineAnnounce.AnnounceRadio(ares.Value.Owner,
+                        "Saving operational report to archive.",
+                        rule.AllClearChannel);
+                    _marineAnnounce.AnnounceRadio(ares.Value.Owner,
+                        "Commencing final systems scan in 3 minutes.",
+                        rule.AllClearChannel);
+                }
+
                 rule.EndAtAllClear ??= Timing.CurTime + rule.AllClearEndDelay;
                 break;
             default:
                 _roundEnd.EndRound();
                 break;
         }
+    }
+
+    /// <summary>
+    /// Attempts to end the active distress signal rule through the normal distress result path.
+    /// </summary>
+    public bool TryEndActiveDistressRound(DistressSignalRuleResult result, LocId? customMessage = null)
+    {
+        var rules = QueryActiveRules();
+        while (rules.MoveNext(out _, out var distress, out _))
+        {
+            EndRound(distress, result, customMessage);
+            return distress.Result == result;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2014,6 +2110,8 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
         if (!_queenBuildingBoostEnabled)
             return;
 
+        if (!HasComp<XenoEvolutionGranterComponent>(ent))
+            return;
 
         var query = QueryActiveRules();
         while (query.MoveNext(out var uid, out _, out var comp, out var gameRule))
@@ -2021,15 +2119,10 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
             if (!GameTicker.IsGameRuleAdded(uid, gameRule))
                 continue;
 
-
-
-            var withinBoostPeriod = comp.StartTime == null ||
-                                (Timing.CurTime - comp.StartTime < _queenBoostDuration);
-
+            var withinBoostPeriod = comp.StartTime == null || (Timing.CurTime - comp.StartTime < _queenBoostDuration);
             if (withinBoostPeriod)
-            {
                 GiveQueenBoost(ent.Owner);
-            }
+
             break;
         }
     }
@@ -2044,6 +2137,37 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
         }
     }
 
+    private void AddAllShipMapIds(ICollection<MapId> shipMaps)
+    {
+        var almayerQuery = EntityQueryEnumerator<WarshipComponent, TransformComponent>(); // CMU14
+        while (almayerQuery.MoveNext(out _, out var xform))
+        {
+            AddShipMapAndConnectedZLevelMapIds(shipMaps, xform.MapUid);
+        }
+
+        var shipQuery = EntityQueryEnumerator<ShipFactionComponent, TransformComponent>();
+        while (shipQuery.MoveNext(out _, out var xform))
+        {
+            AddShipMapAndConnectedZLevelMapIds(shipMaps, xform.MapUid);
+        }
+    }
+
+    private void AddShipMapAndConnectedZLevelMapIds(ICollection<MapId> shipMaps, EntityUid? mapUid)
+    {
+        if (mapUid is not { } map)
+            return;
+
+        foreach (var connectedMap in _zLevels.GetAllNetworkMaps(map)) // CMU14
+            AddMapId(shipMaps, connectedMap);
+    }
+
+    private void AddMapId(ICollection<MapId> shipMaps, EntityUid map)
+    {
+        var mapId = _transform.GetMapId(map);
+        if (!shipMaps.Contains(mapId))
+            shipMaps.Add(mapId);
+    }
+
     /// <summary>
     /// Stuns all non-xeno occupants on a ship grid.
     /// </summary>
@@ -2055,10 +2179,7 @@ public sealed partial class CMDistressSignalRuleSystem : GameRuleSystem<CMDistre
 
         foreach (var child in toKnock)
         {
-            if (!TryComp<StatusEffectsComponent>(child, out var status))
-                continue;
-
-            _stuns.TryParalyze(child, _hijackStunTime, true, status);
+            _stuns.TryParalyze(child, _hijackStunTime, true);
         }
     }
 

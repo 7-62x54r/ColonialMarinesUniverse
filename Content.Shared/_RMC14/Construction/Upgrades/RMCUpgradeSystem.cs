@@ -1,6 +1,9 @@
 using Content.Shared._RMC14.Marines.Skills;
+using Content.Shared._RMC14.Tools;
 using Content.Shared._RMC14.Xenonids.Acid;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Hands.EntitySystems;
 using Content.Shared.Interaction;
 using Content.Shared.Popups;
@@ -28,10 +31,12 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
 
     private readonly Dictionary<EntProtoId, RMCConstructionUpgradeComponent> _upgradePrototypes = new();
     private EntityQuery<RMCConstructionUpgradeItemComponent> _upgradeItemQuery;
+    private EntityQuery<MultitoolComponent> _downgradeItemQuery;
 
     public override void Initialize()
     {
         _upgradeItemQuery = GetEntityQuery<RMCConstructionUpgradeItemComponent>();
+        _downgradeItemQuery = GetEntityQuery<MultitoolComponent>();
 
         SubscribeLocalEvent<RMCConstructionUpgradeTargetComponent, InteractUsingEvent>(OnInteractUsing);
 
@@ -54,16 +59,19 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
         var user = args.User;
         var used = args.Used;
 
-        if (!_upgradeItemQuery.TryComp(used, out var upgradeItem))
+        _upgradeItemQuery.TryComp(used, out var upgradeItem);
+        _downgradeItemQuery.TryComp(used, out var downgradeItem);
+
+        if (upgradeItem == null && downgradeItem == null)
             return;
 
-        if (!_whitelist.IsValid(upgradeItem.Whitelist, ent))
+        if (upgradeItem != null && !_whitelist.IsValid(upgradeItem.Whitelist, ent))
             return;
 
         if (!_skills.HasSkill(user, ent.Comp.Skill, ent.Comp.SkillAmountRequired))
         {
             var failPopup = Loc.GetString("rmc-construction-failure", ("ent", ent));
-            _popup.PopupClient(failPopup, ent, user, PopupType.SmallCaution);
+            _popup.PopupEntity(failPopup, ent, user, PopupType.SmallCaution);
 
             args.Handled = true;
             return;
@@ -72,17 +80,49 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
         if (_xenoAcid.IsMelted(ent))
         {
             var failPopup = Loc.GetString("rmc-construction-melted");
-            _popup.PopupClient(failPopup, ent, user, PopupType.SmallCaution);
+            _popup.PopupEntity(failPopup, ent, user, PopupType.SmallCaution);
 
             args.Handled = true;
             return;
         }
 
-        if (ent.Comp.Upgrades != null)
+        if (downgradeItem != null && ent.Comp.Downgrade != null)
+        {
+            RemoveUpgrade(ent, user);
+            args.Handled = true;
+            return;
+        }
+
+        if (upgradeItem != null && ent.Comp.Upgrades != null)
         {
             _ui.OpenUi(ent.Owner, RMCConstructionUpgradeUiKey.Key, user);
             args.Handled = true;
         }
+    }
+
+    private void RemoveUpgrade(Entity<RMCConstructionUpgradeTargetComponent> ent, EntityUid user)
+    {
+        if (_net.IsClient)
+            return;
+
+        if (ent.Comp.Downgrade == null)
+            return;
+
+        if (!_upgradePrototypes.TryGetValue(ent.Comp.Downgrade.Value, out var upgradeComp))
+            return;
+
+        if (upgradeComp.Material != null && upgradeComp.Amount > 0 && _prototypes.TryIndex(upgradeComp.Material.Value, out var stackProto))
+        {
+            var coordinates = _transform.GetMapCoordinates(ent);
+            var materialStack = Spawn(stackProto.Spawn, coordinates);
+            if (TryComp<StackComponent>(materialStack, out var stack))
+            {
+                _stack.SetCount((materialStack, stack), upgradeComp.Amount);
+            }
+        }
+
+        var downgradePopup = Loc.GetString("rmc-construction-downgrade", ("ent", ent));
+        ApplyEntityUpgrade(ent, upgradeComp.BaseEntity, user, downgradePopup);
     }
 
     private void OnUpgradeBuiMsg(Entity<RMCConstructionUpgradeTargetComponent> ent, ref RMCConstructionUpgradeBuiMsg args)
@@ -112,10 +152,10 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
         {
             if (TryComp<StackComponent>(upgradeItem, out var stack) && stack.StackTypeId == upgradeComp.Material)
             {
-                if (!_stack.Use(upgradeItem.Value, upgradeComp.Amount, stack))
+                if (!_stack.TryUse((upgradeItem.Value, stack), upgradeComp.Amount))
                 {
                     var failPopup = Loc.GetString(upgradeComp.FailurePopup, ("ent", ent));
-                    _popup.PopupClient(failPopup, ent, user, PopupType.SmallCaution);
+                    _popup.PopupEntity(failPopup, ent, user, PopupType.SmallCaution);
                     return;
                 }
             }
@@ -125,6 +165,15 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
             QueueDel(upgradeItem);
         }
 
+        var upgradePopup = Loc.GetString(upgradeComp.UpgradedPopup);
+        ApplyEntityUpgrade(ent, upgradeComp.UpgradedEntity, user, upgradePopup);
+    }
+
+    private void ApplyEntityUpgrade(Entity<RMCConstructionUpgradeTargetComponent> ent,
+        EntProtoId targetEntity,
+        EntityUid user,
+        string popup)
+    {
         if (_net.IsClient)
             return;
 
@@ -134,14 +183,14 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
         DamageSpecifier? transferredDamage = null;
 
         if (TryComp<DamageableComponent>(ent, out var damageComp))
-            transferredDamage = damageComp.Damage;
+            transferredDamage = _damageable.GetAllDamage((ent.Owner, damageComp));
 
-        var spawn = Spawn(upgradeComp.UpgradedEntity, coordinates, rotation: rotation.GetCardinalDir().ToAngle());
-        _popup.PopupEntity(Loc.GetString(upgradeComp.UpgradedPopup), spawn, user);
+        var spawn = Spawn(targetEntity, coordinates, rotation: rotation.GetCardinalDir().ToAngle());
+        _popup.PopupEntity(popup, spawn, user);
 
         // transfer damage
         if (transferredDamage != null && TryComp<DamageableComponent>(spawn, out var newDamageComp))
-            _damageable.SetDamage(spawn, newDamageComp, transferredDamage);
+            _damageable.SetDamage((spawn, newDamageComp), transferredDamage);
 
         var upgradeEv = new RMCConstructionUpgradedEvent(spawn, ent.Owner);
         RaiseLocalEvent(ent.Owner, upgradeEv);
@@ -162,14 +211,14 @@ public sealed partial class RMCUpgradeSystem : EntitySystem
 
         foreach (var prototype in _prototypes.EnumeratePrototypes<EntityPrototype>())
         {
-            if (prototype.TryGetComponent(out RMCConstructionUpgradeComponent? upgrade, _compFactory))
+            if (prototype.TryComp(out RMCConstructionUpgradeComponent? upgrade, _compFactory))
                 _upgradePrototypes[prototype.ID] = upgrade;
         }
     }
 }
 
 /// <summary>
-///     This event that is raised when an entity is ugraded
+///     This event that is raised when an entity is upgraded
 /// </summary>
 public sealed partial class RMCConstructionUpgradedEvent : EntityEventArgs
 {

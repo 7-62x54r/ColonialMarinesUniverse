@@ -1,18 +1,17 @@
-using Content.Shared._CMU14.Medical.BodyPart.Events;
-using Content.Shared._RMC14.Armor;
+using Content.Shared.CMU14.Medical.Anatomy.BodyParts.Events;
+using Content.Shared.CMU14.Xenomorphs.Melee; // CMU14
 using Content.Shared._RMC14.Xenonids;
 using Content.Shared._RMC14.Xenonids.Melee;
-using Content.Shared.Body.Components;
+using Content.Shared.Body;
 using Content.Shared.Body.Part;
 using Content.Shared.Body.Systems;
-using Content.Shared.Inventory;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Weapons.Melee.Events;
 using Robust.Shared.Random;
 
 namespace Content.Server._RMC14.Xenonids.Melee;
 
-public sealed class XenoMeleeSeverSystem : EntitySystem
+public sealed partial class XenoMeleeSeverSystem : EntitySystem
 {
     [Dependency] private SharedBodySystem _body = default!;
     [Dependency] private IRobustRandom _random = default!;
@@ -42,11 +41,12 @@ public sealed class XenoMeleeSeverSystem : EntitySystem
             if (!TryComp<BodyComponent>(target, out _))
                 continue;
 
-            var armorEv = new CMGetArmorEvent(SlotFlags.OUTERCLOTHING);
-            RaiseLocalEvent(target, ref armorEv);
-            var chance = armorEv.Melee > 0 ? xeno.Comp.ArmoredChance : xeno.Comp.Chance;
+            // CMU14: some mobs (yautja) shrug off the queen's sever roll
+            var chance = xeno.Comp.Chance;
+            if (TryComp<XenoMeleeSeverResistanceComponent>(target, out var resistance))
+                chance *= resistance.ChanceMultiplier;
 
-            if (!_random.Prob(chance))
+            if (!_random.Prob(Math.Clamp(chance, 0f, 1f)))
                 continue;
 
             TrySeverRandomLimb(target);
@@ -72,14 +72,14 @@ public sealed class XenoMeleeSeverSystem : EntitySystem
         List<(EntityUid Id, BodyPartComponent Part)> chosen;
 
         if (arms.Count > 0 && legs.Count > 0)
-            chosen = _random.Prob(0.6f) ? arms : legs;
+            chosen = _random.Prob(0.4f) ? arms : legs;
         else if (arms.Count > 0)
             chosen = arms;
         else
             chosen = legs;
 
         var (severedPartUid, severedPart) = _random.Pick(chosen);
-        var ev = new BodyPartSeveredEvent(body, severedPartUid, severedPart.PartType);
-        RaiseLocalEvent(severedPartUid, ref ev);
+        var ev = new BodyPartSeverAttemptEvent(body, severedPartUid, severedPart.PartType);
+        RaiseLocalEvent(severedPartUid, ref ev, broadcast: true); // CMU14: broadcast so non-directed observers see it
     }
 }

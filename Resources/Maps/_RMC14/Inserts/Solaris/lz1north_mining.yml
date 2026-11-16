@@ -545,7 +545,7 @@ entities:
     - type: Transform
       pos: 8.5,1.5
       parent: 1
-- proto: RMCPickaxe
+- proto: AU14ToolPickaxe
   entities:
   - uid: 68
     components:
@@ -562,7 +562,7 @@ entities:
     - type: Transform
       pos: 6.5,3.5
       parent: 1
-- proto: RMCShovel
+- proto: AU14ToolShovel
   entities:
   - uid: 63
     components:

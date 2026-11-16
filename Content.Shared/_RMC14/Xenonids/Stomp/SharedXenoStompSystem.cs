@@ -4,12 +4,14 @@ using Content.Shared._RMC14.CameraShake;
 using Content.Shared._RMC14.Damage.ObstacleSlamming;
 using Content.Shared._RMC14.Pulling;
 using Content.Shared._RMC14.Slow;
+using Content.Shared.CMU14.Yautja.Slow; // CMU14
 using Content.Shared._RMC14.Stun;
 using Content.Shared._RMC14.Xenonids.Plasma;
-using Content.Shared._CMU14.Medical.BodyPart;
+using Content.Shared.CMU14.Medical.Anatomy.BodyParts;
 using Content.Shared.Actions;
 using Content.Shared.Coordinates;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.DoAfter;
 using Content.Shared.Effects;
 using Content.Shared.FixedPoint;
@@ -19,6 +21,9 @@ using Content.Shared.Mobs.Components;
 using Robust.Shared.Map.Components;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Physics;
+using Robust.Shared.Map;
+using Robust.Shared.Physics;
+using Robust.Shared.Physics.Systems;
 using Content.Shared.Standing;
 using Content.Shared.Stunnable;
 using Robust.Shared.Audio.Systems;
@@ -41,6 +46,7 @@ public sealed partial class XenoStompSystem : EntitySystem
     [Dependency] private SharedAudioSystem _audio = default!;
     [Dependency] private StandingStateSystem _standing = default!;
     [Dependency] private RMCSlowSystem _slow = default!;
+    [Dependency] private CMUYautjaSlowSystem _yautjaSlow = default!; // CMU14
     [Dependency] private XenoSystem _xeno = default!;
     [Dependency] private RMCSizeStunSystem _size = default!;
     [Dependency] private SharedRMCActionsSystem _rmcActions = default!;
@@ -50,8 +56,10 @@ public sealed partial class XenoStompSystem : EntitySystem
     [Dependency] private RMCPullingSystem _rmcPulling = default!;
     [Dependency] private RMCObstacleSlammingSystem _obstacleSlamming = default!;
     [Dependency] private RMCCameraShakeSystem _cameraShake = default!;
+    [Dependency] private SharedPhysicsSystem _physics = default!;
     [Dependency] private SharedMapSystem _map = default!;
     [Dependency] private TurfSystem _turf = default!;
+
 
     public override void Initialize()
     {
@@ -167,10 +175,19 @@ public sealed partial class XenoStompSystem : EntitySystem
         _receivers.Clear();
         _entityLookup.GetEntitiesInRange(xform.Coordinates, xeno.Comp.Range, _receivers);
 
+        var origin = _transform.GetMapCoordinates(xeno);
+
         using var targetingSuppression = _hitLocation.SuppressBodyZoneTargeting(xeno.Owner);
         foreach (var receiver in _receivers)
         {
             if (!_xeno.CanAbilityAttackTarget(xeno, receiver))
+                continue;
+
+            if (IsBlockedByObstacle(
+                    origin,
+                    _transform.GetMapCoordinates(receiver),
+                    xeno.Owner,
+                    ignoreBarricades: xeno.Comp.StompsThroughBarricades))
                 continue;
 
             if (xeno.Comp.SlowBigInsteadOfStun && _size.TryGetSize(receiver, out var size) && size >= RMCSizes.Big)
@@ -180,8 +197,17 @@ public sealed partial class XenoStompSystem : EntitySystem
                 _stun.TryParalyze(receiver, xeno.Comp.DebuffsHurtXenosMore ? _xeno.TryApplyXenoDebuffMultiplier(receiver, xeno.Comp.ParalyzeTime)
                     : xeno.Comp.ParalyzeTime, true);
 
-            if (xeno.Comp.Slows)
+            // CMU14: cmss13 Crush only superslows preds on the charger's own tile
+            var yautjaSlow = xeno.Comp.YautjaSlowUnder != null && _yautjaSlow.SameTile(xeno, receiver)
+                ? xeno.Comp.YautjaSlowUnder
+                : xeno.Comp.YautjaSlow;
+            if (xeno.Comp.Slows && !_yautjaSlow.TryApply(receiver, yautjaSlow))
                 _slow.TrySuperSlowdown(receiver, xeno.Comp.SlowTime, true);
+
+            if (xeno.Comp.KnocksBack)
+            {
+                _size.KnockBack(receiver, origin, xeno.Comp.KnockbackPower, xeno.Comp.KnockbackPower + 1f);
+            }
 
             if (xform.Coordinates.TryDistance(EntityManager, receiver.Owner.ToCoordinates(), out var distance) && distance <= xeno.Comp.ShortRange)
             {
@@ -233,6 +259,10 @@ public sealed partial class XenoStompSystem : EntitySystem
                     if (Math.Abs(angleDiff.Theta) > halfAngle.Theta)
                         continue;
 
+                    // Raycast to check for barricades blocking the tile.
+                    if (IsBlockedByObstacle(origin, new MapCoordinates(worldPos, origin.MapId), xeno.Owner))
+                        continue;
+
                     var tileCenter = _map.GridTileToLocal(gridId, grid, tilePos);
                     SpawnAtPosition(tileEffect, tileCenter);
                 }
@@ -258,7 +288,23 @@ public sealed partial class XenoStompSystem : EntitySystem
             if (Math.Abs(angleDiff.Theta) > halfAngle.Theta)
                 continue;
 
-            var damage = _damageable.TryChangeDamage(ent, _xeno.TryApplyXenoSlashDamageMultiplier(ent, xeno.Comp.Damage), origin: xeno, tool: xeno);
+            // Barricade line-of-sight check.
+            if (IsBlockedByObstacle(origin, entMap, xeno.Owner))
+                continue;
+
+            var stompDamage = xeno.Comp.Damage;
+            if (xeno.Comp.DirectionalMinDamage is { } minDmg)
+            {
+                var distRatio = Math.Clamp(toEnt.Length() / range, 0f, 1f);
+                stompDamage = new DamageSpecifier();
+                foreach (var (type, amount) in xeno.Comp.Damage.DamageDict)
+                {
+                    var minAmount = minDmg.DamageDict.GetValueOrDefault(type);
+                    stompDamage.DamageDict[type] = amount + (minAmount - amount) * distRatio;
+                }
+            }
+
+            var damage = _damageable.TryChangeDamage(ent, _xeno.TryApplyXenoSlashDamageMultiplier(ent, stompDamage), origin: xeno, tool: xeno);
             if (damage?.GetTotal() > FixedPoint2.Zero)
             {
                 var filter = Filter.Pvs(ent, entityManager: EntityManager).RemoveWhereAttachedEntity(o => o == xeno.Owner);
@@ -269,7 +315,7 @@ public sealed partial class XenoStompSystem : EntitySystem
                 ? _xeno.TryApplyXenoDebuffMultiplier(ent, xeno.Comp.ParalyzeTime)
                 : xeno.Comp.ParalyzeTime, true);
 
-            if (xeno.Comp.Slows)
+            if (xeno.Comp.Slows && !_yautjaSlow.TryApply(ent, xeno.Comp.YautjaSlow)) // CMU14
                 _slow.TrySuperSlowdown(ent, xeno.Comp.SlowTime, true);
 
             if (xeno.Comp.KnockBackDistance > 0)
@@ -282,5 +328,32 @@ public sealed partial class XenoStompSystem : EntitySystem
             if (xeno.Comp.ScreenShakeStrength > 0)
                 _cameraShake.ShakeCamera(ent, 6, xeno.Comp.ScreenShakeStrength);
         }
+    }
+
+    private bool IsBlockedByObstacle(
+        MapCoordinates origin,
+        MapCoordinates target,
+        EntityUid ignore,
+        bool ignoreBarricades = false)
+    {
+        if (origin.MapId != target.MapId)
+            return true;
+
+        var diff = target.Position - origin.Position;
+        var distance = diff.Length();
+        if (distance < 0.1f)
+            return false;
+
+        var mask = CollisionGroup.Impassable | CollisionGroup.InteractImpassable;
+        if (!ignoreBarricades)
+            mask |= CollisionGroup.BarricadeImpassable;
+
+        var ray = new CollisionRay(origin.Position, diff.Normalized(), (int) mask);
+        foreach (var _ in _physics.IntersectRay(origin.MapId, ray, distance, ignore, returnOnFirstHit: true))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

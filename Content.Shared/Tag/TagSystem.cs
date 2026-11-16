@@ -16,15 +16,11 @@ namespace Content.Shared.Tag;
 /// </summary>
 public sealed partial class TagSystem : EntitySystem
 {
-    [Dependency] private IPrototypeManager _proto = default!;
-
-    private EntityQuery<TagComponent> _tagQuery;
+    [Dependency] private EntityQuery<TagComponent> _tagQuery = default!;
 
     public override void Initialize()
     {
         base.Initialize();
-
-        _tagQuery = GetEntityQuery<TagComponent>();
 
 #if DEBUG
         SubscribeLocalEvent<TagComponent, ComponentInit>(OnTagInit);
@@ -599,6 +595,7 @@ public sealed partial class TagSystem : EntitySystem
             return false;
 
         Dirty(entity);
+        CMUNotifyTagsChanged(entity.Owner); // CMU14: keep server cleanup candidates current.
         return true;
     }
 
@@ -641,6 +638,7 @@ public sealed partial class TagSystem : EntitySystem
             return false;
 
         Dirty(entity);
+        CMUNotifyTagsChanged(entity.Owner); // CMU14: keep server cleanup candidates current.
         return true;
     }
 
@@ -663,6 +661,7 @@ public sealed partial class TagSystem : EntitySystem
             return false;
 
         Dirty(entity);
+        CMUNotifyTagsChanged(entity.Owner); // CMU14: keep server cleanup candidates current.
         return true;
     }
 
@@ -705,11 +704,12 @@ public sealed partial class TagSystem : EntitySystem
             return false;
 
         Dirty(entity);
+        CMUNotifyTagsChanged(entity.Owner); // CMU14: keep server cleanup candidates current.
         return true;
     }
 
     private void AssertValidTag(string id)
     {
-        DebugTools.Assert(_proto.HasIndex<TagPrototype>(id), $"Unknown tag: {id}");
+        DebugTools.Assert(ProtoMan.HasIndex<TagPrototype>(id), $"Unknown tag: {id}");
     }
 }

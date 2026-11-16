@@ -1,4 +1,5 @@
 ﻿using Content.Shared._RMC14.Marines.Skills;
+using Content.Shared._RMC14.Weapons.Ranged.IFF;
 using Robust.Shared.Audio;
 using Robust.Shared.GameStates;
 using Robust.Shared.Maths;
@@ -32,7 +33,12 @@ public sealed partial class DropshipNavigationComputerComponent : Component
     public bool Hijackable = true;
 
     [DataField, AutoNetworkedField]
-    public bool RemoteControl = false;
+    public EntProtoId<IFFFactionComponent> Faction = "FactionMarine";
+
+    [DataField, AutoNetworkedField]
+    // CMU14: defaults on so terminals can recall a stranded or hijacked ship without someone
+    // alive aboard; pilots who want exclusivity can still toggle it off in the nav UI.
+    public bool RemoteControl = true;
 
     [DataField, AutoNetworkedField]
     public bool CanTacticalLand;

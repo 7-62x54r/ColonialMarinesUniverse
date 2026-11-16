@@ -1,0 +1,336 @@
+name: Publish Test Merge
+
+run-name: "Publish test merge +${{ inputs.pr_numbers || 'none' }} -${{ inputs.remove_pr_numbers || 'none' }} to main server"
+
+# CMU14: when Publish calls this with keep_test_merges it already holds the publish group;
+# sharing the same group from a called workflow would deadlock.
+concurrency:
+  group: ${{ inputs.nested && 'publish-nested' || 'publish' }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_numbers:
+        description: Optional PR number(s) to add on top of every open PR marked "Test Merge" (spaces, commas, or new lines). Live PRs that are not marked or typed here come off the server.
+        required: false
+        type: string
+      remove_pr_numbers:
+        description: Optional PR number(s) to leave out even though they are marked "Test Merge". They lose the mark once the publish succeeds.
+        required: false
+        type: string
+  # CMU14: Publish uses this to rebuild master plus the marked PRs.
+  workflow_call:
+    inputs:
+      allow_empty:
+        description: Publish the plain base branch when no PR is marked.
+        required: false
+        type: boolean
+        default: false
+      nested:
+        required: false
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  DOTNET_VERSION: 10.0.x
+  CONFIGURATION: Release
+  AUDIO_REPO_TOKEN: ${{ secrets.AUDIO_REPO_TOKEN }}
+
+jobs:
+  prepare:
+    name: Resolve PR merges
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      base_ref: ${{ steps.pr.outputs.base_ref }}
+      prs_json: ${{ steps.pr.outputs.prs_json }}
+      removed_json: ${{ steps.pr.outputs.removed_json }}
+      merge_sha: ${{ steps.merge.outputs.sha }}
+      private-build-sha: ${{ steps.private.outputs.sha }}
+      merged_json: ${{ steps.merge.outputs.merged_json }}
+      conflicts_json: ${{ steps.merge.outputs.conflicts_json }}
+    steps:
+      # CMU14: All platforms must use the same private source revision.
+      - name: Resolve private package revision
+        id: private
+        uses: actions/github-script@v9.0.0
+        with:
+          github-token: ${{ secrets.CMU_PRIVATE_BUILD_TOKEN }}
+          script: |
+            const { data } = await github.rest.git.getRef({
+              owner: 'AU-14', repo: 'CMU-ServerBuild', ref: 'heads/main',
+            });
+            core.setOutput('sha', data.object.sha);
+
+      # CMU14: the PR set lives in .github/scripts/test_merge.js so the label bookkeeping shares it.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: false
+          sparse-checkout: .github/scripts
+
+      - name: Collect PRs
+        id: pr
+        uses: actions/github-script@v9.0.0
+        env:
+          PR_NUMBERS: ${{ inputs.pr_numbers }}
+          REMOVE_NUMBERS: ${{ inputs.remove_pr_numbers }}
+          ALLOW_EMPTY: ${{ inputs.allow_empty && 'true' || 'false' }}
+        with:
+          script: |
+            await require('./.github/scripts/test_merge.js').collect({github, context, core});
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          submodules: false
+
+      - name: Merge PRs
+        id: merge
+        shell: bash
+        env:
+          PRS_JSON: ${{ steps.pr.outputs.prs_json }}
+          ALLOW_EMPTY: ${{ inputs.allow_empty && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B test-merge-source "${{ steps.pr.outputs.base_sha }}"
+
+          : > "$RUNNER_TEMP/merged.jsonl"
+          : > "$RUNNER_TEMP/conflicts.jsonl"
+
+          # CMU14: oldest PR first; a PR that conflicts is skipped and flagged instead of failing the run.
+          # Use the validated PR heads so private builds reproduce the same tree.
+          while read -r pr_number head_sha; do
+            [ -n "$pr_number" ] || continue
+            echo "Merging PR #$pr_number"
+            git fetch --no-tags origin "pull/${pr_number}/head:refs/remotes/origin/test-merge-pr-${pr_number}"
+            test "$(git rev-parse "refs/remotes/origin/test-merge-pr-${pr_number}")" = "$head_sha"
+            entry="$(echo "$PRS_JSON" | jq -c --argjson n "$pr_number" '.[] | select(.number == $n)')"
+            if git merge --no-ff --no-edit "$head_sha"; then
+              echo "$entry" >> "$RUNNER_TEMP/merged.jsonl"
+            else
+              files="$(git diff --name-only --diff-filter=U | jq -R . | jq -sc .)"
+              git merge --abort
+              echo "::warning::PR #$pr_number conflicts and was left out of this test merge."
+              echo "$entry" | jq -c --argjson files "$files" '. + {files: $files}' >> "$RUNNER_TEMP/conflicts.jsonl"
+            fi
+          done < <(echo "$PRS_JSON" | jq -r '.[] | [.number, .head_sha] | @tsv')
+
+          merged_json="$(jq -sc . "$RUNNER_TEMP/merged.jsonl")"
+          conflicts_json="$(jq -sc . "$RUNNER_TEMP/conflicts.jsonl")"
+          echo "merged_json=$merged_json" >> "$GITHUB_OUTPUT"
+          echo "conflicts_json=$conflicts_json" >> "$GITHUB_OUTPUT"
+
+          if [ "$(echo "$merged_json" | jq length)" -eq 0 ] && [ "$(echo "$PRS_JSON" | jq length)" -gt 0 ] && [ "$ALLOW_EMPTY" != "true" ]; then
+            echo "::error::Every PR in the test merge conflicted; nothing to publish."
+            exit 1
+          fi
+
+          if ! git diff --quiet "${{ steps.pr.outputs.base_sha }}" -- .github/workflows; then
+            echo "::notice::Test merge includes workflow file changes; restoring .github/workflows to base before creating the test merge patch."
+            # CMU14: Remove added workflow files too, matching private source preparation.
+            git restore --source "${{ steps.pr.outputs.base_sha }}" --staged --worktree .github/workflows
+          fi
+
+          pull_list="$(echo "$merged_json" | jq -r 'map("#" + (.number | tostring)) | join(", ")')"
+          git diff --binary --output=test-merge.patch "${{ steps.pr.outputs.base_sha }}"
+          git reset --soft "${{ steps.pr.outputs.base_sha }}"
+
+          if git diff --cached --quiet; then
+            echo "::warning::Test merge produced no content changes after sanitizing workflow files; using base ref."
+            echo "sha=${{ steps.pr.outputs.base_sha }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "Test merge ${pull_list}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload merge patch
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-merge-patch
+          path: test-merge.patch
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    name: Package ${{ matrix.name }}
+    if: always() && needs.prepare.result == 'success'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: client
+            platform: client
+          - name: server-win-x64
+            platform: win-x64
+          - name: server-linux-x64
+            platform: linux-x64
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: true
+          submodules: false
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: test-merge-patch
+          path: .test-merge
+
+      - name: Checkout publish tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .publish-tooling
+          sparse-checkout: Tools
+          persist-credentials: false
+
+      # CMU14: Client/server source and build logs stay in the private build repository.
+      # Only the PRs that merged go in; with none left this is a plain base build without a patch.
+      - name: Request verified package
+        env:
+          CMU_PRIVATE_BUILD_TOKEN: ${{ secrets.CMU_PRIVATE_BUILD_TOKEN }}
+          CMU_PRIVATE_BUILD_SHA: ${{ needs.prepare.outputs.private-build-sha }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          PLATFORM: ${{ matrix.platform }}
+          CMU_TEST_MERGE_PRS: ${{ needs.prepare.outputs.merged_json }}
+        run: |
+          audio_args=()
+          if [ -n "$AUDIO_REPO_TOKEN" ]; then audio_args+=(--require-audio); fi
+          patch_args=()
+          if [ "$(echo "$CMU_TEST_MERGE_PRS" | jq length)" -gt 0 ]; then patch_args+=(--patch .test-merge/test-merge.patch); fi
+          python3 .publish-tooling/Tools/request_private_package.py --source-sha "$SOURCE_SHA" --platform "$PLATFORM" "${patch_args[@]}" "${audio_args[@]}"
+
+      - name: Upload ${{ matrix.name }} package
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-merge-release-${{ matrix.name }}
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish test merge version
+    # CMU14: artifact selection reads this run's completed packages.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+    if: always() && needs.prepare.result == 'success' && needs.package.result == 'success'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    needs:
+      - prepare
+      - package
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: true
+          submodules: false
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: test-merge-patch
+          path: .test-merge
+
+      - name: Apply test merge patch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -s .test-merge/test-merge.patch ]; then
+            git apply --index --binary .test-merge/test-merge.patch
+          else
+            echo "No content changes to apply."
+          fi
+
+      - name: Checkout RobustToolbox
+        run: |
+          git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --depth=1 RobustToolbox
+          cd RobustToolbox
+          git fetch --unshallow --tags origin
+
+      # CMU14: matrix job retries can leave multiple artifacts with the same name.
+      - name: Select latest verified packages
+        id: artifacts
+        uses: actions/github-script@v9.0.0
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const ids = ['client', 'server-linux-x64', 'server-win-x64'].map(platform => {
+              const candidates = artifacts.filter(artifact =>
+                artifact.name === `test-merge-release-${platform}` && !artifact.expired &&
+                artifact.workflow_run?.head_sha === context.sha);
+              candidates.sort((a, b) => b.id - a.id);
+              if (!candidates.length) throw new Error(`Missing verified ${platform} artifact`);
+              return candidates[0].id;
+            });
+            core.setOutput('ids', ids.join(','));
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.ids }}
+          path: release
+          merge-multiple: true
+
+      - name: Show package sizes
+        run: ls -lh release/
+
+      # CMU14: Use the invoking workflow's retry-capable publisher and label script, independent of PR patches.
+      - name: Checkout publish tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .publish-tooling
+          sparse-checkout: |
+            Tools
+            .github/scripts
+          persist-credentials: false
+
+      - name: Publish test merge version
+        run: python3 .publish-tooling/Tools/publish_multi_request.py --upload-workers 1 # CMU14
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          PUBLISH_VERSION: ${{ needs.prepare.outputs.merge_sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      # CMU14: one edited status comment per PR plus TM labels, instead of a new comment per deploy.
+      - name: Update test merge labels and comments
+        uses: actions/github-script@v9.0.0
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          MERGE_SHA: ${{ needs.prepare.outputs.merge_sha }}
+          MERGED_JSON: ${{ needs.prepare.outputs.merged_json }}
+          CONFLICTS_JSON: ${{ needs.prepare.outputs.conflicts_json }}
+          REMOVED_JSON: ${{ needs.prepare.outputs.removed_json }}
+        with:
+          script: |
+            await require('./.publish-tooling/.github/scripts/test_merge.js').finalize({github, context, core});

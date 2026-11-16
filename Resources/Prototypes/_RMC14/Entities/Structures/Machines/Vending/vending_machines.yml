@@ -79,11 +79,6 @@
       map: ["enum.WiresVisualLayers.MaintenancePanel"]
   - type: VendingMachine
     pack: CMVendomat
-    dispenseOnHitChance: 0.25
-    dispenseOnHitThreshold: 2
-    offState: off
-    brokenState: broken
-    normalState: normal-unshaded
   - type: Corrodible
     timeToApply: 4
     structure: true
@@ -114,7 +109,6 @@
       - !type:PlaySoundBehavior
         sound:
           collection: MetalGlassBreak
-  - type: XenoCrusherChargable #TODO RMC14 tip over
 
 - type: vendingMachineInventory
   id: CMVendomat
@@ -127,11 +121,16 @@
   name: Hot Drinks machine
   description: A vending machine which dispenses hot drinks.
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: VehicleSmashable
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/coffee.rsi
   - type: VendingMachine
     pack: CMVendorCoffee
+  - type: VendingMachineVisuals
     ejectState: eject-unshaded
 
 - type: entity
@@ -179,6 +178,10 @@
   name: Hot Foods Machine
   description: A vending machine full of ready to cook meals, mhmmmm taste the nutritional goodness!
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: VehicleSmashable
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/snack.rsi
@@ -196,8 +199,11 @@
     RMCFoodSnackChipsPepper: 12
     RMCFoodSnackEATBar: 12
     RMCFoodSnackBoonie: 6
+    RMCFoodSnackBoonieBar: 4
     RMCFoodSnackCHUNK: 6
+    RMCFoodSnackHUNK: 1
     RMCFoodSnackBarcaridine: 6
+    CMMarineProteinBar: 8
 
 - type: entity
   parent: CMVendorSnack
@@ -230,6 +236,10 @@
   name: Souto Softdrinks
   description: A softdrink vendor provided by Souto Soda Company, Havana.
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: VehicleSmashable
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/cola.rsi
@@ -293,6 +303,57 @@
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/NutriCo/drink.rsi
     offset: 0, 0.5
+  # cmu edit start: pours mess drinks into a cup or other container, like a soda fountain
+  - type: VendingMachine
+    pack: CMUNutriCoAutoDrinkEmpty
+  - type: ActivatableUI
+    key: enum.CMUAutoDrinkUiKey.Key
+  - type: UserInterface
+    interfaces:
+      enum.CMUAutoDrinkUiKey.Key:
+        type: CMUAutoDrinkBui
+      enum.VendingMachineUiKey.Key:
+        type: VendingMachineBoundUserInterface
+      enum.WiresUiKey.Key:
+        type: WiresBoundUserInterface
+  - type: ItemSlots
+  - type: ContainerContainer
+    containers:
+      autodrink_bay: !type:ContainerSlot
+  - type: CMUFoodlineVendor
+  - type: CMUAutoDrink
+    bay:
+      whitelistFailPopup: reagent-dispenser-component-cannot-put-entity-message
+      whitelist:
+        components:
+        - FitsInDispenser
+    drinks:
+    - reagent: Water
+      note: cmu-autodrink-note-chilled
+    - reagent: RMCCoffee
+      name: cmu-autodrink-coffee
+      note: cmu-autodrink-note-hot
+    - reagent: RMCTea
+      name: cmu-autodrink-tea
+      note: cmu-autodrink-note-hot
+    - reagent: Milk
+      note: cmu-autodrink-note-chilled
+    - reagent: RMCChocolateDrink
+      name: cmu-autodrink-chocolate-milk
+      note: cmu-autodrink-note-chilled
+    - reagent: JuiceOrange
+      name: cmu-autodrink-electrolyte-orange
+      note: cmu-autodrink-note-chilled
+    - reagent: LemonLime
+      name: cmu-autodrink-electrolyte-lemon-lime
+      note: cmu-autodrink-note-chilled
+    - reagent: JuiceGrape
+      name: cmu-autodrink-electrolyte-grape
+      note: cmu-autodrink-note-chilled
+    - reagent: Ice
+      name: cmu-autodrink-ice
+      extra: true
+  # cmu edit end
 
 - type: entity
   parent: CMVendorCola
@@ -312,6 +373,7 @@
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/NutriCo/drink.rsi
     offset: 0, 0.5
+  - type: CMUFoodlineVendor # cmu edit: shut off while the DEFAC foodline is open
 
 - type: entity
   parent: CMVendor
@@ -319,6 +381,10 @@
   name: Cold Drinks machine
   description: A vending machine that contains cold drinks. This one appears to be produced by Tsumetai-Umi, a subsidairy of Neterai Foods International, which itself is subsidiary of Weyland-Yutani.
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/sodavend.rsi
   - type: VendingMachine
@@ -347,6 +413,10 @@
   name: Cigarette Machine
   description: If you want to get cancer, might as well do it in style!
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/cigs.rsi
   - type: VendingMachine
@@ -470,10 +540,11 @@
     sprite: _RMC14/Structures/Machines/VendingMachines/sec.rsi
   - type: VendingMachine
     pack: CMVendorSec
+  - type: VendingMachineVisuals
     denyState: deny-unshaded
     ejectState: eject-unshaded
   - type: AccessReader
-    access: [ [ "AU14AccessGovforSecurity" ], [ "AU14AccessOpforSecurity" ] ]
+    access: [["AU14AccessGovforSecurity"], ["AU14AccessOpforSecurity"], ["CMAccessArmory"], ["CMAccessBrig"], ["CMAccessColonyBrig"]] # CMU14
 
 - type: vendingMachineInventory
   id: CMVendorSec
@@ -485,9 +556,13 @@
     # Pepper spray 4
     # InvestigationPepperSpray: 4
     CMStunbaton: 4
-    RMCGunCasePistolM77: 4
-    CMMagazinePistolM77AP: 16
-    CMMagazinePistolM88Rubber: 40
+    # cmu edit start: no Mod 88 in SecTech; pepper spray instead
+    # RMCGunCasePistolM77: 4
+    # CMMagazinePistolM77AP: 16
+    # CMMagazinePistolM88Rubber: 40
+    CMUPepperSpray: 4
+    CMUPepperSprayAntidote: 2
+    # cmu edit end
     # CMBeltSecurityMP: 10
     CMFlash: 5
     RMCGrenadeFlashBang: 6
@@ -496,8 +571,9 @@
     #RegulationTape: 5
     #TapeRecorder: 3
     #ClueScanner: 3
-    #Camera: 8
-    #CameraFilm: 8
+    CMUPhotoCamera: 8 # CMU14
+    CMUCameraFilm: 8 # CMU14
+    CMU14TearGasGrenade: 4
     RMCWhistle: 5
     RMCFoodDonut: 12
     RMCBoxDonut: 2 #Contraband
@@ -519,6 +595,7 @@
     sprite: _RMC14/Structures/Machines/VendingMachines/sec.rsi
   - type: VendingMachine
     pack: RMCVendorRiot
+  - type: VendingMachineVisuals
     denyState: deny-unshaded
     ejectState: eject-unshaded
   - type: AccessReader
@@ -552,6 +629,7 @@
     sprite: _RMC14/Structures/Machines/VendingMachines/sec.rsi
   - type: VendingMachine
     pack: CMVendorSEA
+  - type: VendingMachineVisuals
     denyState: deny-unshaded
     ejectState: eject-unshaded
   - type: AccessReader
@@ -579,10 +657,15 @@
   name: NutriMax
   description: A plant nutrients vendor.
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/nutri.rsi
   - type: VendingMachine
     pack: CMVendorNutri
+  - type: VendingMachineVisuals
     denyState: deny-unshaded
     ejectState: eject-unshaded
 
@@ -611,10 +694,15 @@
   name: MegaSeed Servitor
   description: When you need seeds fast!
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/seeds.rsi
   - type: VendingMachine
     pack: CMVendorSeeds
+  - type: VendingMachineVisuals
     denyState: deny-unshaded
     ejectState: eject-unshaded
 
@@ -707,8 +795,10 @@
         amount: 12
       - id: DrinkShaker
         amount: 8
-      - id: DrinkGlass
+      - id: RMCDrinkGlass
         amount: 40
+      - id: DrinkGlass
+        amount: 4
       - id: ClothingOuterApronChef
         amount: 5
       - id: RMCCondimentSmallSalt
@@ -788,6 +878,10 @@
   name: BODA
   description: An old sweet water vending machine, how did this end up here?
   components:
+  - type: XenoCrusherChargable
+    setDamage:
+      types:
+        Structural: 750
   - type: Sprite
     sprite: _RMC14/Structures/Machines/VendingMachines/sovietsoda.rsi
   - type: VendingMachine
@@ -815,7 +909,7 @@
     - name: Products
       entries:
       - id: FoodContainerEgg
-        amount: 18
+        amount: 12
       - id: FoodMeatChicken
         amount: 36
       - id: FoodMeatFish
@@ -878,6 +972,10 @@
       - id: FoodOnion
         amount: 18
       - id: FoodOnionRed
+        amount: 14
+      - id: FoodGrape
+        amount: 14
+      - id: FoodBerries
         amount: 14
       - id: FoodGarlic
         amount: 22

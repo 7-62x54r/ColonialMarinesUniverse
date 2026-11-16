@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Content.Client.Gameplay;
 using Content.Client.UserInterface.Systems.Actions;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Line;
@@ -11,11 +12,17 @@ using Content.Shared._RMC14.Xenonids.AcidMine;
 using Content.Shared._RMC14.Xenonids.Bombard;
 using Content.Shared._RMC14.Xenonids.Burrow;
 using Content.Shared._RMC14.Xenonids.DeployTraps;
+using Content.Shared._RMC14.Xenonids.Fruit.Components;
+using Content.Shared._RMC14.Xenonids.ResinSurge;
 using Content.Shared._RMC14.Xenonids.Spray;
 using Content.Shared._RMC14.Xenonids.Abduct;
 using Content.Shared._RMC14.Xenonids.Charge;
 using Content.Shared._RMC14.Xenonids.Pierce;
+using Content.Shared._RMC14.Xenonids.Sentinel;
 using Content.Shared._RMC14.Xenonids.Stomp;
+using Content.Shared._RMC14.Xenonids.Weeds;
+using Content.Shared._RMC14.Xenonids.Despoiler;
+using Content.Shared.CMU14.Threats.Mobs.Xeno.Caste.Warlock;
 using Content.Shared.Actions.Components;
 using Content.Shared.Maps;
 using Content.Shared.Physics;
@@ -23,6 +30,7 @@ using Robust.Client.GameObjects;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.Player;
+using Robust.Client.State;
 using Robust.Client.UserInterface;
 using Robust.Shared.Configuration;
 using Robust.Shared.Enums;
@@ -32,6 +40,7 @@ using Robust.Shared.Map;
 using Robust.Shared.Map.Components;
 using Robust.Shared.Maths;
 using Robust.Shared.Physics;
+using Robust.Shared.Physics.Components;
 using Robust.Shared.Physics.Systems;
 using Robust.Shared.Prototypes;
 
@@ -39,29 +48,35 @@ namespace Content.Client._RMC14.Xenonids.Targeting;
 
 public sealed class XenoAbilityPreviewOverlay : Overlay
 {
-    public override OverlaySpace Space => OverlaySpace.WorldSpaceBelowFOV;
+    public override OverlaySpace Space => OverlaySpace.WorldSpaceBelowFOV | OverlaySpace.WorldSpace;
 
     private static readonly Color SprayOutlineColor = new Color(0.44f, 0.76f, 0.2f);
     private static readonly Color AbductOutlineColor = new Color(1f, 0.67f, 0.28f);
     private static readonly Color PierceOutlineColor = new Color(1f, 0.15f, 0.1f);
     private static readonly Color BombardFallbackColor = new Color(0.98f, 0.74f, 0.25f);
     private static readonly Color BurrowOutlineColor = new Color(0.95f, 0.85f, 0.2f);
+    private static readonly Color ResinSurgeOutlineColor = new Color(0.34f, 0.87f, 0.57f);
+    private static readonly Color InvalidOutlineColor = new Color(0.95f, 0.24f, 0.24f);
     private static readonly Color BlockerOutlineColor = new Color(0.65f, 0.65f, 0.65f);
     private static readonly Color AcidMineOutlineColor = new Color(0.6f, 0.9f, 0.2f);
     private static readonly Color DeployTrapsOutlineColor = new Color(0.8f, 0.6f, 0.2f);
+    private static readonly Color SentinelToxinOutlineColor = new Color(0.34f, 0.95f, 0.24f);
+    private static readonly Color WarlockOutlineColor = new Color(0.298f, 0.114f, 0.584f); // #4c1d95
 
     private const float OutlineAlpha = 0.8f;
+    private const float WarlockShieldIndicatorAlpha = 0.8f;
     private const float OutlineThickness = 0.1f;
     private const int BombardDefaultRadius = 3;
+    private const float ToxicSpitDefaultRange = 7f;
 
     private readonly IInputManager _input;
     private readonly IEyeManager _eye;
     private readonly IPlayerManager _player;
     private readonly IUserInterfaceManager _ui;
     private readonly IConfigurationManager _config;
-    private readonly IMapManager _mapManager;
     private readonly IPrototypeManager _prototypes;
     private readonly IComponentFactory _componentFactory;
+    private readonly IStateManager _stateManager;
     private readonly SharedMapSystem _mapSystem;
     private readonly SharedPhysicsSystem _physics;
     private readonly SharedTransformSystem _transform;
@@ -69,9 +84,14 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
     private readonly EntityQuery<ActionsComponent> _actionsQ;
     private readonly EntityQuery<TargetActionComponent> _targetActionQ;
     private readonly EntityQuery<WorldTargetActionComponent> _worldTargetQ;
+    private readonly EntityQuery<EntityTargetActionComponent> _entityTargetQ;
     private readonly EntityQuery<XenoSprayAcidComponent> _sprayQ;
     private readonly EntityQuery<XenoBombardComponent> _bombardQ;
     private readonly EntityQuery<XenoBurrowComponent> _burrowQ;
+    private readonly EntityQuery<XenoResinSurgeComponent> _resinSurgeQ;
+    private readonly EntityQuery<ResinSurgeReinforcableComponent> _reinforcableQ;
+    private readonly EntityQuery<XenoFruitComponent> _fruitQ;
+    private readonly EntityQuery<XenoWeedsComponent> _weedsQ;
     private readonly EntityQuery<XenoAcidMineComponent> _acidMineQ;
     private readonly EntityQuery<XenoDeployTrapsComponent> _deployTrapsQ;
     private readonly EntityQuery<XenoAbductComponent> _abductQ;
@@ -79,6 +99,10 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
     private readonly EntityQuery<XenoChargeComponent> _chargeQ;
     private readonly EntityQuery<XenoStompComponent> _stompQ;
     private readonly EntityQuery<TransformComponent> _xformQ;
+    private readonly EntityQuery<XenoDespoilerCausticEmbraceActionComponent> _causticEmbraceQ;
+    private readonly EntityQuery<XenoDespoilerComponent> _despoilerQ;
+    private readonly EntityQuery<XenoToxicSpitComponent> _toxicSpitQ;
+    private readonly EntityQuery<CMUXenoWarlockComponent> _warlockQ;
 
     public XenoAbilityPreviewOverlay(IEntityManager ents)
     {
@@ -87,9 +111,9 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         _player = IoCManager.Resolve<IPlayerManager>();
         _ui = IoCManager.Resolve<IUserInterfaceManager>();
         _config = IoCManager.Resolve<IConfigurationManager>();
-        _mapManager = IoCManager.Resolve<IMapManager>();
         _prototypes = IoCManager.Resolve<IPrototypeManager>();
         _componentFactory = IoCManager.Resolve<IComponentFactory>();
+        _stateManager = IoCManager.Resolve<IStateManager>();
         _mapSystem = ents.System<SharedMapSystem>();
         _physics = ents.System<SharedPhysicsSystem>();
         _transform = ents.System<SharedTransformSystem>();
@@ -97,9 +121,14 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         _actionsQ = ents.GetEntityQuery<ActionsComponent>();
         _targetActionQ = ents.GetEntityQuery<TargetActionComponent>();
         _worldTargetQ = ents.GetEntityQuery<WorldTargetActionComponent>();
+        _entityTargetQ = ents.GetEntityQuery<EntityTargetActionComponent>();
         _sprayQ = ents.GetEntityQuery<XenoSprayAcidComponent>();
         _bombardQ = ents.GetEntityQuery<XenoBombardComponent>();
         _burrowQ = ents.GetEntityQuery<XenoBurrowComponent>();
+        _resinSurgeQ = ents.GetEntityQuery<XenoResinSurgeComponent>();
+        _reinforcableQ = ents.GetEntityQuery<ResinSurgeReinforcableComponent>();
+        _fruitQ = ents.GetEntityQuery<XenoFruitComponent>();
+        _weedsQ = ents.GetEntityQuery<XenoWeedsComponent>();
         _acidMineQ = ents.GetEntityQuery<XenoAcidMineComponent>();
         _deployTrapsQ = ents.GetEntityQuery<XenoDeployTrapsComponent>();
         _abductQ = ents.GetEntityQuery<XenoAbductComponent>();
@@ -107,6 +136,10 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         _chargeQ = ents.GetEntityQuery<XenoChargeComponent>();
         _stompQ = ents.GetEntityQuery<XenoStompComponent>();
         _xformQ = ents.GetEntityQuery<TransformComponent>();
+        _causticEmbraceQ = ents.GetEntityQuery<XenoDespoilerCausticEmbraceActionComponent>();
+        _despoilerQ = ents.GetEntityQuery<XenoDespoilerComponent>();
+        _toxicSpitQ = ents.GetEntityQuery<XenoToxicSpitComponent>();
+        _warlockQ = ents.GetEntityQuery<CMUXenoWarlockComponent>();
     }
 
     protected override void Draw(in OverlayDrawArgs args)
@@ -124,7 +157,9 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         var actionController = _ui.GetUIController<ActionUIController>();
         var originMap = _transform.GetMapCoordinates(player.Value, xform: xform);
         float? burrowRange = null;
-        if (_burrowQ.TryComp(player.Value, out var burrow) && IsBurrowed(burrow))
+        if (_burrowQ.TryComp(player.Value, out var burrow) &&
+            IsBurrowed(burrow) &&
+            args.Space == OverlaySpace.WorldSpace)
         {
             burrowRange = GetBurrowRange(player.Value, burrow, actionController.SelectingTargetFor);
             DrawBurrowRange(args, originMap, burrowRange.Value);
@@ -140,11 +175,42 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         if (originMap.MapId != mousePos.MapId)
             return;
 
+        if (args.Space == OverlaySpace.WorldSpace)
+        {
+            if (!_worldTargetQ.TryComp(action, out var worldSpaceTarget) || worldSpaceTarget.Event == null)
+                return;
+
+            if (worldSpaceTarget.Event is not XenoBurrowActionEvent ||
+                !_burrowQ.TryComp(player.Value, out burrow) ||
+                !IsBurrowed(burrow))
+            {
+                return;
+            }
+
+            burrowRange ??= GetBurrowRange(player.Value, burrow, action);
+            DrawBurrowTarget(args, originMap, mousePos, burrowRange.Value);
+            return;
+        }
+
+        if (args.Space != OverlaySpace.WorldSpaceBelowFOV)
+            return;
+
+        if (_entityTargetQ.TryComp(action, out var entityTarget) &&
+            entityTarget.Event is XenoDrainStingActionEvent &&
+            _targetActionQ.TryComp(action, out var targetAction))
+        {
+            DrawTileRangeIntersecting(args, originMap, targetAction.Range, SentinelToxinOutlineColor.WithAlpha(OutlineAlpha));
+            return;
+        }
+
         if (!_worldTargetQ.TryComp(action, out var worldTarget) || worldTarget.Event == null)
             return;
 
         switch (worldTarget.Event)
         {
+            case XenoToxicSpitActionEvent:
+                DrawToxicSpit(args, player.Value, xform, originMap, mousePos);
+                break;
             case XenoSprayAcidActionEvent:
                 if (!_sprayQ.TryComp(player.Value, out var spray))
                     return;
@@ -157,15 +223,11 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
 
                 DrawBombard(args, player.Value, xform, originMap, mousePos, bombard);
                 break;
-            case XenoBurrowActionEvent:
-                if (!_burrowQ.TryComp(player.Value, out burrow))
+            case XenoResinSurgeActionEvent:
+                if (!_resinSurgeQ.TryComp(player.Value, out var resinSurge))
                     return;
 
-                if (!IsBurrowed(burrow))
-                    return;
-
-                burrowRange ??= GetBurrowRange(player.Value, burrow, action);
-                DrawBurrowTarget(args, originMap, mousePos, burrowRange.Value);
+                DrawResinSurge(args, originMap, mousePos, resinSurge);
                 break;
             case XenoAcidMineActionEvent:
                 if (!_acidMineQ.TryComp(player.Value, out var acidMine))
@@ -175,7 +237,8 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
             case XenoDeployTrapsActionEvent:
                 if (!_deployTrapsQ.TryComp(player.Value, out var deployTraps))
                     return;
-                DrawDeployTraps(args, originMap, mousePos, deployTraps, DeployTrapsOutlineColor.WithAlpha(OutlineAlpha));
+                DrawDeployTraps(args, originMap, mousePos, deployTraps,
+                    DeployTrapsOutlineColor.WithAlpha(OutlineAlpha));
                 break;
             case XenoAbductActionEvent:
                 if (!_abductQ.TryComp(player.Value, out var abduct))
@@ -198,9 +261,188 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
             case XenoDirectionalStompActionEvent:
                 if (!_stompQ.TryComp(player.Value, out var stomp) || !stomp.Directional)
                     return;
-                DrawDirectionalStomp(args, originMap, mousePos, stomp);
+                DrawDirectionalStomp(args, player.Value, originMap, mousePos, stomp);
+                break;
+
+            case XenoDespoilerCausticEmbraceActionEvent:
+                if (!_causticEmbraceQ.TryComp(action, out var embrace))
+                    break;
+
+                DrawCausticEmbrace(
+                    args,
+                    originMap,
+                    mousePos,
+                    embrace,
+                    player.Value);
+                break;
+
+            case CMUXenoPsychicBlastActionEvent:
+                if (_warlockQ.TryComp(player.Value, out var blastWarlock))
+                    DrawWarlockRangeCircle(args, player.Value, originMap, blastWarlock.PsychicBlastRange);
+                break;
+
+            case CMUXenoPsychicCrushActionEvent:
+                if (_warlockQ.TryComp(player.Value, out var crushWarlock))
+                    DrawWarlockRangeCircle(args, player.Value, originMap, crushWarlock.PsychicCrushInitRange);
+                break;
+
+            case CMUXenoPsychicShieldActionEvent:
+                DrawWarlockShieldTargetPreview(args, player.Value, originMap, mousePos);
                 break;
         }
+    }
+
+    private void DrawWarlockShieldTargetPreview(
+        in OverlayDrawArgs args,
+        EntityUid player,
+        MapCoordinates originMap,
+        MapCoordinates mousePos)
+    {
+        if (!_warlockQ.HasComp(player))
+            return;
+
+        var direction = GetCardinalFromMouseDelta(player, originMap, mousePos);
+        var color = WarlockOutlineColor.WithAlpha(WarlockShieldIndicatorAlpha);
+        DrawWarlockShieldPlacement(args, originMap, direction, color);
+    }
+
+    private Direction GetCardinalFromMouseDelta(EntityUid player, MapCoordinates originMap, MapCoordinates mousePos)
+    {
+        if (originMap.MapId != mousePos.MapId)
+            return _transform.GetWorldRotation(player).GetCardinalDir();
+
+        var delta = mousePos.Position - originMap.Position;
+        // Mouse within warlock's own tile: fall back to current facing to avoid picking a wrong cardinal from jitter.
+        if (Math.Abs(delta.X) < 0.5f && Math.Abs(delta.Y) < 0.5f)
+            return _transform.GetWorldRotation(player).GetCardinalDir();
+
+        return delta.ToWorldAngle().GetCardinalDir();
+    }
+
+    // Tile-shaped range indicator that tracks the warlock's actual world position (like the
+    // shield preview) instead of snapping to their tile centre. A tile is highlighted when the
+    // range circle touches it - i.e. the closest point of the tile to the warlock's world
+    // position is within the ability's range. That closest point is per-axis clamped: on each
+    // axis the offset from the tile centre to the warlock is either zero (warlock inside the
+    // tile on that axis) or |delta| - halfTile (warlock outside the tile on that axis). Any
+    // tile grazed by the range circle is fully highlighted so its whole footprint reads as in
+    // range at a glance. Range is read from the warlock component (not TargetActionComponent)
+    // because the action's YAML range is intentionally loose - the SharedActionsSystem gate has
+    // to accept clicks anywhere on a highlighted tile, so the true reach lives on the warlock
+    // and CMUXenoWarlockSystem.TrySnapAbilityTargetToTile enforces the same closest-point-of-
+    // tile rule server-side, guaranteeing every highlighted tile is a legal target.
+    private void DrawWarlockRangeCircle(
+        in OverlayDrawArgs args,
+        EntityUid player,
+        MapCoordinates originMap,
+        float range)
+    {
+        if (range <= 0f)
+            return;
+
+        if (!_mapSystem.TryFindGridAt(originMap, out var gridUid, out var grid))
+            return;
+
+        var center = _mapSystem.CoordinatesToTile(gridUid, grid, originMap);
+        var tileSize = grid.TileSize;
+        var halfTile = tileSize / 2f;
+        // Query far enough out to catch tiles whose closest corner is inside the range circle,
+        // which extends up to halfTile*sqrt(2) beyond the naive per-axis range. Ceiling covers
+        // the diagonal reach in tile count.
+        var maxTiles = (int) MathF.Ceiling((range + halfTile) / tileSize);
+        var tiles = new HashSet<Vector2i>();
+        for (var x = -maxTiles; x <= maxTiles; x++)
+        {
+            for (var y = -maxTiles; y <= maxTiles; y++)
+            {
+                var indices = center + new Vector2i(x, y);
+                var tileCenter = _mapSystem.GridTileToWorld(gridUid, grid, indices).Position;
+                var delta = tileCenter - originMap.Position;
+                // Closest point of the tile to the warlock. Per axis: 0 when the warlock is
+                // inside the tile on that axis (|delta.axis| <= halfTile), else |delta.axis| -
+                // halfTile (the gap between the warlock's projected position and the tile
+                // boundary). The 2D length of that vector is the true minimum distance from
+                // warlock to any point of the tile.
+                var closest = new Vector2(
+                    MathF.Max(0f, MathF.Abs(delta.X) - halfTile),
+                    MathF.Max(0f, MathF.Abs(delta.Y) - halfTile));
+                if (closest.Length() > range)
+                    continue;
+
+                tiles.Add(indices);
+            }
+        }
+
+        DrawTileBorder(args.WorldHandle, gridUid, grid, tiles, WarlockOutlineColor.WithAlpha(OutlineAlpha));
+    }
+
+    // Draws a rectangle outline at the world position where the shield will actually spawn -
+    // 1 world-unit in front of the warlock, 3 wide by 1 thick perpendicular to the facing direction.
+    // Not tile-snapped; tracks the warlock's exact position.
+    private void DrawWarlockShieldPlacement(
+        in OverlayDrawArgs args,
+        MapCoordinates originMap,
+        Direction direction,
+        Color color)
+    {
+        var forward = direction switch
+        {
+            Direction.North => new Vector2(0, 1),
+            Direction.South => new Vector2(0, -1),
+            Direction.East => new Vector2(1, 0),
+            Direction.West => new Vector2(-1, 0),
+            _ => new Vector2(0, 1),
+        };
+        Vector2 halfWidth; // 3 tiles wide, perpendicular to facing
+        Vector2 halfDepth; // 1 tile thick, along facing
+        if (direction == Direction.North || direction == Direction.South)
+        {
+            halfWidth = new Vector2(1.5f, 0f);
+            halfDepth = new Vector2(0f, 0.5f);
+        }
+        else
+        {
+            halfWidth = new Vector2(0f, 1.5f);
+            halfDepth = new Vector2(0.5f, 0f);
+        }
+
+        var center = originMap.Position + forward;
+        var c1 = center - halfWidth - halfDepth;
+        var c2 = center + halfWidth - halfDepth;
+        var c3 = center + halfWidth + halfDepth;
+        var c4 = center - halfWidth + halfDepth;
+
+        var handle = args.WorldHandle;
+        DrawEdge(handle, c1, c2, color);
+        DrawEdge(handle, c2, c3, color);
+        DrawEdge(handle, c3, c4, color);
+        DrawEdge(handle, c4, c1, color);
+    }
+
+    private void DrawResinSurge(
+        in OverlayDrawArgs args,
+        MapCoordinates originMap,
+        MapCoordinates mousePos,
+        XenoResinSurgeComponent resinSurge)
+    {
+        var range = resinSurge.Range;
+        if (range <= 0)
+            return;
+
+        if (!TryGetTileIndices(mousePos, out var targetTile))
+            return;
+
+        var targetCenter = _mapSystem.GridTileToWorld(targetTile.GridUid, targetTile.Grid, targetTile.Indices);
+        var valid = (targetCenter.Position - originMap.Position).LengthSquared() <= range * range;
+        var color = (valid ? ResinSurgeOutlineColor : InvalidOutlineColor).WithAlpha(OutlineAlpha);
+
+        if (TryGetResinSurgeDirectTarget(mousePos, out var directTargetTile))
+        {
+            DrawTileMarker(args.WorldHandle, directTargetTile, color);
+            return;
+        }
+
+        DrawResinSurgeSquare(args.WorldHandle, originMap, targetTile, resinSurge.StickyResinRadius, range);
     }
 
     private void DrawSpray(
@@ -219,13 +461,29 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         DrawLinePreview(args, player, xform.Coordinates, mousePos, spray.Range, color);
     }
 
+    private void DrawToxicSpit(
+        in OverlayDrawArgs args,
+        EntityUid player,
+        TransformComponent xform,
+        MapCoordinates originMap,
+        MapCoordinates mousePos)
+    {
+        var range = GetToxicSpitRange(player);
+        var direction = mousePos.Position - originMap.Position;
+        if (direction.Length() > range)
+            mousePos = originMap.Offset(direction.Normalized() * range);
+
+        var color = SentinelToxinOutlineColor.WithAlpha(OutlineAlpha);
+        DrawTileRange(args, originMap, range, color);
+    }
+
     private void DrawSquareAoE(
         in OverlayDrawArgs args,
         MapCoordinates mousePos,
         float radius,
         Color color)
     {
-        if (!_mapManager.TryFindGridAt(mousePos, out var gridUid, out var grid))
+        if (!_mapSystem.TryFindGridAt(mousePos, out var gridUid, out var grid))
             return;
 
         var center = _mapSystem.CoordinatesToTile(gridUid, grid, mousePos);
@@ -249,7 +507,7 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         XenoDeployTrapsComponent deployTraps,
         Color color)
     {
-        if (!_mapManager.TryFindGridAt(mousePos, out var gridUid, out var grid))
+        if (!_mapSystem.TryFindGridAt(mousePos, out var gridUid, out var grid))
             return;
 
         var centerTile = _mapSystem.CoordinatesToTile(gridUid, grid, mousePos);
@@ -324,14 +582,32 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
     {
         var direction = mousePos.Position - originMap.Position;
         var distance = Math.Min(direction.Length(), charge.Range);
+
+        // Raycast for walls, doors, and barricades to find where the charge would actually stop.
+        if (direction.Length() > 0.1f)
+        {
+            var mask = (int) (CollisionGroup.Impassable | CollisionGroup.InteractImpassable | CollisionGroup.BarricadeImpassable);
+            var ray = new CollisionRay(originMap.Position, direction.Normalized(), mask);
+            foreach (var result in _physics.IntersectRay(originMap.MapId, ray, distance, player, returnOnFirstHit: true))
+            {
+                distance = Math.Max(0, result.Distance - 0.5f);
+            }
+        }
+
         mousePos = originMap.Offset(direction.Normalized() * distance);
 
         var color = new Color(0.85f, 0.2f, 0.2f).WithAlpha(OutlineAlpha);
-        DrawLinePreview(args, player, xform.Coordinates, mousePos, distance, color);
+        var toCoordinates = _transform.ToCoordinates(player, mousePos);
+        var tiles = _line.DrawLine(xform.Coordinates, toCoordinates, TimeSpan.Zero, distance, out _, hitBlocker: false);
+        if (tiles.Count == 0)
+            return;
+
+        DrawTileBorderFromLineTiles(args, tiles, color);
     }
 
     private void DrawDirectionalStomp(
         in OverlayDrawArgs args,
+        EntityUid player,
         MapCoordinates originMap,
         MapCoordinates mousePos,
         XenoStompComponent stomp)
@@ -341,7 +617,7 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         var range = stomp.DirectionalRange;
         var color = new Color(0.85f, 0.2f, 0.2f).WithAlpha(OutlineAlpha);
 
-        if (!_mapManager.TryFindGridAt(originMap, out var gridUid, out var grid))
+        if (!_mapSystem.TryFindGridAt(originMap, out var gridUid, out var grid))
             return;
 
         var center = _mapSystem.CoordinatesToTile(gridUid, grid, originMap);
@@ -362,12 +638,110 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
                 if (Math.Abs(angleDiff.Theta) > halfAngle.Theta)
                     continue;
 
+                // Raycast for obstacle blocking (walls, windows, doors, barricades).
+                var ray = new CollisionRay(originMap.Position, diff.Normalized(), (int) (CollisionGroup.Impassable | CollisionGroup.InteractImpassable | CollisionGroup.BarricadeImpassable));
+                var blocked = false;
+                foreach (var _ in _physics.IntersectRay(originMap.MapId, ray, diff.Length(), player, returnOnFirstHit: true))
+                {
+                    blocked = true;
+                    break;
+                }
+
+                if (blocked)
+                    continue;
+
                 tiles.Add(tilePos);
             }
         }
 
         DrawTileBorder(args.WorldHandle, gridUid, grid, tiles, color);
     }
+
+    private void DrawCausticEmbrace(
+        in OverlayDrawArgs args,
+        MapCoordinates originMap,
+        MapCoordinates mousePos,
+        XenoDespoilerCausticEmbraceActionComponent embrace,
+        EntityUid player)
+    {
+            if (!_mapSystem.TryFindGridAt(originMap, out var gridUid, out var grid))
+                return;
+
+            var empowered =
+                _despoilerQ.TryComp(player, out var despoiler) &&
+                despoiler.NextAbilityEmpowered;
+
+            var direction = mousePos.Position - originMap.Position;
+
+            if (direction.Length() < 0.1f)
+                return;
+
+            var range =
+                empowered
+                    ? embrace.EmpoweredRange
+                    : embrace.NormalRange;
+
+            var landingPos =
+                originMap.Position +
+                direction.Normalized() * range;
+
+            var landingMap = new MapCoordinates(
+                landingPos + new Vector2(0f, 0.001f),
+                originMap.MapId);
+
+            var landingTile = _mapSystem.CoordinatesToTile(
+                gridUid,
+                grid,
+                landingMap);
+
+            if (empowered)
+            {
+                DrawTileBorder(
+                    args.WorldHandle,
+                    gridUid,
+                    grid,
+                    new HashSet<Vector2i> { landingTile },
+                    Color.Red.WithAlpha(OutlineAlpha));
+
+                return;
+            }
+
+            var dir = direction.Normalized();
+
+            var backX = (int)Math.Round(-dir.X);
+            var backY = (int)Math.Round(-dir.Y);
+
+            var splashTiles = new HashSet<Vector2i>();
+
+            for (var dx = -1; dx <= 1; dx++)
+            {
+                for (var dy = -1; dy <= 1; dy++)
+                {
+                    if (dx == 0 && dy == 0)
+                        continue;
+
+                    if (dx == backX && dy == backY)
+                        continue;
+
+                    splashTiles.Add(landingTile + new Vector2i(dx, dy));
+                }
+            }
+
+            DrawTileBorder(
+                args.WorldHandle,
+                gridUid,
+                grid,
+                splashTiles,
+                (Color.Lime).WithAlpha(OutlineAlpha));
+
+            DrawTileBorder(
+                args.WorldHandle,
+                gridUid,
+                grid,
+                new HashSet<Vector2i> { landingTile },
+                (empowered ? Color.Red : Color.Yellow)
+                .WithAlpha(OutlineAlpha));
+        }
 
     private void DrawBombard(
         in OverlayDrawArgs args,
@@ -400,7 +774,7 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
             DrawTileMarker(args.WorldHandle, blockerInfo, BlockerOutlineColor.WithAlpha(OutlineAlpha));
         }
 
-        if (!_mapManager.TryFindGridAt(impact, out var gridUid, out var grid))
+        if (!_mapSystem.TryFindGridAt(impact, out var gridUid, out var grid))
         {
             args.WorldHandle.DrawCircle(impact.Position, radius, color, false);
             return;
@@ -431,7 +805,16 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
             return;
 
         var color = BurrowOutlineColor.WithAlpha(OutlineAlpha);
-        if (!_mapManager.TryFindGridAt(originMap, out var gridUid, out var grid))
+        DrawTileRange(args, originMap, range, color);
+    }
+
+    private void DrawTileRange(
+        in OverlayDrawArgs args,
+        MapCoordinates originMap,
+        float range,
+        Color color)
+    {
+        if (!_mapSystem.TryFindGridAt(originMap, out var gridUid, out var grid))
             return;
 
         var center = _mapSystem.CoordinatesToTile(gridUid, grid, originMap);
@@ -447,6 +830,38 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
                     continue;
 
                 tiles.Add(center + new Vector2i(x, y));
+            }
+        }
+
+        DrawTileBorder(args.WorldHandle, gridUid, grid, tiles, color);
+    }
+
+    private void DrawTileRangeIntersecting(
+        in OverlayDrawArgs args,
+        MapCoordinates originMap,
+        float range,
+        Color color)
+    {
+        if (!_mapSystem.TryFindGridAt(originMap, out var gridUid, out var grid))
+            return;
+
+        var center = _mapSystem.CoordinatesToTile(gridUid, grid, originMap);
+        var tileSize = grid.TileSize;
+        var halfTile = tileSize / 2f;
+        var maxTiles = (int) MathF.Ceiling((range + halfTile) / tileSize);
+        var tiles = new HashSet<Vector2i>();
+        for (var x = -maxTiles; x <= maxTiles; x++)
+        {
+            for (var y = -maxTiles; y <= maxTiles; y++)
+            {
+                var indices = center + new Vector2i(x, y);
+                var tileCenter = _mapSystem.GridTileToWorld(gridUid, grid, indices).Position;
+                var delta = Vector2.Abs(tileCenter - originMap.Position);
+                var closest = Vector2.Max(delta - new Vector2(halfTile, halfTile), Vector2.Zero);
+                if (closest.Length() > range)
+                    continue;
+
+                tiles.Add(indices);
             }
         }
 
@@ -544,7 +959,7 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
             if (tile.Coordinates.MapId != args.MapId)
                 continue;
 
-            if (!_mapManager.TryFindGridAt(tile.Coordinates, out var gridUid, out var grid))
+            if (!_mapSystem.TryFindGridAt(tile.Coordinates, out var gridUid, out var grid))
                 continue;
 
             var indices = _mapSystem.CoordinatesToTile(gridUid, grid, tile.Coordinates);
@@ -565,7 +980,7 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
 
     private void DrawLandingTile(in OverlayDrawArgs args, MapCoordinates target, Color color)
     {
-        if (!_mapManager.TryFindGridAt(target, out var gridUid, out var grid))
+        if (!_mapSystem.TryFindGridAt(target, out var gridUid, out var grid))
             return;
 
         var indices = _mapSystem.CoordinatesToTile(gridUid, grid, target);
@@ -573,10 +988,56 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         DrawTileBorder(args.WorldHandle, gridUid, grid, tiles, color);
     }
 
+    private bool TryGetResinSurgeDirectTarget(MapCoordinates mousePos, out TileInfo target)
+    {
+        target = default;
+        if (_stateManager.CurrentState is not GameplayStateBase screen)
+            return false;
+
+        var entity = screen.GetClickedEntity(mousePos);
+        if (entity == null ||
+            (!_reinforcableQ.HasComp(entity.Value) &&
+             !_fruitQ.HasComp(entity.Value) &&
+             !_weedsQ.HasComp(entity.Value)))
+        {
+            return false;
+        }
+
+        return TryGetEntityTile(entity.Value, out target);
+    }
+
+    private void DrawResinSurgeSquare(
+        DrawingHandleWorld handle,
+        MapCoordinates originMap,
+        TileInfo center,
+        int radius,
+        float range)
+    {
+        var validTiles = new HashSet<Vector2i>();
+        var invalidTiles = new HashSet<Vector2i>();
+        var rangeSquared = range * range;
+
+        for (var x = -radius; x <= radius; x++)
+        {
+            for (var y = -radius; y <= radius; y++)
+            {
+                var tile = center.Indices + new Vector2i(x, y);
+                var tileCenter = _mapSystem.GridTileToWorld(center.GridUid, center.Grid, tile);
+                if ((tileCenter.Position - originMap.Position).LengthSquared() <= rangeSquared)
+                    validTiles.Add(tile);
+                else
+                    invalidTiles.Add(tile);
+            }
+        }
+
+        DrawTileBorder(handle, center.GridUid, center.Grid, validTiles, ResinSurgeOutlineColor.WithAlpha(OutlineAlpha));
+        DrawTileBorder(handle, center.GridUid, center.Grid, invalidTiles, InvalidOutlineColor.WithAlpha(OutlineAlpha));
+    }
+
     private bool TryGetTileIndices(MapCoordinates coordinates, out TileInfo info)
     {
         info = default;
-        if (!_mapManager.TryFindGridAt(coordinates, out var gridUid, out var grid))
+        if (!_mapSystem.TryFindGridAt(coordinates, out var gridUid, out var grid))
             return false;
 
         var indices = _mapSystem.CoordinatesToTile(gridUid, grid, coordinates);
@@ -623,18 +1084,30 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
         }
     }
 
+    private float GetToxicSpitRange(EntityUid player)
+    {
+        if (!_toxicSpitQ.TryComp(player, out var toxicSpit) ||
+            !_prototypes.TryIndex<EntityPrototype>(toxicSpit.ProjectileId, out var projectileProto) ||
+            !projectileProto.TryComp<ProjectileMaxRangeComponent>(out var maxRange, _componentFactory))
+        {
+            return ToxicSpitDefaultRange;
+        }
+
+        return maxRange.Max;
+    }
+
     private int GetBombardRadius(EntProtoId projectile)
     {
         if (!_prototypes.TryIndex<EntityPrototype>(projectile, out var projectileProto))
             return BombardDefaultRadius;
 
-        if (!projectileProto.TryGetComponent<SpawnOnTerminateComponent>(out var spawn, _componentFactory))
+        if (!projectileProto.TryComp<SpawnOnTerminateComponent>(out var spawn, _componentFactory))
             return BombardDefaultRadius;
 
         if (!_prototypes.TryIndex<EntityPrototype>(spawn.Spawn, out var smokeProto))
             return BombardDefaultRadius;
 
-        if (smokeProto.TryGetComponent<EvenSmokeComponent>(out var evenSmoke, _componentFactory))
+        if (smokeProto.TryComp<EvenSmokeComponent>(out var evenSmoke, _componentFactory))
             return evenSmoke.Range;
 
         return BombardDefaultRadius;
@@ -643,9 +1116,9 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
     private Color GetBombardColor(EntProtoId projectile)
     {
         if (_prototypes.TryIndex<EntityPrototype>(projectile, out var projectileProto) &&
-            projectileProto.TryGetComponent<SpawnOnTerminateComponent>(out var spawn, _componentFactory) &&
+            projectileProto.TryComp<SpawnOnTerminateComponent>(out var spawn, _componentFactory) &&
             _prototypes.TryIndex<EntityPrototype>(spawn.Spawn, out var smokeProto) &&
-            smokeProto.TryGetComponent<SpriteComponent>(out var sprite, _componentFactory))
+            smokeProto.TryComp<SpriteComponent>(out var sprite, _componentFactory))
         {
             return sprite.Color;
         }
@@ -656,7 +1129,7 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
     private int GetProjectileCollisionMask(EntProtoId projectile)
     {
         if (_prototypes.TryIndex<EntityPrototype>(projectile, out var projectileProto) &&
-            projectileProto.TryGetComponent<FixturesComponent>(out var fixtures, _componentFactory))
+            projectileProto.TryComp<FixturesComponent>(out var fixtures, _componentFactory))
         {
             var mask = 0;
             foreach (var fixture in fixtures.Fixtures.Values)
@@ -674,12 +1147,12 @@ public sealed class XenoAbilityPreviewOverlay : Overlay
     private MapCoordinates AdjustProjectileImpact(EntProtoId projectile, MapCoordinates origin, MapCoordinates impact)
     {
         if (_prototypes.TryIndex<EntityPrototype>(projectile, out var projectileProto) &&
-            projectileProto.TryGetComponent<SpawnOnTerminateComponent>(out var spawn, _componentFactory) &&
-            spawn.ProjectileAdjust)
+            projectileProto.TryComp<SpawnOnTerminateComponent>(out var spawn, _componentFactory) &&
+            spawn.SpawnOffset > 0)
         {
             var delta = impact.Position - origin.Position;
             if (delta.LengthSquared() > 0f)
-                return impact.Offset(delta.Normalized() * -0.5f);
+                return impact.Offset(delta.Normalized() * spawn.SpawnOffset);
         }
 
         return impact;

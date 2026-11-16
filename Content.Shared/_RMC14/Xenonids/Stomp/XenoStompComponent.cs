@@ -17,6 +17,12 @@ public sealed partial class XenoStompComponent : Component
     public DamageSpecifier Damage = new();
 
     [DataField, AutoNetworkedField]
+    public bool KnocksBack = false;
+
+    [DataField, AutoNetworkedField]
+    public float KnockbackPower = 2f;
+
+    [DataField, AutoNetworkedField]
     public TimeSpan ParalyzeTime = TimeSpan.FromSeconds(0.4);
 
     [DataField, AutoNetworkedField]
@@ -39,6 +45,12 @@ public sealed partial class XenoStompComponent : Component
 
     [DataField, AutoNetworkedField]
     public float Range = 2.82f;
+
+    /// <summary>
+    ///     Whether circular stomp effects can pass through barricades. Walls, doors, and windows still block them.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public bool StompsThroughBarricades;
 
     [DataField, AutoNetworkedField]
     public TimeSpan Delay = TimeSpan.Zero;
@@ -85,4 +97,11 @@ public sealed partial class XenoStompComponent : Component
     /// </summary>
     [DataField, AutoNetworkedField]
     public EntProtoId? DirectionalTileEffect;
+
+    /// <summary>
+    ///     If set, directional stomp damage falls off with distance.
+    ///     Full Damage at close range, this value at max range.
+    /// </summary>
+    [DataField]
+    public DamageSpecifier? DirectionalMinDamage;
 }

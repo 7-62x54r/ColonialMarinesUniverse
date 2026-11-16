@@ -35,6 +35,9 @@ public sealed partial class CMDistressSignalRuleComponent : Component
     public bool Hijack;
 
     [DataField]
+    public bool MarinesLanded;
+
+    [DataField]
     public ProtoId<JobPrototype> QueenJob = "CMXenoQueen";
 
     [DataField]
@@ -78,6 +81,9 @@ public sealed partial class CMDistressSignalRuleComponent : Component
 
     [DataField]
     public bool HijackSongPlayed;
+
+    [DataField] // CMU14
+    public bool HijackBoostsApplied;
 
     [DataField]
     public bool HijackIsHuman;
@@ -197,7 +203,7 @@ public sealed partial class CMDistressSignalRuleComponent : Component
     public bool DoJobSlotScaling = true;
 
     [DataField]
-    public bool AutoEnd = false;
+    public bool AutoEnd = true;
 
     [DataField]
     public bool StartARESAnnouncements = true;

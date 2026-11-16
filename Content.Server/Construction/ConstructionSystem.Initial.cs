@@ -32,7 +32,6 @@ namespace Content.Server.Construction
         [Dependency] private ActionBlockerSystem _actionBlocker = default!;
         [Dependency] private SharedHandsSystem _handsSystem = default!;
         [Dependency] private EntityLookupSystem _lookupSystem = default!;
-        [Dependency] private SharedTransformSystem _transformSystem = default!;
         [Dependency] private EntityWhitelistSystem _whitelistSystem = default!;
         [Dependency] private RMCConstructionSystem _rmcConstruction = default!;
 
@@ -115,7 +114,7 @@ namespace Content.Server.Construction
                 }
             }
 
-            var pos = _transformSystem.GetMapCoordinates(user);
+            var pos = TransformSystem.GetMapCoordinates(user);
 
             foreach (var near in _lookupSystem.GetEntitiesInRange(pos, 2f, LookupFlags.Contained | LookupFlags.Dynamic | LookupFlags.Sundries | LookupFlags.Approximate))
             {
@@ -151,6 +150,7 @@ namespace Content.Server.Construction
             var containers = new Dictionary<string, Container>();
 
             var doAfterTime = 0f;
+            var materialShortfalls = new Dictionary<string, int>();
 
             // HOLY SHIT THIS IS SOME HACKY CODE.
             // But I'd rather do this shit than risk having collisions with other containers.
@@ -207,7 +207,10 @@ namespace Content.Server.Construction
 
             foreach (var step in edge.Steps)
             {
-                doAfterTime += step.DoAfter;
+                var baseDelay = TimeSpan.FromSeconds(step.DoAfter);
+                var delayEv = new RMCConstructionDelayEvent(user, baseDelay, baseDelay);
+                RaiseLocalEvent(user, ref delayEv, true);
+                doAfterTime += (float) Math.Max(0, delayEv.Delay.TotalSeconds);
 
                 var handled = false;
 
@@ -216,15 +219,26 @@ namespace Content.Server.Construction
                     case MaterialConstructionGraphStep materialStep:
                         foreach (var entity in EnumerateNearby(user))
                         {
-                            if (!materialStep.EntityValid(entity, out var stack))
+                            if (!TryComp<StackComponent>(entity, out var stack) ||
+                                stack.StackTypeId != materialStep.MaterialPrototypeId)
                                 continue;
 
                             if (used.Contains(entity))
                                 continue;
 
+                            var costEv = new RMCConstructionCostEvent(
+                                user,
+                                stack.StackTypeId,
+                                materialStep.Amount,
+                                materialStep.Amount);
+                            RaiseLocalEvent(user, ref costEv, true);
+                            var paidCost = Math.Max(1, costEv.Cost);
+                            if (stack.Count < paidCost)
+                                continue;
+
                             // TODO allow taking from several stacks.
                             // Also update crafting steps to check if it works.
-                            var splitStack = _stackSystem.Split(entity, materialStep.Amount, user.ToCoordinates(0, 0), stack);
+                            var splitStack = _stackSystem.Split((entity, stack), paidCost, user.ToCoordinates(0, 0));
 
                             if (splitStack == null)
                                 continue;
@@ -237,6 +251,10 @@ namespace Content.Server.Construction
                             else if (!_container.Insert(splitStack.Value, GetContainer(materialStep.Store)))
                                 continue;
 
+                            var missing = Math.Max(0, materialStep.Amount - paidCost);
+                            if (missing > 0)
+                                materialShortfalls[stack.StackTypeId] = materialShortfalls.GetValueOrDefault(stack.StackTypeId) + missing;
+
                             handled = true;
                             break;
                         }
@@ -244,6 +262,21 @@ namespace Content.Server.Construction
                         break;
 
                     case ArbitraryInsertConstructionGraphStep arbitraryStep:
+                        // AU14: a custom "tool" step requires the entity present but does NOT consume it.
+                        if (arbitraryStep is EntityIdConstructionGraphStep { Consume: false } presenceStep)
+                        {
+                            foreach (var entity in new HashSet<EntityUid>(EnumerateNearby(user)))
+                            {
+                                if (!presenceStep.EntityValid(entity, EntityManager, Factory))
+                                    continue;
+
+                                handled = true;
+                                break;
+                            }
+
+                            break;
+                        }
+
                         foreach (var entity in new HashSet<EntityUid>(EnumerateNearby(user)))
                         {
                             if (!arbitraryStep.EntityValid(entity, EntityManager, Factory))
@@ -349,6 +382,15 @@ namespace Content.Server.Construction
                 completed.PerformAction(newEntity, user, EntityManager);
             }
 
+            foreach (var (stackType, missing) in materialShortfalls)
+            {
+                var transactionEv = new RMCConstructionTransactionCompletedEvent(newEntity, user, stackType, missing);
+                RaiseLocalEvent(newEntity, ref transactionEv, broadcast: true);
+            }
+
+            var completedEv = new ConstructionCompletedEvent(newEntity, user);
+            RaiseLocalEvent(newEntity, ref completedEv, broadcast: true);
+
             return newEntity;
         }
 
@@ -361,7 +403,7 @@ namespace Content.Server.Construction
         // LEGACY CODE. See warning at the top of the file!
         public async Task<bool> TryStartItemConstruction(string prototype, EntityUid user)
         {
-            if (!PrototypeManager.TryCM(prototype, out ConstructionPrototype? constructionPrototype))
+            if (!ProtoMan.TryCM(prototype, out ConstructionPrototype? constructionPrototype))
             {
                 Log.Error($"Tried to start construction of invalid recipe '{prototype}'!");
                 return false;
@@ -405,7 +447,7 @@ namespace Content.Server.Construction
                 }
             }
 
-            if (!PrototypeManager.TryIndex(constructionPrototype.Graph,
+            if (!ProtoMan.TryIndex(constructionPrototype.Graph,
                     out ConstructionGraphPrototype? constructionGraph))
             {
                 Log.Error(
@@ -478,7 +520,7 @@ namespace Content.Server.Construction
         // LEGACY CODE. See warning at the top of the file!
         private async void HandleStartStructureConstruction(TryStartStructureConstructionMessage ev, EntitySessionEventArgs args)
         {
-            if (!PrototypeManager.TryCM(ev.PrototypeName, out ConstructionPrototype? constructionPrototype))
+            if (!ProtoMan.TryCM(ev.PrototypeName, out ConstructionPrototype? constructionPrototype))
             {
                 Log.Error($"Tried to start construction of invalid recipe '{ev.PrototypeName}'!");
                 RaiseNetworkEvent(new AckStructureConstructionMessage(ev.Ack));
@@ -486,7 +528,8 @@ namespace Content.Server.Construction
             }
 
             var coordinates = GetCoordinates(ev.Location);
-            var attempt = new RMCConstructionAttemptEvent(coordinates, constructionPrototype);
+            // CMU14: the builder is told to the event (the zoning of the city asks who builds).
+            var attempt = new RMCConstructionAttemptEvent(coordinates, constructionPrototype, User: args.SenderSession.AttachedEntity);
             RaiseLocalEvent(ref attempt);
 
             if (attempt.Cancelled)
@@ -500,7 +543,7 @@ namespace Content.Server.Construction
                 return;
             }
 
-            if (!PrototypeManager.TryIndex(constructionPrototype.Graph, out ConstructionGraphPrototype? constructionGraph))
+            if (!ProtoMan.TryIndex(constructionPrototype.Graph, out ConstructionGraphPrototype? constructionGraph))
             {
                 Log.Error($"Invalid construction graph '{constructionPrototype.Graph}' in recipe '{ev.PrototypeName}'!");
                 RaiseNetworkEvent(new AckStructureConstructionMessage(ev.Ack));
@@ -567,7 +610,7 @@ namespace Content.Server.Construction
                 return;
             }
 
-            var mapPos = _transformSystem.ToMapCoordinates(location);
+            var mapPos = TransformSystem.ToMapCoordinates(location);
             var predicate = GetPredicate(constructionPrototype.CanBuildInImpassable, mapPos);
 
             if (!_interactionSystem.InRangeUnobstructed(user, mapPos, predicate: predicate))
@@ -598,6 +641,16 @@ namespace Content.Server.Construction
             {
                 switch (step)
                 {
+                    case MaterialConstructionGraphStep materialInsert:
+                        if (TryComp<StackComponent>(holding, out var stack) &&
+                            stack.StackTypeId == materialInsert.MaterialPrototypeId)
+                        {
+                            var cost = materialInsert.Amount;
+                            var costEv = new RMCConstructionCostEvent(user, stack.StackTypeId, cost, cost);
+                            RaiseLocalEvent(ref costEv);
+                            valid = stack.Count >= costEv.Cost;
+                        }
+                        break;
                     case EntityInsertConstructionGraphStep entityInsert:
                         if (entityInsert.EntityValid(holding, EntityManager, Factory))
                             valid = true;

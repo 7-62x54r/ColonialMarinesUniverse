@@ -3,6 +3,9 @@
   description: Yep, it's a tree.
   abstract: true
   components:
+  - type: ResinClearable # CMU14
+  - type: TreeTappable # CMU14
+  - type: TreeFellable # CMU14: an axe knocks firewood off it
   - type: SpriteFade
   - type: Clickable
   - type: OreVein
@@ -13,6 +16,12 @@
     sprite: Objects/Decoration/Flora/flora_trees.rsi
     drawdepth: Overdoors
     offset: 0,0.9
+  - type: Appearance
+  - type: Flamability
+    chance: 1.0
+    rate: 10.4
+    range: 1.5
+    spread: 1.3
   - type: Physics
     bodyType: Static
   - type: Fixtures
@@ -24,9 +33,13 @@
         density: 1000
         layer:
         - WallLayer
+  - type: Tag
+    tags:
+    - Tree
   - type: Damageable
-    damageContainer: Inorganic
     damageModifierSet: Wood
+  - type: Injurable
+    damageContainer: Inorganic
   - type: MeleeSound
     soundGroups:
       Brute:
@@ -39,6 +52,12 @@
         !type:DamageTrigger
         damage: 1250
       behaviors:
+        # CMU14: the fibers of the bark and of the branches (the first threshold is the one that is run: it destroys the tree).
+        - !type:SpawnEntitiesBehavior
+          spawn:
+            RUMCPlantFiber1:
+              min: 5
+              max: 6
         - !type:DoActsBehavior
           acts: [ "Destruction" ]
     - trigger:
@@ -55,6 +74,11 @@
         acts: [ "Destruction" ]
   - type: RMCMesonsNonviewable
 
+  - type: VehicleSmashable
+    minDestroyWeightClass: Light
+    slowdownBelowWeightClass: Medium
+    slowdownMultiplier: 0.5
+    slowdownDuration: 0.4
 - type: entity
   parent: RMCBaseTree
   id: RMCBaseTreeSnow
@@ -95,14 +119,20 @@
           RMCStump1:
             min: 1
             max: 1
+          # CMU14: the fibers of the bark and of the branches
+          RUMCPlantFiber1:
+            min: 5
+            max: 6
         offset: 0
       - !type:DoActsBehavior
         acts: [ "Destruction" ]
 - type: ore
   id: OreWood
-  oreEntity: Log
+  # CMU14: oreEntity: Log
+  oreEntity: RUMCWoodLog # CMU14: a heavy log, not the tower-cap one
   minOreYield: 1
-  maxOreYield: 6
+  # CMU14: maxOreYield: 6
+  maxOreYield: 3 # CMU14: a heavy log is worth more than a tower-cap one
 
 - type: entity
   parent: RMCBaseTree
@@ -162,6 +192,10 @@
           RMCStump2:
             min: 1
             max: 1
+          # CMU14: the fibers of the bark and of the branches
+          RUMCPlantFiber1:
+            min: 5
+            max: 6
         offset: 0
       - !type:DoActsBehavior
         acts: [ "Destruction" ]
@@ -208,9 +242,33 @@
           RMCStump3:
             min: 1
             max: 1
+          # CMU14: the fibers of the bark and of the branches
+          RUMCPlantFiber1:
+            min: 5
+            max: 6
         offset: 0
       - !type:DoActsBehavior
         acts: [ "Destruction" ]
+
+- type: entity
+  parent: RMCBaseTree
+  id: RMCBaseTreeTyrargo
+  abstract: true
+  components:
+  - type: Sprite
+    noRot: true
+    sprite: _RMC14/Structures/Flora/Trees/flora_trees_tyrargo.rsi
+    drawdepth: Overdoors
+    offset: 0,0.9
+  - type: Fixtures
+    fixtures:
+      fix1:
+        shape:
+          !type:PhysShapeAabb
+          bounds: "-0.15,-1.15,0.35,-0.3"
+        density: 1000
+        layer:
+        - WallLayer
 
 - type: entity
   parent: RMCBaseTree
@@ -426,3 +484,117 @@
   components:
   - type: Sprite
     state: treealien01
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargo01
+  suffix: RMCFloraTreeTyrargo01
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo01
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargo02
+  suffix: RMCFloraTreeTyrargo02
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo02
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargo03
+  suffix: RMCFloraTreeTyrargo03
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo03
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargoBald01
+  suffix: RMCFloraTreeTyrargoBald01
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo_bald01
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargoDead01
+  suffix: RMCFloraTreeTyrargoDead01
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo_dead01
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargoDead02
+  suffix: RMCFloraTreeTyrargoDead02
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo_dead02
+
+- type: entity
+  parent: RMCBaseTreeTyrargo
+  id: RMCFloraTreeTyrargoDead03
+  suffix: RMCFloraTreeTyrargoDead03
+  name: tree
+  components:
+  - type: Sprite
+    state: treetyrargo_dead03
+
+- type: entity
+  parent: RMCBaseTreeSnow
+  id: RMCFloraTyrargoDeadTree01
+  suffix: RMCFloraTyrargoDeadTree01
+  name: dead tree
+  components:
+  - type: Sprite
+    sprite: _RMC14/Structures/Flora/Trees/flora_trees_tyrargodead.rsi
+    state: tyrargo_deadtree01
+
+- type: entity
+  parent: RMCFloraTyrargoDeadTree01
+  id: RMCFloraTyrargoDeadTree02
+  suffix: RMCFloraTyrargoDeadTree02
+  components:
+  - type: Sprite
+    state: tyrargo_deadtree02
+
+- type: entity
+  parent: RMCFloraTyrargoDeadTree01
+  id: RMCFloraTyrargoDeadTree03
+  suffix: RMCFloraTyrargoDeadTree03
+  components:
+  - type: Sprite
+    state: tyrargo_deadtree03
+
+- type: entity
+  parent: RMCFloraTyrargoDeadTree01
+  id: RMCFloraTyrargoDeadTree04
+  suffix: RMCFloraTyrargoDeadTree04
+  components:
+  - type: Sprite
+    state: tyrargo_deadtree04
+
+- type: entity
+  parent: RMCFloraTyrargoDeadTree01
+  id: RMCFloraTyrargoDeadTree05
+  suffix: RMCFloraTyrargoDeadTree05
+  components:
+  - type: Sprite
+    state: tyrargo_deadtree05
+
+- type: entity
+  parent: RMCFloraTyrargoDeadTree01
+  id: RMCFloraTyrargoTreeStump01
+  suffix: RMCFloraTyrargoTreeStump01
+  name: tree stump
+  components:
+  - type: Sprite
+    state: tyrargo_treestump01

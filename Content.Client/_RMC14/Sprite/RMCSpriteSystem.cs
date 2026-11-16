@@ -2,9 +2,10 @@ using System.Numerics;
 using Content.Shared._RMC14.CrashLand;
 using Content.Shared._RMC14.Mobs;
 using Content.Shared._RMC14.Sprite;
+using Content.Shared._RMC14.Xenonids.Charge.ChargerJockey;
 using Content.Shared._RMC14.Xenonids.Hide;
 using Content.Shared.Buckle.Components;
-using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
 using Content.Shared.ParaDrop;
 using Robust.Client.GameObjects;
 using Robust.Client.Player;
@@ -119,9 +120,17 @@ public sealed partial class RMCSpriteSystem : SharedRMCSpriteSystem
                 !HasComp<ParaDroppingComponent>(player) &&
                 !HasComp<CrashLandingComponent>(player))
             {
+                // CMU14: set the sprite directly, writing appearance every frame re-ran the visualizers and froze
+                // animated clothing like a lit cigarette while buckled
                 if (TryComp(player, out BuckleComponent? buckle) && buckle.Buckled)
                 {
-                    UpdateDrawDepth(player);
+                    _sprite.SetDrawDepth((player, playerSprite), (int) GetDrawDepth(player));
+                    return;
+                }
+
+                if (HasComp<XenoChargerRidingComponent>(player))
+                {
+                    _sprite.SetDrawDepth((player, playerSprite), (int) GetDrawDepth(player));
                     return;
                 }
 

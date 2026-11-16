@@ -1,4 +1,5 @@
 using System.Numerics;
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
 using Content.Shared._RMC14.Chat;
 using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Marines.Skills;
@@ -9,6 +10,7 @@ using Content.Shared.Camera;
 using Content.Shared.Chat;
 using Content.Shared.CombatMode;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Database;
 using Content.Shared.DoAfter;
 using Content.Shared.Examine;
@@ -43,6 +45,7 @@ public sealed partial class RMCBattleExecuteSystem : EntitySystem
     [Dependency] private SkillsSystem _skills = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private RMCUnrevivableSystem _unrevivable = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
 
 
     public override void Initialize()
@@ -91,7 +94,7 @@ public sealed partial class RMCBattleExecuteSystem : EntitySystem
         if (_mobState.IsDead(target) && _unrevivable.IsUnrevivable(target))
         {
             var cancelledMessage = $"You decide to not Execute {Name(target)}, as they are already far beyond revival.";
-            _popup.PopupClient(cancelledMessage, user, PopupType.MediumCaution);
+            _popup.PopupSelf(cancelledMessage, user, PopupType.MediumCaution);
             return;
         }
 
@@ -107,7 +110,7 @@ public sealed partial class RMCBattleExecuteSystem : EntitySystem
 
         var selfMsg = Loc.GetString("rmc-execute-start-self", ("target", Name(target)), ("gun", Name(handHeldItem)));
         var othersMsg = Loc.GetString("rmc-execute-start-others", ("user", Name(user)), ("target", Name(target)), ("gun", Name(handHeldItem)));
-        _popup.PopupPredicted(selfMsg, othersMsg, user, user, PopupType.LargeCaution);
+        _popup.PopupEntity(selfMsg, othersMsg, user, user, PopupType.LargeCaution);
     }
 
     private void ExecuteDoAfter(Entity<MarineComponent> ent, ref RMCBattleExecuteEvent args)
@@ -121,7 +124,7 @@ public sealed partial class RMCBattleExecuteSystem : EntitySystem
                 LogImpact.High,
                 $"{ToPrettyString(user)}'s Execution of {ToPrettyString(target)} was cancelled.");
             var cancelledMessage = $"You decide to not Execute {Name(target)}.";
-            _popup.PopupClient(cancelledMessage, user, PopupType.MediumCaution);
+            _popup.PopupSelf(cancelledMessage, user, PopupType.MediumCaution);
             return;
         }
 
@@ -178,10 +181,11 @@ public sealed partial class RMCBattleExecuteSystem : EntitySystem
         _mobState.ChangeMobState(target, MobState.Dead);
         _unrevivable.MakeUnrevivable(target);
 
-        _audio.PlayPredicted(gun.SoundGunshotModified, args.Used.Value, user);
+        if (!_zLevels.PlayPredictedDirectlyAcrossZ(gun.SoundGunshotModified, args.Used.Value, user))
+            _audio.PlayPredicted(gun.SoundGunshotModified, args.Used.Value, user);
 
         var popupMessage = $"{Name(target)} WAS EXECUTED BY {Name(user)}!";
-        _popup.PopupPredicted(popupMessage, target, user, PopupType.LargeCaution);
+        _popup.PopupBroadcast(popupMessage, target, user, PopupType.LargeCaution);
 
         var chatMsg = $"[bold][font size=24][color=red]\n{Name(target)} WAS EXECUTED BY {Name(user)}!\n[/color][/font][/bold]";
         var coordinates = _transform.GetMapCoordinates(target);

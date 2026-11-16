@@ -10,7 +10,7 @@ using Robust.Shared.Serialization.TypeSerializers.Implementations.Custom;
 namespace Content.Shared._RMC14.Xenonids.Hive;
 
 [RegisterComponent, NetworkedComponent, AutoGenerateComponentState, AutoGenerateComponentPause]
-[Access(typeof(SharedXenoHiveSystem), typeof(SharedXenoPylonSystem), typeof(XenoTunnelSystem))]
+[Access(typeof(SharedXenoHiveSystem), typeof(SharedXenoConstructionSystem), typeof(SharedXenoPylonSystem), typeof(XenoTunnelSystem))]
 public sealed partial class HiveComponent : Component
 {
     [DataField, AutoNetworkedField]
@@ -21,10 +21,19 @@ public sealed partial class HiveComponent : Component
     };
 
     [DataField, AutoNetworkedField]
-    public Dictionary<EntProtoId, int> FreeSlots = new() {["CMXenoHivelord"] = 1, ["CMXenoCarrier"] = 1, ["CMXenoBurrower"] = 1};
+    public Dictionary<EntProtoId, int> FreeSlots = new() {["CMXenoHivelord"] = 1, ["CMXenoCarrier"] = 1, ["CMXenoBurrower"] = 1, ["CMXenoReaper"] = 1}; // CMU14 modified
 
     [DataField, AutoNetworkedField]
     public Dictionary<EntProtoId, int> HiveStructureSlots = new() { ["HiveCoreXeno"] = 1, ["HiveClusterXeno"] = 8, ["HivePylonXeno"] = 2, ["HiveEggMorpherXeno"] = 6, ["HiveRecoveryNodeXeno"] = 6, ["HivePlasmaTreeXeno"] = 3 };
+
+    [DataField, AutoNetworkedField]
+    public int MaxInstantBuilds = 200;
+
+    [DataField, AutoNetworkedField]
+    public int InstantBuildsRemaining = 200;
+
+    [DataField, AutoNetworkedField]
+    public TimeSpan InstantBuildDuration = TimeSpan.FromMinutes(30);
 
     [DataField, AutoNetworkedField]
     public Dictionary<TimeSpan, List<EntProtoId>> Unlocks = new();
@@ -40,6 +49,12 @@ public sealed partial class HiveComponent : Component
 
     [DataField, AutoNetworkedField, ViewVariables]
     public Color HiveUIColor = Color.FromHex("#921992");
+
+    /// <summary>
+    /// Optional NPC faction used by hives that must be hostile to other xeno hives.
+    /// </summary>
+    [DataField, AutoNetworkedField, ViewVariables]
+    public ProtoId<NpcFactionPrototype>? NpcFaction;
 
     //lets them understand humans
     [DataField, AutoNetworkedField, ViewVariables]
@@ -87,7 +102,7 @@ public sealed partial class HiveComponent : Component
     public TimeSpan NewCoreCooldown = TimeSpan.FromMinutes(5);
 
     [DataField, AutoNetworkedField]
-    public TimeSpan PreSetupCutoff = TimeSpan.FromMinutes(20);
+    public TimeSpan PreSetupCutoff = TimeSpan.FromMinutes(15); // CMU14
 
     [DataField(customTypeSerializer: typeof(TimeOffsetSerializer)), AutoNetworkedField, AutoPausedField]
     public TimeSpan? NewCoreAt;
@@ -105,7 +120,10 @@ public sealed partial class HiveComponent : Component
     public int BurrowedLarva;
 
     [DataField, AutoNetworkedField]
-    public int BurrowedLarvaSlotFactor = 4;
+    public bool BurrowedLarvaEnabled = true; // CMU14
+
+    [DataField, AutoNetworkedField]
+    public int BurrowedLarvaSlotFactor = 0; // CMU14: burrowed larva bank inflated the tier-cap denominator; tier caps count living xenos only
 
     [DataField, AutoNetworkedField]
     public bool LateJoinGainLarva;

@@ -2,12 +2,14 @@ using Content.IntegrationTests.Tests.Interaction;
 using Content.Shared.Damage.Components;
 using Content.Shared.Throwing;
 using Robust.Server.GameObjects;
+using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
 
 namespace Content.IntegrationTests.Tests.Physics;
 
 public sealed class ItemThrowingTest : InteractionTest
 {
+
     /// <summary>
     /// Check that an egg breaks when thrown at a wall.
     /// </summary>
@@ -108,4 +110,3 @@ public sealed class ItemThrowingTest : InteractionTest
         AssertDeleted(pen);
     }
 }
-

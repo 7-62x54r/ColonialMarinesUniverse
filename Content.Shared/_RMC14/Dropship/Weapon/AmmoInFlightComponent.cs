@@ -1,4 +1,4 @@
-﻿using Content.Shared._RMC14.Atmos;
+using Content.Shared._RMC14.Atmos;
 using Content.Shared._RMC14.Explosion;
 using Content.Shared._RMC14.Explosion.Implosion;
 using Content.Shared.Damage;
@@ -39,6 +39,15 @@ public sealed partial class AmmoInFlightComponent : Component
     public int ShotsPerVolley;
 
     [DataField, AutoNetworkedField]
+    public int ImpactsPerVolley = 1;
+
+    [DataField, AutoNetworkedField]
+    public DropshipLaserPattern LaserPattern;
+
+    [DataField, AutoNetworkedField]
+    public Angle? PatternRotation;
+
+    [DataField, AutoNetworkedField]
     public int SoundEveryShots = 3;
 
     [DataField, AutoNetworkedField]
@@ -55,6 +64,22 @@ public sealed partial class AmmoInFlightComponent : Component
 
     [DataField, AutoNetworkedField]
     public int BulletSpread = 3;
+
+    // CMU14: impact safety is server-only; the source may be deleted before the round finishes.
+    [DataField]
+    public EntityUid? ChinGunSource;
+
+    [DataField, AutoNetworkedField]
+    public float FriendlyImpactRadius = 2f;
+
+    [DataField, AutoNetworkedField]
+    public int ZLevelPenetration = 0;
+
+    [DataField, AutoNetworkedField]
+    public bool ApplyEffectsOnPenetrationLevels = false;
+
+    [DataField, AutoNetworkedField]
+    public bool TargetLowestZLevel = false;
 
     [DataField, AutoNetworkedField]
     public TimeSpan SoundTravelTime = TimeSpan.FromSeconds(1.1);
@@ -97,4 +122,7 @@ public sealed partial class AmmoInFlightComponent : Component
 
     [DataField, AutoNetworkedField]
     public RMCFire? Fire;
+
+    [DataField, AutoNetworkedField]
+    public TimeSpan MarkerDuration;
 }

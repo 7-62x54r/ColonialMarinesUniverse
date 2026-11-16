@@ -1,4 +1,4 @@
-﻿- type: entity
+- type: entity
   id: RMCFuelPump
   name: fuel pump
   description: It is a machine that pumps fuel around the ship.
@@ -27,7 +27,15 @@
   - type: EvacuationPump
     activeSound:
       path: /Audio/_RMC14/Machines/fuel_pump_active.ogg
+  - type: AmbientOnPowered
+  - type: AmbientSound
+    enabled: true
+    sound:
+      path: /Audio/_RMC14/Machines/fuel_pump_idle.ogg
+    range: 12
+    volume: -3
   - type: ApcPowerReceiver
+    powerLoad: 10 # CMU14
   - type: RMCPowerReceiver
     idleLoad: 5
     activeLoad: 10
@@ -58,10 +66,3 @@
         unpowered:
           True: { visible: false }
           False: { visible: true }
-  - type: AmbientOnPowered
-  - type: AmbientSound
-    enabled: true
-    sound:
-      path: /Audio/_RMC14/Machines/fuel_pump_idle.ogg
-    range: 12
-    volume: -3

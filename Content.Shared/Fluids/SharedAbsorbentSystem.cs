@@ -9,8 +9,9 @@ using Content.Shared.Popups;
 using Content.Shared.Timing;
 using Content.Shared.Weapons.Melee;
 using Robust.Shared.Audio.Systems;
+using Robust.Shared.Map;
 using Robust.Shared.Map.Components;
-using Robust.Shared.Prototypes;
+using Robust.Shared.Timing;
 
 namespace Content.Shared.Fluids;
 
@@ -19,7 +20,9 @@ namespace Content.Shared.Fluids;
 /// </summary>
 public abstract partial class SharedAbsorbentSystem : EntitySystem
 {
-    [Dependency] private IPrototypeManager _proto = default!;
+    // CMU14: flat solution cost per mop use on reaction-less tiles; mirrors CM13's
+    // per-use mop economy. Tiles with reactions pay their own reaction cost instead.
+    private static readonly FixedPoint2 MopCleanSolutionUse = FixedPoint2.New(5);
     [Dependency] private SharedAudioSystem _audio = default!;
     [Dependency] private SharedPopupSystem _popups = default!;
     [Dependency] protected SharedPuddleSystem Puddle = default!;
@@ -29,6 +32,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
     [Dependency] private UseDelaySystem _useDelay = default!;
     [Dependency] private SharedMapSystem _mapSystem = default!;
     [Dependency] private SharedItemSystem _item = default!;
+    [Dependency] private IGameTiming _timing = default!;
 
     public override void Initialize()
     {
@@ -36,7 +40,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
 
         SubscribeLocalEvent<AbsorbentComponent, AfterInteractEvent>(OnAfterInteract);
         SubscribeLocalEvent<AbsorbentComponent, UserActivateInWorldEvent>(OnActivateInWorld);
-        SubscribeLocalEvent<AbsorbentComponent, SolutionContainerChangedEvent>(OnAbsorbentSolutionChange);
+        SubscribeLocalEvent<AbsorbentComponent, SolutionChangedEvent>(OnAbsorbentSolutionChange);
     }
 
     private void OnActivateInWorld(Entity<AbsorbentComponent> ent, ref UserActivateInWorldEvent args)
@@ -50,15 +54,26 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
 
     private void OnAfterInteract(Entity<AbsorbentComponent> ent, ref AfterInteractEvent args)
     {
-        if (!args.CanReach || args.Handled || args.Target is not { } target)
+        if (!args.CanReach || args.Handled)
             return;
 
-        Mop(ent, args.User, target);
-        args.Handled = true;
+        if (args.Target is { } target)
+        {
+            Mop(ent, args.User, target);
+            args.Handled = true;
+            return;
+        }
+
+        if (TryTileInteract(ent, args.User, args.ClickLocation))
+            args.Handled = true;
     }
 
-    private void OnAbsorbentSolutionChange(Entity<AbsorbentComponent> ent, ref SolutionContainerChangedEvent args)
+    private void OnAbsorbentSolutionChange(Entity<AbsorbentComponent> ent, ref SolutionChangedEvent args)
     {
+        // The changes are already networked as part of the same game state.
+        if (_timing.ApplyingState)
+            return;
+
         if (!SolutionContainer.TryGetSolution(ent.Owner, ent.Comp.SolutionName, out _, out var solution))
             return;
 
@@ -67,15 +82,16 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
         var absorbentReagents = Puddle.GetAbsorbentReagents(solution);
         var mopReagent = solution.GetTotalPrototypeQuantity(absorbentReagents);
         if (mopReagent > FixedPoint2.Zero)
-            ent.Comp.Progress[solution.GetColorWithOnly(_proto, absorbentReagents)] = mopReagent.Float();
+            ent.Comp.Progress[solution.GetColorWithOnly(ProtoMan, absorbentReagents)] = mopReagent.Float();
 
-        var otherColor = solution.GetColorWithout(_proto, absorbentReagents);
+        var otherColor = solution.GetColorWithout(ProtoMan, absorbentReagents);
         var other = solution.Volume - mopReagent;
         if (other > FixedPoint2.Zero)
             ent.Comp.Progress[otherColor] = other.Float();
 
+        // Fill the empty part of the reagents bar with Color.Transparent (so that the background is visible in the UI)
         if (solution.AvailableVolume > FixedPoint2.Zero)
-            ent.Comp.Progress[Color.DarkGray] = solution.AvailableVolume.Float();
+            ent.Comp.Progress[Color.Transparent] = solution.AvailableVolume.Float();
 
         Dirty(ent);
         _item.VisualsChanged(ent);
@@ -105,6 +121,77 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
 
         // If it's refillable try to transfer
         TryRefillableInteract((absorbEnt.Owner, absorbEnt.Comp, useDelay), absorberSoln.Value, user, target);
+    }
+
+    private bool TryTileInteract(Entity<AbsorbentComponent> absorbEnt, EntityUid user, EntityCoordinates clickLocation)
+    {
+        if (!TryGetTileRef(clickLocation, out var tileRef))
+            return false;
+
+        if (Puddle.TryGetPuddle(tileRef, out var puddle))
+        {
+            Mop(absorbEnt, user, puddle);
+            return true;
+        }
+
+        if (!Puddle.HasCleanableDecalsAt(tileRef))
+            return false;
+
+        if (!SolutionContainer.TryGetSolution(absorbEnt.Owner, absorbEnt.Comp.SolutionName, out var absorberSoln))
+            return false;
+
+        if (TryComp<UseDelayComponent>(absorbEnt, out var useDelay)
+            && _useDelay.IsDelayed((absorbEnt.Owner, useDelay)))
+        {
+            return false;
+        }
+
+        var absorber = absorbEnt.Comp;
+        if (absorber.UseAbsorberSolution)
+        {
+            var absorberSolution = absorberSoln.Value.Comp.Solution;
+            var available = absorberSolution.GetTotalPrototypeQuantity(Puddle.GetAbsorbentReagents(absorberSolution));
+
+            if (available == FixedPoint2.Zero)
+            {
+                _popups.PopupEntity(Loc.GetString("mopping-system-no-water", ("used", absorbEnt)), absorbEnt, user);
+                return true;
+            }
+
+            Puddle.DoTileReactions(tileRef, absorberSolution);
+
+            // CMU14: charge the flat use cost only when the reaction pass consumed
+            // nothing, so a decal clean pays its reaction cost exactly once.
+            if (available == absorberSolution.Volume)
+                absorberSolution.SplitSolutionWithOnly(MopCleanSolutionUse,
+                    Puddle.GetAbsorbentReagents(absorberSolution));
+            SolutionContainer.UpdateChemicals(absorberSoln.Value);
+        }
+
+        Puddle.CleanDecalsAt(tileRef);
+
+        _audio.PlayPredicted(absorber.PickupSound, absorbEnt, user);
+        PredictedSpawnAttachedTo(absorber.MoppedEffect, clickLocation);
+
+        if (useDelay != null)
+            _useDelay.TryResetDelay((absorbEnt.Owner, useDelay));
+
+        DoMopLunge(user, absorbEnt, clickLocation);
+        return true;
+    }
+
+    private bool TryGetTileRef(EntityCoordinates coordinates, out TileRef tileRef)
+    {
+        tileRef = default;
+        var gridUid = _transform.GetGrid(coordinates);
+        if (gridUid == null ||
+            !TryComp<MapGridComponent>(gridUid, out var mapGrid) ||
+            !_mapSystem.TryGetTileRef(gridUid.Value, mapGrid, coordinates, out tileRef))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -157,7 +244,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
         var absorbentSolution = absorbentSoln.Comp.Solution;
         if (absorbentSolution.Volume <= 0)
         {
-            _popups.PopupClient(Loc.GetString("mopping-system-target-container-empty", ("target", target)), user, user);
+            _popups.PopupEntity(Loc.GetString("mopping-system-target-container-empty", ("target", target)), user, user);
             return false;
         }
 
@@ -168,7 +255,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
 
         if (transferAmount <= 0)
         {
-            _popups.PopupClient(Loc.GetString("mopping-system-full", ("used", absorbEnt)), absorbEnt, user);
+            _popups.PopupEntity(Loc.GetString("mopping-system-full", ("used", absorbEnt)), absorbEnt, user);
             return false;
         }
 
@@ -203,7 +290,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
             && absorbentSolution.AvailableVolume == FixedPoint2.Zero)
         {
             // Nothing to transfer to refillable and no room to absorb anything extra
-            _popups.PopupClient(Loc.GetString("mopping-system-puddle-space", ("used", absorbEnt)), user, user);
+            _popups.PopupEntity(Loc.GetString("mopping-system-puddle-space", ("used", absorbEnt)), user, user);
 
             // We can return cleanly because nothing was split from absorbent solution
             return false;
@@ -222,7 +309,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
         if (waterFromRefillable.Volume == FixedPoint2.Zero && contaminantsFromAbsorbent.Volume == FixedPoint2.Zero)
         {
             // Nothing to transfer in either direction
-            _popups.PopupClient(Loc.GetString("mopping-system-target-container-empty-water", ("target", target)),
+            _popups.PopupEntity(Loc.GetString("mopping-system-target-container-empty-water", ("target", target)),
                 user,
                 user);
 
@@ -244,7 +331,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
 
         if (refillableSolution.AvailableVolume <= 0)
         {
-            _popups.PopupClient(Loc.GetString("mopping-system-full", ("used", target)), user, user);
+            _popups.PopupEntity(Loc.GetString("mopping-system-full", ("used", target)), user, user);
         }
         else
         {
@@ -287,7 +374,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
                 puddleSolution.GetTotalPrototypeQuantity(Puddle.GetAbsorbentReagents(puddleSolution));
             if (puddleAbsorberVolume == puddleSolution.Volume)
             {
-                _popups.PopupClient(Loc.GetString("mopping-system-puddle-already-mopped", ("target", target)),
+                _popups.PopupEntity(Loc.GetString("mopping-system-puddle-already-mopped", ("target", target)),
                     target,
                     user);
                 return true;
@@ -300,7 +387,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
             // No material
             if (available == FixedPoint2.Zero)
             {
-                _popups.PopupClient(Loc.GetString("mopping-system-no-water", ("used", absorbEnt)), absorbEnt, user);
+                _popups.PopupEntity(Loc.GetString("mopping-system-no-water", ("used", absorbEnt)), absorbEnt, user);
                 return true;
             }
 
@@ -320,6 +407,7 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
             {
                 var tileRef = _mapSystem.GetTileRef(gridUid.Value, mapGrid, targetXform.Coordinates);
                 Puddle.DoTileReactions(tileRef, absorberSplit);
+                Puddle.CleanDecalsAt(tileRef);
             }
             SolutionContainer.AddSolution(puddle.Solution.Value, absorberSplit);
         }
@@ -331,7 +419,15 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
             if (puddleSolution.Volume == FixedPoint2.Zero)
             {
                 // Spawn a *sparkle*
-                PredictedSpawnAttachedTo(absorber.MoppedEffect, Transform(target).Coordinates);
+                var targetXform = Transform(target);
+                var gridUid = targetXform.GridUid;
+                if (TryComp<MapGridComponent>(gridUid, out var mapGrid))
+                {
+                    var tileRef = _mapSystem.GetTileRef(gridUid.Value, mapGrid, targetXform.Coordinates);
+                    Puddle.CleanDecalsAt(tileRef);
+                }
+
+                PredictedSpawnAttachedTo(absorber.MoppedEffect, targetXform.Coordinates);
                 PredictedQueueDel(target);
                 isRemoved = true;
             }
@@ -344,13 +440,18 @@ public abstract partial class SharedAbsorbentSystem : EntitySystem
         if (useDelay != null)
             _useDelay.TryResetDelay((absorbEnt, useDelay));
 
+        DoMopLunge(user, absorbEnt, Transform(target).Coordinates);
+
+        return true;
+    }
+
+    private void DoMopLunge(EntityUid user, Entity<AbsorbentComponent> absorbEnt, EntityCoordinates targetCoordinates)
+    {
         var userXform = Transform(user);
-        var targetPos = _transform.GetWorldPosition(target);
+        var targetPos = _transform.ToMapCoordinates(targetCoordinates).Position;
         var localPos = Vector2.Transform(targetPos, _transform.GetInvWorldMatrix(userXform));
         localPos = userXform.LocalRotation.RotateVec(localPos);
 
         _melee.DoLunge(user, absorbEnt, Angle.Zero, localPos, null);
-
-        return true;
     }
 }

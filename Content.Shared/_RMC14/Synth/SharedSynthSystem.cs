@@ -1,6 +1,10 @@
+using Content.Shared._RMC14.Damage; // CMU14
 using Content.Shared._RMC14.IdentityManagement;
+using Content.Shared._RMC14.Marines.Skills; // CMU14
 using Content.Shared._RMC14.Medical.HUD.Components;
+using Content.Shared._RMC14.Medical.Stasis;
 using Content.Shared._RMC14.Medical.Unrevivable;
+using Content.Shared._RMC14.Medical.Wounds;
 using Content.Shared._RMC14.Repairable;
 using Content.Shared._RMC14.StatusEffect;
 using Content.Shared.Actions;
@@ -8,6 +12,7 @@ using Content.Shared.Bed.Sleep;
 using Content.Shared.Body.Systems;
 using Content.Shared.Damage;
 using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Damage.Prototypes;
 using Content.Shared.DoAfter;
 using Content.Shared.FixedPoint;
@@ -32,6 +37,9 @@ namespace Content.Shared._RMC14.Synth;
 public abstract partial class SharedSynthSystem : EntitySystem
 {
     private static readonly TimeSpan UnableUsePopupCooldown = TimeSpan.FromSeconds(1);
+    private static readonly EntProtoId<SkillDefinitionComponent> ConstructionSkill = "RMCSkillConstruction"; // CMU14
+    private static readonly ProtoId<DamageGroupPrototype>[] SynthImmuneGroups = ["Toxin", "Airloss"]; // CMU14
+    private readonly HashSet<ProtoId<DamageTypePrototype>> _synthImmuneTypes = new(); // CMU14
 
     [Dependency] private RMCRepairableSystem _repairable = default!;
     [Dependency] private SharedActionsSystem _actions = default!;
@@ -44,11 +52,13 @@ public abstract partial class SharedSynthSystem : EntitySystem
     [Dependency] private RMCStatusEffectSystem _rmcStatusEffects = default!;
     [Dependency] private MobThresholdSystem _mobThreshold = default!;
     [Dependency] private EntityWhitelistSystem _whitelist = default!;
+    [Dependency] private SkillsSystem _skills = default!; // CMU14
     [Dependency] private IGameTiming _timing = default!;
 
     public override void Initialize()
     {
         base.Initialize();
+        InitializeGenerations(); // CMU14: shared generation speed and pounce mechanics.
 
         SubscribeLocalEvent<SynthComponent, ComponentStartup>(OnSynthStartup);
         SubscribeLocalEvent<SynthComponent, ComponentShutdown>(OnShutdown);
@@ -56,10 +66,25 @@ public abstract partial class SharedSynthSystem : EntitySystem
         SubscribeLocalEvent<SynthComponent, AttackAttemptEvent>(OnMeleeAttempted);
         SubscribeLocalEvent<SynthComponent, ShotAttemptedEvent>(OnShotAttempted);
         SubscribeLocalEvent<SynthComponent, TryingToSleepEvent>(OnSleepAttempt);
+        SubscribeLocalEvent<SynthComponent, CMMetabolizeAttemptEvent>(OnMetabolizeAttempt);
+        SubscribeLocalEvent<SynthComponent, CMBleedAttemptEvent>(OnBleedAttempt);
+        SubscribeLocalEvent<SynthComponent, CMBleedEvent>(OnBleed);
         SubscribeLocalEvent<SynthComponent, InteractUsingEvent>(OnSynthInteractUsing);
         SubscribeLocalEvent<SynthComponent, RMCSynthRepairEvent>(OnSynthRepairDoAfter);
+        SubscribeLocalEvent<SynthComponent, DamageModifyAfterResistEvent>(OnSynthDamageAfterResist); // CMU14
 
         SubscribeLocalEvent<UseOnSynthBlockedComponent, BeforeRangedInteractEvent>(OnSynthBlockedBeforeRangedInteract);
+
+        // CMU14: cache the immune groups' damage types once
+        _synthImmuneTypes.Clear();
+        foreach (var groupId in SynthImmuneGroups)
+        {
+            if (!_prototypes.TryIndex(groupId, out var group))
+                continue;
+
+            foreach (var type in group.DamageTypes)
+                _synthImmuneTypes.Add(type);
+        }
     }
 
     // Change any mob to a synth, even after it has already been map-initialized
@@ -120,9 +145,23 @@ public abstract partial class SharedSynthSystem : EntitySystem
         if (TryComp<RMCHealthIconsComponent>(ent.Owner, out var healthIcons))
         {
             if (ent.Comp.UseHumanHealthIcons)
-                healthIcons.Icons = new();
+            {
+                healthIcons.Icons = new()
+                {
+                    [RMCHealthIconTypes.Healthy] = "CMHealthIconHealthy",
+                    [RMCHealthIconTypes.DeadDefib] = "CMHealthIconDeadDefib",
+                    [RMCHealthIconTypes.DeadClose] = "CMHealthIconDeadClose",
+                    [RMCHealthIconTypes.DeadAlmost] = "CMHealthIconDeadAlmost",
+                    [RMCHealthIconTypes.DeadDNR] = "CMHealthIconDeadDNR",
+                    [RMCHealthIconTypes.Dead] = "CMHealthIconDead",
+                    [RMCHealthIconTypes.HCDead] = "CMHealthIconHCDead",
+                };
+            }
             else
+            {
                 healthIcons.Icons = ent.Comp.HealthIconOverrides;
+            }
+
             Dirty(ent.Owner, healthIcons);
         }
 
@@ -197,6 +236,30 @@ public abstract partial class SharedSynthSystem : EntitySystem
         args.Cancelled = true; // Synths dont sleep
     }
 
+    private void OnMetabolizeAttempt(Entity<SynthComponent> ent, ref CMMetabolizeAttemptEvent args)
+    {
+        args.Cancel();
+    }
+
+    private void OnBleedAttempt(Entity<SynthComponent> ent, ref CMBleedAttemptEvent args)
+    {
+        args.Cancelled = true;
+    }
+
+    private void OnBleed(Entity<SynthComponent> ent, ref CMBleedEvent args)
+    {
+        args.Handled = true;
+    }
+
+    private void OnSynthDamageAfterResist(Entity<SynthComponent> ent, ref DamageModifyAfterResistEvent args) // CMU14 Method
+    {
+        foreach (var (type, amount) in args.Damage.DamageDict)
+        {
+            if (amount > FixedPoint2.Zero && _synthImmuneTypes.Contains(type))
+                args.Damage.DamageDict[type] = FixedPoint2.Zero;
+        }
+    }
+
     private void OnSynthInteractUsing(Entity<SynthComponent> synth, ref InteractUsingEvent args)
     {
         if (args.Handled)
@@ -219,7 +282,9 @@ public abstract partial class SharedSynthSystem : EntitySystem
         }
 
         var ev = new RMCSynthRepairEvent();
-        var repairTime = selfRepair ? synth.Comp.SelfRepairTime : synth.Comp.RepairTime;
+        var repairTime = selfRepair
+            ? synth.Comp.SelfRepairTime
+            : synth.Comp.RepairTime * _skills.GetSkillDelayMultiplier(user, ConstructionSkill); // CMU14
         var doAfter = new DoAfterArgs(EntityManager, user, repairTime, ev, synth, used: args.Used)
         {
             BreakOnMove = true,
@@ -242,12 +307,12 @@ public abstract partial class SharedSynthSystem : EntitySystem
                     if (!selfRepair)
                         return;
 
-                    _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+                    _popup.PopupEntity(selfMsg, othersMsg, user, user);
                 }
             }
             else
             {
-                _popup.PopupClient(Loc.GetString("rmc-repairable-not-damaged", ("target", synth)), user, user, PopupType.SmallCaution);
+                _popup.PopupEntity(Loc.GetString("rmc-repairable-not-damaged", ("target", synth)), user, user, PopupType.SmallCaution);
             }
         }
         else if (HasComp<RMCCableCoilComponent>(used))
@@ -264,7 +329,7 @@ public abstract partial class SharedSynthSystem : EntitySystem
                     if (!selfRepair)
                         return;
 
-                    _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+                    _popup.PopupEntity(selfMsg, othersMsg, user, user);
                 }
             }
             // No damage: leave InteractUsing unhandled so AfterInteract can open synth surgery dispatch.
@@ -291,16 +356,16 @@ public abstract partial class SharedSynthSystem : EntitySystem
 
             var selfMsg = Loc.GetString("rmc-synth-repair-brute-finish-self", ("user", user), ("target", synth), ("tool", used), ("limb", "chest"));
             var othersMsg = Loc.GetString("rmc-synth-repair-brute-finish", ("user", user), ("target", synth), ("tool", used), ("limb", "chest"));
-            _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+            _popup.PopupEntity(selfMsg, othersMsg, user, user);
         }
-        else if (HasComp<RMCCableCoilComponent>(args.Used) && _stack.Use(args.Used.Value, 1))
+        else if (HasComp<RMCCableCoilComponent>(args.Used) && _stack.TryUse(args.Used.Value, 1))
         {
             if (synth.Comp.CableCoilDamageToRepair != null)
                 _damageable.TryChangeDamage(synth, synth.Comp.CableCoilDamageToRepair, true, false, origin: args.User);
 
             var selfMsg = Loc.GetString("rmc-synth-repair-burn-finish-self", ("user", user), ("target", synth), ("tool", used), ("limb", "chest"));
             var othersMsg = Loc.GetString("rmc-synth-repair-burn-finish", ("user", user), ("target", synth), ("tool", used), ("limb", "chest"));
-            _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+            _popup.PopupEntity(selfMsg, othersMsg, user, user);
         }
     }
 
@@ -326,7 +391,7 @@ public abstract partial class SharedSynthSystem : EntitySystem
         if (args.Handled)
         {
             var msg = Loc.GetString(ent.Comp.Popup, ("user", args.User), ("used", args.Used), ("target", args.Target));
-            _popup.PopupClient(msg, args.User, args.User, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, args.User, args.User, PopupType.SmallCaution);
         }
     }
 
@@ -335,10 +400,11 @@ public abstract partial class SharedSynthSystem : EntitySystem
         if (!TryComp<DamageableComponent>(synth, out var damageable))
             return false;
 
-        if (damageable.Damage.Empty)
+        var currentDamage = _damageable.GetAllDamage((synth, damageable));
+        if (currentDamage.Empty)
             return false;
 
-        var damage = damageable.Damage.GetDamagePerGroup(_prototypes);
+        var damage = currentDamage.GetDamagePerGroup(_prototypes);
         var groupDmg = damage.GetValueOrDefault(group);
 
         if (groupDmg <= FixedPoint2.Zero)
@@ -359,7 +425,7 @@ public abstract partial class SharedSynthSystem : EntitySystem
         synthComp.NextUnableUsePopup = time + UnableUsePopupCooldown;
 
         var msg = Loc.GetString("rmc-species-synth-programming-prevents-use", ("user", synth), ("tool", tool));
-        _popup.PopupClient(msg, synth, synth, PopupType.SmallCaution);
+        _popup.PopupEntity(msg, synth, synth, PopupType.SmallCaution);
     }
 }
 

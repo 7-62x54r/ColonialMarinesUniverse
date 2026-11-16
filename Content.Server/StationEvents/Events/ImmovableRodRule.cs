@@ -1,12 +1,10 @@
 using System.Numerics;
-using Content.Server.GameTicking.Rules.Components;
 using Content.Server.ImmovableRod;
 using Content.Server.StationEvents.Components;
 using Content.Server.Weapons.Ranged.Systems;
 using Content.Shared.GameTicking.Components;
 using Content.Shared.Storage;
 using Robust.Shared.Prototypes;
-using Robust.Shared.Random;
 using TimedDespawnComponent = Robust.Shared.Spawners.TimedDespawnComponent;
 using System.Linq;
 
@@ -26,8 +24,8 @@ public sealed partial class ImmovableRodRule : StationEventSystem<ImmovableRodRu
 
         var proto = _prototypeManager.Index<EntityPrototype>(protoName);
 
-        if (proto.TryGetComponent<ImmovableRodComponent>(out var rod, EntityManager.ComponentFactory) &&
-            proto.TryGetComponent<TimedDespawnComponent>(out var despawn, EntityManager.ComponentFactory))
+        if (proto.TryComp<ImmovableRodComponent>(out var rod, EntityManager.ComponentFactory) &&
+            proto.TryComp<TimedDespawnComponent>(out var despawn, EntityManager.ComponentFactory))
         {
             if (!TryFindRandomTile(out _, out _, out _, out var targetCoords))
                 return;
@@ -35,7 +33,8 @@ public sealed partial class ImmovableRodRule : StationEventSystem<ImmovableRodRu
             var speed = RobustRandom.NextFloat(rod.MinSpeed, rod.MaxSpeed);
             var angle = RobustRandom.NextAngle();
             var direction = angle.ToVec();
-            var spawnCoords = _transform.ToMapCoordinates(targetCoords).Offset(-direction * speed * despawn.Lifetime / 2);
+            var mapCoords = _transform.ToMapCoordinates(targetCoords);
+            var spawnCoords = mapCoords.Offset(-direction * speed * despawn.Lifetime / 2);
             var ent = Spawn(protoName, spawnCoords);
             _gun.ShootProjectile(ent, direction, Vector2.Zero, uid, speed: speed);
         }

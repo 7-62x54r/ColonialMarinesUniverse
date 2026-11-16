@@ -1,0 +1,49 @@
+using Content.Server._RMC14.Language.Systems;
+using Content.Shared.GameTicking;
+using Content.Shared.Roles;
+using Content.Shared.Traits;
+using Robust.Shared.Prototypes;
+
+namespace Content.Server._RMC14.Traits;
+
+public sealed partial class RMCTraitSystem : EntitySystem
+{
+    [Dependency] private LanguageSystem _language = default!;
+    [Dependency] private IPrototypeManager _prototypeManager = default!;
+
+    public override void Initialize()
+    {
+        base.Initialize();
+
+        SubscribeLocalEvent<PlayerSpawnCompleteEvent>(OnPlayerSpawnComplete);
+    }
+
+    private void OnPlayerSpawnComplete(PlayerSpawnCompleteEvent args)
+    {
+        if (args.JobId == null ||
+            !_prototypeManager.TryIndex<JobPrototype>(args.JobId, out var job) ||
+            !job.ApplyTraits)
+        {
+            return;
+        }
+
+        foreach (var traitId in args.Profile.TraitPreferences)
+        {
+            if (!_prototypeManager.TryIndex<TraitPrototype>(traitId, out var trait) ||
+                trait.Language == null)
+            {
+                continue;
+            }
+
+            // cmu edit start: traits this job doesn't allow are left off for auto-ignoring characters
+            if (EntityManager.System<Content.Shared.CMU14.Traits.AutoIgnore.CMUAutoIgnoreTraitsSystem>()
+                .IsIgnored(args.Profile, args.JobId, traitId))
+            {
+                continue;
+            }
+            // cmu edit end
+
+            _language.AddLanguage(args.Mob, trait.Language.Value);
+        }
+    }
+}

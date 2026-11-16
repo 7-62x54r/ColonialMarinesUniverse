@@ -3,7 +3,8 @@ using Content.Server.GameTicking;
 using Content.Server.Ghost;
 using Content.Server.Mind;
 using Content.Shared.Administration;
-using Content.Shared.Ghost;
+using Content.Shared.Ghost.Components;
+using Content.Shared.Ghost.Systems;
 using Content.Shared.Mind;
 using Robust.Server.GameObjects;
 using Robust.Server.Player;
@@ -94,11 +95,14 @@ public sealed partial class AGhostCommand : LocalizedCommands
 
         var canReturn = mind.CurrentEntity != null
                         && !_entities.HasComponent<GhostComponent>(mind.CurrentEntity);
-        var coordinates = player!.AttachedEntity != null
-            ? _entities.GetComponent<TransformComponent>(player.AttachedEntity.Value).Coordinates
-            : gameTicker.GetObserverSpawnPoint();
-        var ghost = _entities.SpawnEntity(GameTicker.AdminObserverPrototypeName, coordinates);
-        transformSystem.AttachToGridOrMap(ghost, _entities.GetComponent<TransformComponent>(ghost));
+
+        if (player!.AttachedEntity == null
+            || !transformSystem.TryGetMapOrGridCoordinates(player.AttachedEntity.Value, out var coordinates))
+        {
+            coordinates = gameTicker.GetObserverSpawnPoint();
+        }
+
+        var ghost = _entities.SpawnEntity(GameTicker.AdminObserverPrototypeName, coordinates.Value);
 
         if (canReturn)
         {
@@ -118,5 +122,13 @@ public sealed partial class AGhostCommand : LocalizedCommands
 
         var comp = _entities.GetComponent<GhostComponent>(ghost);
         ghostSystem.SetCanReturnToBody((ghost, comp), canReturn);
+
+        // CMU14: leaving a real body, the ghost keeps that body's look instead of the lobby profile's
+        if (canReturn)
+            _entities.System<Content.Shared.CMU14.Ghost.CMUGhostAppearanceSystem>().SetSource(ghost, mind.OwnedEntity);
+
+        // cmu edit start: admin ghosts look like the admin's selected character, the same as observers
+        _entities.System<Content.Server.CMU14.Ghost.CMUGhostProfileAppearanceSystem>().DressAsSelectedCharacter(ghost, player);
+        // cmu edit end
     }
 }

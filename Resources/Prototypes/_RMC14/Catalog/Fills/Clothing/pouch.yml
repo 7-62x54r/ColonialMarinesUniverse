@@ -141,6 +141,16 @@
     - id: RMCSpeedLoaderMatebaHIAP
       amount: 4
 
+- type: entity
+  parent: RMCPouchMagazinePistol
+  id: RMCPouchMagazinePistolFilledM88Rubber
+  suffix: Filled, M88 Rubber
+  components:
+  - type: StorageFill
+    contents:
+    - id: CMMagazinePistolM88Rubber
+      amount: 4
+
 # Shotgun Pouch
 - type: entity
   parent: RMCPouchShotgun
@@ -250,7 +260,7 @@
     - id: CMScrewdriver
     - id: CMWirecutter
     - id: CMCrowbar
-    - id: RMCCableCoil
+    - id: CMUCableThinLVStack # CMU14: replaces RMCCableCoil, thin LV cable
     - id: CMMultitool
     - id: CMWrench
 
@@ -264,7 +274,7 @@
     - id: CMScrewdriver
     - id: CMWirecutter
     - id: CMCrowbar
-    - id: RMCCableCoil
+    - id: CMUCableThinLVStack # CMU14: replaces RMCCableCoil, thin LV cable
     - id: CMMultitool
     - id: CMWrench
     - id: RMCExplosivePlastic
@@ -329,6 +339,6 @@
     - id: CMSheetMetal50
     - id: CMCrowbarRed
     - id: CMWelder
-    - id: RMCCableCoil
+    - id: CMUCableThinLVStack # CMU14: replaces RMCCableCoil, thin LV cable
     - id: RMCRadioHandheldColony
     - id: RMCM5Bayonet

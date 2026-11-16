@@ -1,0 +1,154 @@
+- type: reaction
+  id: CMUCreateSludgeGC
+  quantized: true
+  reactants:
+    CMBicaridine:
+      amount: 16
+    CMMeralyne:
+      amount: 16
+    CMKelotane:
+      amount: 16
+    CMDermaline:
+      amount: 16
+  products:
+    CMUBlackSludge: 64
+
+- type: reaction
+  id: CMUXenoPlasmaRoyal
+  reactants:
+    CMUXenoRoyalBlood:
+      amount: 1
+    CMUXenoPlasmaEgg:
+      amount: 1
+  products:
+    CMUXenoPlasmaRoyal: 2
+
+- type: reaction
+  id: CMUAmmonia
+  priority: -1
+  reactants:
+    RMCHydrogen:
+      amount: 3
+    RMCNitrogen:
+      amount: 1
+  products:
+    CMUAmmonia: 3
+
+- type: reaction
+  id: CMUDiethylamine
+  reactants:
+    CMUAmmonia:
+      amount: 1
+    RMCEthanol:
+      amount: 1
+  products:
+    CMUDiethylamine: 2
+
+- type: reaction
+  id: CMUUnstableMutagen
+  reactants:
+    RMCChlorine:
+      amount: 1
+    RMCRadium:
+      amount: 1
+    RMCPhosphorus:
+      amount: 1
+  products:
+    CMUUnstableMutagen: 3
+
+- type: reaction
+  id: AU14SpaceCleaner
+  reactants:
+    Water:
+      amount: 1
+    CMUAmmonia:
+      amount: 1
+    TableSalt:
+      amount: 1
+  products:
+    SpaceCleaner: 2
+
+# TODO: smoking reaction
+- type: reaction
+  id: CMUFormaldehyde
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  reactants:
+    RMCMethane:
+      amount: 1
+    RMCOxygen:
+      amount: 1
+# it's haunted
+    RMCPhoron:
+      amount: 1
+    RMCSilver:
+      amount: 5
+      catalyst: true
+  products:
+    CMUFormaldehyde: 3
+
+# Endothermic in CM13; modelled as a 374 K heat gate (above a microwave's 373 K); any heat source works.
+- type: reaction
+  id: CMUPhenolFormaldehyde
+  conserveEnergy: false # CMU14: the chain must not heat itself past its own heat gate; any outside heat (hotplate, hot reagent) counts
+  minTemp: 374
+  reactants:
+    CMUFormaldehyde:
+      amount: 2
+    CMUPhenol:
+      amount: 1
+    RMCMethane:
+      amount: 5
+      catalyst: true
+  products:
+    CMUPhenolFormaldehyde: 1
+
+- type: reaction
+  id: AU14Albuterol
+  reactants:
+    CMUAtropine:
+      amount: 1
+    CMUPhenol:
+      amount: 1
+    CMUPulmovine:
+      amount: 3
+  products:
+    AU14Albuterol: 3
+
+
+- type: reaction
+  id: CMUOleoresinCapsicum
+  requiredMixerCategories: # only reacts when mixed (lid-closed Mix verb or a detonating payload)
+  - CMUMix
+  reactants:
+    RMCEthanol:
+      amount: 2
+    RMCSulfur:
+      amount: 1
+    RMCChlorine:
+      amount: 1
+  products:
+    CMUOleoresinCapsicum: 4
+
+- type: reaction
+  id: CMUOleoresinCapsicumFromPeppers
+  requiredMixerCategories: # only reacts when mixed (lid-closed Mix verb or a detonating payload)
+  - CMUMix
+  reactants:
+    CapsaicinOil:
+      amount: 2
+    RMCEthanol:
+      amount: 1
+  products:
+    CMUOleoresinCapsicum: 3
+
+- type: reaction
+  id: CMUCapsicumNeutralizer
+  reactants:
+    Water:
+      amount: 2
+    RMCSodium:
+      amount: 1
+    RMCSugar:
+      amount: 1
+  products:
+    CMUCapsicumNeutralizer: 4

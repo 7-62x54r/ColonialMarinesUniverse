@@ -9,15 +9,18 @@ using Content.Shared._RMC14.Marines.Skills;
 using Content.Shared._RMC14.Rangefinder;
 using Content.Shared._RMC14.Rules;
 using Content.Shared._RMC14.Xenonids;
+using Content.Shared.CMU14.ZLevels.Ordnance;
 using Content.Shared.Administration.Logs;
 using Content.Shared.Chat;
 using Content.Shared.Construction.Components;
 using Content.Shared.Coordinates;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Database;
 using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
 using Content.Shared.Examine;
+using Content.Shared.Explosion.Components;
 using Content.Shared.Interaction;
 using Content.Shared.Interaction.Events;
 using Content.Shared.Popups;
@@ -57,6 +60,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
     [Dependency] private RMCPlanetSystem _rmcPlanet = default!;
     [Dependency] private SkillsSystem _skills = default!;
     [Dependency] private IGameTiming _timing = default!;
+    [Dependency] private CMUTopDownOrdnanceSystem _topDownOrdnance = default!;
     [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private SharedUserInterfaceSystem _ui = default!;
 
@@ -146,8 +150,8 @@ public abstract partial class SharedMortarSystem : EntitySystem
         _transform.SetCoordinates(mortar, xform, coordinates, rotation);
         _transform.AnchorEntity((mortar, xform));
 
-        if (!_rmcPlanet.IsOnPlanet(coordinates))
-            _popup.PopupClient(Loc.GetString("rmc-mortar-deploy-end-not-planet"), user, user, PopupType.MediumCaution);
+        if (!IsOnPlanetZLevel(_transform.ToMapCoordinates(coordinates)))
+            _popup.PopupEntity(Loc.GetString("rmc-mortar-deploy-end-not-planet"), user, user, PopupType.MediumCaution);
 
         _audio.PlayPredicted(mortar.Comp.DeploySound, mortar, user);
     }
@@ -162,14 +166,14 @@ public abstract partial class SharedMortarSystem : EntitySystem
         var user = args.User;
         var selfMsg = Loc.GetString("rmc-mortar-target-finish-self", ("mortar", mortar));
         var othersMsg = Loc.GetString("rmc-mortar-target-finish-others", ("user", user), ("mortar", mortar));
-        _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+        _popup.PopupEntity(selfMsg, othersMsg, user, user);
         if (_net.IsClient)
             return;
 
         var target = args.Vector;
         var position = _transform.GetMapCoordinates(mortar).Position;
         var offset = target;
-        if (_rmcPlanet.TryGetOffset(_transform.GetMapCoordinates(mortar.Owner), out var planetOffset))
+        if (TryGetPlanetOffset(_transform.GetMapCoordinates(mortar.Owner), out var planetOffset))
             offset -= planetOffset;
 
         mortar.Comp.Target = target;
@@ -195,7 +199,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         var user = args.User;
         var selfMsg = Loc.GetString("rmc-mortar-dial-finish-self", ("mortar", mortar));
         var othersMsg = Loc.GetString("rmc-mortar-dial-finish-others", ("user", user), ("mortar", mortar));
-        _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+        _popup.PopupEntity(selfMsg, othersMsg, user, user);
     }
 
     private void OnMortarInteractUsing(Entity<MortarComponent> mortar, ref InteractUsingEvent args)
@@ -241,7 +245,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
                     ("user", user),
                     ("mortar", mortar),
                     ("shell", used));
-                _popup.PopupPredicted(selfMsg, othersMsg, mortar, user);
+                _popup.PopupEntity(selfMsg, othersMsg, mortar, user);
 
                 if (_net.IsServer)
                     _audio.PlayPvs(mortar.Comp.ReloadSound, mortar);
@@ -286,13 +290,20 @@ public abstract partial class SharedMortarSystem : EntitySystem
             WarnAt = time + travelTime,
             ImpactWarnAt = time + travelTime + shell.ImpactWarningDelay,
             LandAt = time + travelTime + shell.ImpactDelay,
+            CarvesZLevels = shell.CarvesZLevels,
+            CreatesZLevelOpening = shell.CreatesZLevelOpening || shell.CarvesZLevels,
+            CarveOpeningTile = shell.CarveOpeningTile,
+            CarveFringeTile = shell.CarveFringeTile,
+            CarveFringeRadius = shell.CarveFringeRadius,
+            CarveDelay = shell.CarveDelay,
+            CarveImpactsRemaining = shell.MaxCarveImpacts,
         };
 
         AddComp(shellId, active, true);
 
         var selfMsg = Loc.GetString("rmc-mortar-shell-load-finish-self", ("mortar", mortar), ("shell", shellId));
         var othersMsg = Loc.GetString("rmc-mortar-shell-load-finish-others", ("user", user), ("mortar", mortar), ("shell", shellId));
-        _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+        _popup.PopupEntity(selfMsg, othersMsg, user, user);
 
         othersMsg = Loc.GetString("rmc-mortar-shell-fire", ("mortar", mortar));
         _popup.PopupEntity(othersMsg, mortar, PopupType.MediumCaution);
@@ -383,7 +394,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         Spawn(ent.Comp.Flare, coords);
         var camera = Spawn(ent.Comp.Camera, coords);
 
-        if (_rmcPlanet.TryGetOffset(coords, out var offset))
+        if (TryGetPlanetOffset(coords, out var offset))
             coords = coords.Offset(offset);
 
         var (x, y) = coords.Position;
@@ -394,7 +405,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
     {
         if (mortar.Comp.LaserTargetingMode)
         {
-            _popup.PopupPredictedCursor(Loc.GetString("rmc-mortar-dial-coordinates", ("mortar", mortar)), args.Actor, PopupType.SmallCaution);
+            _popup.PopupCursor(Loc.GetString("rmc-mortar-dial-coordinates", ("mortar", mortar)), args.Actor, PopupType.SmallCaution);
             return;
         }
 
@@ -412,7 +423,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         {
             var selfMsg = Loc.GetString("rmc-mortar-target-start-self", ("mortar", mortar));
             var othersMsg = Loc.GetString("rmc-mortar-target-start-others", ("user", user), ("mortar", mortar));
-            _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+            _popup.PopupEntity(selfMsg, othersMsg, user, user);
         }
     }
 
@@ -420,7 +431,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
     {
         if (mortar.Comp.LaserTargetingMode)
         {
-            _popup.PopupPredictedCursor(Loc.GetString("rmc-mortar-dial-coordinates", ("mortar", mortar)), args.Actor, PopupType.SmallCaution);
+            _popup.PopupCursor(Loc.GetString("rmc-mortar-dial-coordinates", ("mortar", mortar)), args.Actor, PopupType.SmallCaution);
             return;
         }
 
@@ -438,7 +449,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         {
             var selfMsg = Loc.GetString("rmc-mortar-dial-start-self", ("mortar", mortar));
             var othersMsg = Loc.GetString("rmc-mortar-dial-start-others", ("user", user), ("mortar", mortar));
-            _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+            _popup.PopupEntity(selfMsg, othersMsg, user, user);
         }
     }
 
@@ -463,7 +474,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         };
 
         if (_doAfter.TryStartDoAfter(args))
-            _popup.PopupClient(Loc.GetString("rmc-mortar-deploy-start", ("mortar", mortar)), user, user);
+            _popup.PopupEntity(Loc.GetString("rmc-mortar-deploy-start", ("mortar", mortar)), user, user);
     }
 
     protected bool HasSkillPopup(Entity<MortarComponent> mortar, EntityUid user, bool predicted)
@@ -473,10 +484,37 @@ public abstract partial class SharedMortarSystem : EntitySystem
 
         var msg = Loc.GetString("rmc-skills-no-training", ("target", mortar));
         if (predicted)
-            _popup.PopupClient(msg, user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
         else
             _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
 
+        return false;
+    }
+
+    protected bool CanOperateMortarAt(EntityCoordinates coordinates)
+    {
+        var mapCoordinates = _transform.ToMapCoordinates(coordinates);
+        if (!_topDownOrdnance.IsOpenToSky(mapCoordinates))
+            return false;
+
+        if (_area.CanMortarPlacement(coordinates))
+            return true;
+
+        return _rmcPlanet.TryGetPlanetSurfaceCoordinates(mapCoordinates, out var planetCoordinates) &&
+               planetCoordinates.MapId != mapCoordinates.MapId;
+    }
+
+    protected bool IsOnPlanetZLevel(MapCoordinates coordinates)
+    {
+        return _rmcPlanet.TryGetPlanetSurfaceCoordinates(coordinates, out _);
+    }
+
+    protected bool TryGetPlanetOffset(MapCoordinates coordinates, out Vector2i offset)
+    {
+        if (_rmcPlanet.TryGetPlanetSurfaceCoordinates(coordinates, out var planetCoordinates))
+            return _rmcPlanet.TryGetOffset(planetCoordinates, out offset);
+
+        offset = default;
         return false;
     }
 
@@ -485,9 +523,9 @@ public abstract partial class SharedMortarSystem : EntitySystem
         if (!HasSkillPopup(mortar, user, true))
             return false;
 
-        if (!_area.CanMortarPlacement(user.ToCoordinates()))
+        if (!CanOperateMortarAt(user.ToCoordinates()))
         {
-            _popup.PopupClient(Loc.GetString("rmc-mortar-covered", ("mortar", mortar)), user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(Loc.GetString("rmc-mortar-covered", ("mortar", mortar)), user, user, PopupType.SmallCaution);
             return false;
         }
 
@@ -519,7 +557,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
     }
 
 
-    public void PopupWarning(MapCoordinates coordinates, float range, LocId warning, LocId warningAbove, bool chat = false)
+    public void PopupWarning(MapCoordinates coordinates, float range, LocId warning, LocId warningAbove, bool chat = false, string? direction = null) // CMU14
     {
         foreach (var session in _player.NetworkedSessions)
         {
@@ -536,10 +574,9 @@ public abstract partial class SharedMortarSystem : EntitySystem
             if (distance > range)
                 continue;
 
-            var direction = distanceVec.GetDir().ToString().ToUpperInvariant();
             var msg = distance < 1
                 ? Loc.GetString(warningAbove)
-                : Loc.GetString(warning, ("direction", direction));
+                : Loc.GetString(warning, ("direction", direction ?? distanceVec.GetDir().ToString().ToUpperInvariant())); // CMU14
             _popup.PopupEntity(msg, recipient, recipient, PopupType.LargeCaution);
 
             if (chat)
@@ -567,6 +604,13 @@ public abstract partial class SharedMortarSystem : EntitySystem
             WarnAt = time + shell.TravelDelay,
             ImpactWarnAt = time + shell.TravelDelay + shell.ImpactWarningDelay,
             LandAt = time + shell.TravelDelay + shell.ImpactDelay,
+            CarvesZLevels = shell.CarvesZLevels,
+            CreatesZLevelOpening = shell.CreatesZLevelOpening || shell.CarvesZLevels,
+            CarveOpeningTile = shell.CarveOpeningTile,
+            CarveFringeTile = shell.CarveFringeTile,
+            CarveFringeRadius = shell.CarveFringeRadius,
+            CarveDelay = shell.CarveDelay,
+            CarveImpactsRemaining = shell.MaxCarveImpacts,
         };
 
         AddComp(explosion, active, true);
@@ -581,6 +625,14 @@ public abstract partial class SharedMortarSystem : EntitySystem
         var shells = EntityQueryEnumerator<ActiveMortarShellComponent>();
         while (shells.MoveNext(out var uid, out var active))
         {
+            if (active.Carving)
+            {
+                if (time >= active.CarveCheckAt)
+                    ContinueCarvingMortarShell((uid, active), time);
+
+                continue;
+            }
+
             if (!active.Warned && time >= active.WarnAt)
             {
                 active.Warned = true;
@@ -603,18 +655,95 @@ public abstract partial class SharedMortarSystem : EntitySystem
             }
 
             if (time >= active.LandAt)
-            {
-                _transform.SetCoordinates(uid, active.Coordinates);
-
-                var ev = new MortarShellLandEvent(active.Coordinates);
-                RaiseLocalEvent(uid, ref ev);
-
-                _rmcExplosion.TriggerExplosive(uid);
-
-                if (!EntityManager.IsQueuedForDeletion(uid))
-                    QueueDel(uid);
-            }
+                ImpactMortarShell((uid, active), time);
         }
+    }
+
+    private void ImpactMortarShell(Entity<ActiveMortarShellComponent> shell, TimeSpan time)
+    {
+        _transform.SetCoordinates(shell.Owner, shell.Comp.Coordinates);
+
+        var ev = new MortarShellLandEvent(shell.Comp.Coordinates);
+        RaiseLocalEvent(shell.Owner, ref ev);
+
+        var exploded = TriggerMortarShellExplosion(shell.Owner);
+        if ((!shell.Comp.CarvesZLevels && !shell.Comp.CreatesZLevelOpening) || !exploded)
+        {
+            if (!EntityManager.IsQueuedForDeletion(shell.Owner))
+                QueueDel(shell.Owner);
+
+            return;
+        }
+
+        shell.Comp.Carving = true;
+        shell.Comp.CarveCheckAt = time + shell.Comp.CarveDelay;
+        Dirty(shell);
+    }
+
+    private bool TriggerMortarShellExplosion(EntityUid shell)
+    {
+        if (!TryComp(shell, out ExplosiveComponent? explosive))
+            return false;
+
+        var coordinates = _transform.GetMapCoordinates(shell);
+        _rmcExplosion.QueueExplosion(
+            coordinates,
+            explosive.ExplosionType,
+            explosive.TotalIntensity,
+            explosive.IntensitySlope,
+            explosive.MaxIntensity,
+            shell,
+            explosive.TileBreakScale,
+            explosive.MaxTileBreak,
+            explosive.CanCreateVacuum);
+
+        var ev = new CMExplosiveTriggeredEvent();
+        RaiseLocalEvent(shell, ref ev);
+        return true;
+    }
+
+    private void ContinueCarvingMortarShell(Entity<ActiveMortarShellComponent> shell, TimeSpan time)
+    {
+        var current = _transform.ToMapCoordinates(shell.Comp.Coordinates);
+        if (!_topDownOrdnance.TryResolveSurfaceBelow(
+                current,
+                CMUTopDownOrdnanceKind.Mortar,
+                out var next,
+                out _))
+        {
+            QueueDel(shell.Owner);
+            return;
+        }
+
+        if (!_topDownOrdnance.IsOpening(current) &&
+            !TryCarveMortarOpening(shell, current))
+        {
+            QueueDel(shell.Owner);
+            return;
+        }
+
+        if (!shell.Comp.CarvesZLevels)
+        {
+            QueueDel(shell.Owner);
+            return;
+        }
+
+        shell.Comp.CarveImpactsRemaining--;
+        if (shell.Comp.CarveImpactsRemaining <= 0)
+        {
+            QueueDel(shell.Owner);
+            return;
+        }
+
+        shell.Comp.Coordinates = _transform.ToCoordinates(next.Value.Coordinates);
+        shell.Comp.LandAt = time;
+        shell.Comp.Carving = false;
+        Dirty(shell);
+    }
+
+    protected virtual bool TryCarveMortarOpening(Entity<ActiveMortarShellComponent> shell, MapCoordinates coordinates)
+    {
+        return false;
     }
 
     private void OnMortarLinkLaserDesignatorDoAfter(Entity<MortarComponent> mortar, ref LinkMortarLaserDesignatorDoAfterEvent args)
@@ -640,7 +769,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
 
         var selfMsg = Loc.GetString("rmc-mortar-laser-linked-self", ("mortar", mortar), ("laserDesignator", laserDesignator));
         var othersMsg = Loc.GetString("rmc-mortar-laser-linked-others", ("user", user), ("mortar", mortar), ("laserDesignator", laserDesignator));
-        _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+        _popup.PopupEntity(selfMsg, othersMsg, user, user);
     }
 
     public bool TryToggleLaserTargetingMode(Entity<MortarComponent> mortar, EntityUid user, bool laserMode, bool playSound = true)
@@ -652,7 +781,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         // Mortar must be deployed to toggle targeting mode
         if (!mortar.Comp.Deployed)
         {
-            _popup.PopupClient(Loc.GetString("rmc-mortar-not-deployed", ("mortar", mortar)), user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(Loc.GetString("rmc-mortar-not-deployed", ("mortar", mortar)), user, user, PopupType.SmallCaution);
             return false;
         }
 
@@ -662,7 +791,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
 
         var selfMsg = Loc.GetString(laserMode ? "rmc-mortar-laser-mode-switched-self" : "rmc-mortar-coordinates-mode-switched-self", ("mortar", mortar));
         var othersMsg = Loc.GetString(laserMode ? "rmc-mortar-laser-mode-switched-others" : "rmc-mortar-coordinates-mode-switched-others", ("user", user), ("mortar", mortar));
-        _popup.PopupPredicted(selfMsg, othersMsg, user, user);
+        _popup.PopupEntity(selfMsg, othersMsg, user, user);
 
         if (playSound)
             _audio.PlayPredicted(mortar.Comp.ToggleSound, mortar, user);
@@ -673,7 +802,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
     {
         if (mortar.Comp.IsLinking)
         {
-            _popup.PopupClient(Loc.GetString("rmc-mortar-already-linking"), user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(Loc.GetString("rmc-mortar-already-linking"), user, user, PopupType.SmallCaution);
             return false;
         }
 
@@ -691,7 +820,7 @@ public abstract partial class SharedMortarSystem : EntitySystem
         if (_doAfter.TryStartDoAfter(doAfter))
         {
             var msg = Loc.GetString("rmc-mortar-linking-start", ("mortar", mortar), ("laserDesignator", laserDesignator));
-            _popup.PopupClient(msg, mortar, user);
+            _popup.PopupEntity(msg, mortar, user);
             return true;
         }
         else

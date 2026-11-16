@@ -89,7 +89,7 @@ public sealed partial class SentryLaptopBui : BoundUserInterface
         if (_window == null)
             return;
 
-        _window.GlobalFactionContainer.DisposeAllChildren();
+        _window.GlobalFactionContainer.ReleaseChildren();
 
         if (State is not SentryLaptopBuiState state || state.AllFactions.Count == 0)
             return;
@@ -248,7 +248,7 @@ public sealed partial class SentryLaptopBui : BoundUserInterface
 
     private void OnSearchTextChanged(string text)
     {
-        _searchText = text.ToLower();
+        _searchText = text;
         FilterSentryCards();
     }
 
@@ -265,9 +265,10 @@ public sealed partial class SentryLaptopBui : BoundUserInterface
 
         foreach (var (netEntity, card) in _sentryCards)
         {
-            var name = card.SentryName.GetMessage()?.ToLower() ?? string.Empty;
-            var location = card.LocationLabel.Text?.ToLower() ?? string.Empty;
-            card.Visible = name.Contains(_searchText) || location.Contains(_searchText);
+            var name = card.SentryName.GetMessage() ?? string.Empty;
+            var location = card.LocationLabel.Text ?? string.Empty;
+            card.Visible = name.Contains(_searchText, StringComparison.OrdinalIgnoreCase) ||
+                           location.Contains(_searchText, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -482,7 +483,7 @@ public sealed partial class SentryLaptopBui : BoundUserInterface
 
     private void PopulateSentryFactionControls(SentryCard card, SentryInfo info)
     {
-        card.FactionContainer.DisposeAllChildren();
+        card.FactionContainer.ReleaseChildren();
 
         if (State is not SentryLaptopBuiState state)
             return;
@@ -674,7 +675,7 @@ public sealed partial class SentryLaptopBui : BoundUserInterface
         if (!_entities.TryGetComponent<TransformComponent>(_cameraEntity.Value, out var camXform))
             return;
 
-        camXform.LocalRotation = sentryXform.LocalRotation;
+        _transform.SetLocalRotation(_cameraEntity.Value, sentryXform.LocalRotation, camXform);
 
         var eye = _entities.AddComponent<EyeComponent>(_cameraEntity.Value);
 

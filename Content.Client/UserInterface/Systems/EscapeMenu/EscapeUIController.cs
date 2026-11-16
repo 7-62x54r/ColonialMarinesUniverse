@@ -1,6 +1,7 @@
 using Content.Client._RMC14.LinkAccount;
 using Content.Client._RMC14.Roadmap;
 using Content.Client.Credits;
+using Content.Client.FeedbackPopup;
 using Content.Client.GameTicking.Managers;
 using Content.Client.Gameplay;
 using Content.Client.UserInterface.Controls;
@@ -34,6 +35,8 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
     [Dependency] private OptionsUIController _options = default!;
     [Dependency] private GuidebookUIController _guidebook = default!;
     [Dependency] private LinkAccountManager _linkAccount = default!;
+    [Dependency] private FeedbackPopupUIController _feedback = null!;
+    [Dependency] private ILocalizationManager _loc = default!;
 
     private const float RoundStatusRefreshInterval = 1f;
 
@@ -88,6 +91,12 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
         _escapeWindow.OnClose += DeactivateButton;
         _escapeWindow.OnOpen += EscapeWindowOnOpen;
 
+        _escapeWindow.FeedbackButton.OnPressed += _ =>
+        {
+            CloseEscapeWindow();
+            _feedback.ToggleWindow();
+        };
+
         _escapeWindow.ChangelogButton.OnPressed += _ =>
         {
             CloseEscapeWindow();
@@ -127,10 +136,24 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
             _options.OpenWindow();
         };
 
+        // cmu edit start: observers can edit their characters while waiting for the next round
+        _escapeWindow.CharacterSetupButton.OnPressed += _ =>
+        {
+            CloseEscapeWindow();
+            UIManager.GetUIController<Content.Client.Lobby.LobbyUIController>().OpenInGameCharacterSetup();
+        };
+        // cmu edit end
+
         _escapeWindow.QuitButton.OnPressed += _ =>
         {
             CloseEscapeWindow();
             _console.ExecuteCommand("quit");
+        };
+
+        _escapeWindow.AdminRemarksButton.OnPressed += _ =>
+        {
+            CloseEscapeWindow();
+            _console.ExecuteCommand("adminremarks");
         };
 
         _escapeWindow.WikiButton.OnPressed += _ =>
@@ -146,6 +169,8 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
         // Hide wiki button if we don't have a link for it.
         _escapeWindow.WikiButton.Visible = _cfg.GetCVar(CCVars.InfoLinksWiki) != "";
 
+        _cfg.OnValueChanged(CCVars.SeeOwnNotes, OnSeeOwnNotesChanged, true);
+
         CommandBinds.Builder
             .Bind(EngineKeyFunctions.EscapeMenu,
                 InputCmdHandler.FromDelegate(_ => ToggleWindow()))
@@ -154,6 +179,8 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
 
     public void OnStateExited(GameplayState state)
     {
+        _cfg.UnsubValueChanged(CCVars.SeeOwnNotes, OnSeeOwnNotesChanged);
+
         if (_gameTicker != null)
         {
             _gameTicker.RoundStatusUpdated -= UpdateEscapeStatus;
@@ -162,11 +189,22 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
 
         if (_escapeWindow != null)
         {
-            _escapeWindow.Close();
+            _escapeWindow.Release();
             _escapeWindow = null;
         }
 
         CommandBinds.Unregister<EscapeUIController>();
+    }
+
+    private void OnSeeOwnNotesChanged(bool seeOwnNotes)
+    {
+        if (_escapeWindow == null)
+            return;
+
+        _escapeWindow.AdminRemarksButton.Disabled = !seeOwnNotes;
+        _escapeWindow.AdminRemarksButton.ToolTip = !seeOwnNotes
+            ? _loc.GetString("ui-escape-remarks-button-disabled")
+            : null;
     }
 
     private void EscapeButtonOnOnPressed(ButtonEventArgs obj)
@@ -182,6 +220,11 @@ public sealed partial class EscapeUIController : UIController, IOnStateEntered<G
     private void EscapeWindowOnOpen()
     {
         ActivateButton();
+        // cmu edit start: only ghosts (or bodiless players) get character setup in game
+        if (_escapeWindow != null)
+            _escapeWindow.CharacterSetupButton.Visible =
+                UIManager.GetUIController<Content.Client.Lobby.LobbyUIController>().CanOpenInGameCharacterSetup();
+        // cmu edit end
         _roundStatusRefreshTimer = 0f;
         UpdateEscapeStatus();
     }

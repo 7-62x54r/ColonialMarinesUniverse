@@ -5,6 +5,19 @@ cm-gun-pump-examine = [bold]Press your [color=cyan]unique action[/color] keybind
 cm-gun-pump-first-with = You need to pump the gun with {$key} first!
 cm-gun-pump-first = You need to pump the gun first!
 
+rmc-sharp-examine = [bold]Press your [color=cyan]unique action[/color] keybind (Spacebar by default) to toggle explosive and incendiary dart direct-hit detonation delay. Current delay: [color=yellow]{TOSTRING($seconds, "F1")} seconds[/color].[/bold]
+rmc-sharp-toggle-delay = You set {THE($gun)}'s direct-hit detonation delay to {TOSTRING($seconds, "F1")} seconds.
+
+rmc-vulture-unbraced-user = The recoil from {THE($gun)} hammers through you without a deployed bipod!
+rmc-vulture-unbraced-others = {CAPITALIZE(THE($user))} is thrown back by {THE($gun)}'s recoil!
+rmc-vulture-bipod-required = You need to deploy {THE($gun)}'s bipod before using its scope.
+rmc-vulture-spotter-scope-slot = M707 spotter scope
+rmc-vulture-spotter-insert-scope = Mount scope
+rmc-vulture-spotter-eject-scope = Remove scope
+rmc-vulture-spotter-scope-only = Only an M707 spotter scope fits on the tripod.
+rmc-vulture-must-scope = You need to be looking through the M707 Vulture's scope to adjust it.
+rmc-vulture-breath-cooldown = You need to catch your breath before stabilizing the scope again.
+
 rmc-breech-loaded-open-shoot-attempt = You need to close the breech first!
 rmc-breech-loaded-not-ready-to-shoot = You need to open and close the breech first!
 rmc-breech-loaded-closed-load-attempt = You need to open the breech first!
@@ -43,6 +56,8 @@ rmc-examine-text-scatter-max = Current maximum scatter is [color={$colour}]{TOST
 rmc-examine-text-scatter-min = Current minimum scatter is [color={$colour}]{TOSTRING($scatter, "F1")}[/color] degrees.
 rmc-examine-text-shots-to-max-scatter = It takes [color={$colour}]{$shots}[/color] shots to reach maximum scatter.
 rmc-examine-text-iff = [color=cyan]This gun will ignore and shoot past friendlies![/color]
+rmc-examine-text-iff-prevent-friendly-fire = [color=cyan]This gun will not fire if friendlies are in the line of fire.[/color]
+rmc-iff-friendly-in-line = IFF lockout: friendly in line of fire.
 rmc-examine-text-id-lock-no-user = [color=chartreuse]It's unregistered. Pick it up to register yourself as its owner.[/color]
 rmc-examine-text-id-lock = [color=chartreuse]It is registered to [/color][color={$color}]{$name}[/color][color=chartreuse].[/color]
 rmc-examine-text-id-lock-unlocked = [color=chartreuse]It is registered to [/color][color={$color}]{$name}[/color][color=chartreuse], but has its fire restrictions unlocked.[/color]

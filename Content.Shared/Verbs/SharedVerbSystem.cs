@@ -72,6 +72,14 @@ namespace Content.Shared.Verbs
             SortedSet<Verb> verbs = new();
             extraCategories = new();
 
+            if (!Exists(user) ||
+                !Exists(target) ||
+                !HasComp<TransformComponent>(user) ||
+                !HasComp<TransformComponent>(target))
+            {
+                return verbs;
+            }
+
             // accessibility checks
             var canAccess = force || _interactionSystem.InRangeAndAccessible(user, target);
 
@@ -139,7 +147,7 @@ namespace Content.Shared.Verbs
             if (types.Contains(typeof(EquipmentVerb)))
             {
                 var access = canAccess || _interactionSystem.CanAccessEquipment(user, target);
-                var verbEvent = new GetVerbsEvent<EquipmentVerb>(user, target, @using, hands, canInteract: canInteract, canComplexInteract: canComplexInteract, canAccess: canAccess, extraCategories);
+                var verbEvent = new GetVerbsEvent<EquipmentVerb>(user, target, @using, hands, canInteract: canInteract, canComplexInteract: canComplexInteract, canAccess: access, extraCategories);
                 RaiseLocalEvent(target, verbEvent);
                 verbs.UnionWith(verbEvent.Verbs);
             }

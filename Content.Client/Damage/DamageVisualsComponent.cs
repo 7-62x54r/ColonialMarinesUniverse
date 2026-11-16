@@ -1,4 +1,8 @@
+using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Prototypes;
+using Content.Shared.DisplacementMap;
 using Content.Shared.FixedPoint;
+using Robust.Shared.Prototypes;
 
 namespace Content.Client.Damage;
 
@@ -55,7 +59,7 @@ public sealed partial class DamageVisualsComponent : Component
     ///     (for example, Brute), and has a value
     ///     of a DamageVisualizerSprite (see below)
     /// </summary>
-    [DataField("damageOverlayGroups")] public  Dictionary<string, DamageVisualizerSprite>? DamageOverlayGroups;
+    [DataField("damageOverlayGroups")] public  Dictionary<ProtoId<DamageGroupPrototype>, DamageVisualizerSprite>? DamageOverlayGroups;
 
     /// <summary>
     ///     Sets if you want sprites to overlay the
@@ -84,7 +88,7 @@ public sealed partial class DamageVisualsComponent : Component
     ///     what kind of damage combination
     ///     you would want, on which threshold.
     /// </remarks>
-    [DataField("damageGroup")] public  string? DamageGroup;
+    [DataField("damageGroup")] public  ProtoId<DamageGroupPrototype>? DamageGroup;
 
     /// <summary>
     ///     Set this if you want incoming damage to be
@@ -115,12 +119,28 @@ public sealed partial class DamageVisualsComponent : Component
     /// </summary>
     [DataField("damageOverlay")] public  DamageVisualizerSprite? DamageOverlay;
 
+    /// <summary>
+    ///     Only applies if overlay is off - requires a zeroth sprite to be defined to work properly.
+    /// </summary>
+    [DataField] public bool HideIfZero = true; // RMC14
+
+    /// <summary>
+    /// Applies a displacement map to the damage visuals.
+    /// Is set via <see cref="DamageableComponent.Displacement"/>.
+    /// </summary>
+    [DataField]
+    public DisplacementData? Displacement;
+
     public readonly List<Enum> TargetLayerMapKeys = new();
     public bool Disabled = false;
+    // CMU regional overlays own a separate suppression source; appearance can
+    // independently disable aggregate visuals without being overwritten on release.
+    public bool MedicalOverride;
+    public bool MedicalRefreshPending;
     public bool Valid = true;
     public FixedPoint2 LastDamageThreshold = FixedPoint2.Zero;
-    public readonly Dictionary<object, bool> DisabledLayers = new();
-    public readonly Dictionary<object, string> LayerMapKeyStates = new();
+    public readonly Dictionary<Enum, bool> DisabledLayers = new();
+    public readonly Dictionary<Enum, string> LayerMapKeyStates = new();
     public readonly Dictionary<string, FixedPoint2> LastThresholdPerGroup = new();
     public string TopMostLayerKey = default!;
 }

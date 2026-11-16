@@ -5,8 +5,6 @@ namespace Content.Server.Chemistry.Components
     [RegisterComponent]
     public sealed partial class VaporComponent : Component
     {
-        public const string SolutionName = "vapor";
-
         /// <summary>
         /// Stores data on the previously reacted tile. We only want to do reaction checks once per tile.
         /// </summary>
@@ -33,5 +31,12 @@ namespace Content.Server.Chemistry.Components
 
         [DataField]
         public bool Active;
+
+        /// <summary>
+        /// CMU14: entities this puff already reacted with. A puff touches each entity once even when contacts
+        /// regenerate (throw land/stop), so one spray can't repair or dose the same target twice.
+        /// </summary>
+        [ViewVariables]
+        public HashSet<EntityUid> ReactedEntities = new();
     }
 }

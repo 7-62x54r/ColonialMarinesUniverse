@@ -9,12 +9,15 @@ using Content.Shared._RMC14.Xenonids.Leap;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Movement.Pulling.Events;
 using Content.Shared.Movement.Pulling.Systems;
+using Content.Shared.Physics; // CMU14
+using Content.Shared.Popups; // CMU14
 using Content.Shared.StatusEffect;
 using Content.Shared.Stunnable;
 using Content.Shared.Throwing;
 using Content.Shared.Weapons.Melee;
 using Content.Shared.Weapons.Melee.Events;
 using Robust.Shared.Network;
+using Robust.Shared.Physics; // CMU14
 using Robust.Shared.Physics.Components;
 using Robust.Shared.Physics.Systems;
 using Robust.Shared.Player;
@@ -40,6 +43,7 @@ public sealed partial class XenoLungeSystem : EntitySystem
     [Dependency] private RMCObstacleSlammingSystem _rmcObstacleSlamming = default!;
     [Dependency] private XenoLeapSystem _leap = default!;
     [Dependency] private RMCSizeStunSystem _size = default!;
+    [Dependency] private SharedPopupSystem _popup = default!; // CMU14
 
     private EntityQuery<PhysicsComponent> _physicsQuery;
     private EntityQuery<ThrownItemComponent> _thrownItemQuery;
@@ -79,10 +83,13 @@ public sealed partial class XenoLungeSystem : EntitySystem
         if (!lunging.Running)
             return;
 
-        if (lunging.Target != target)
+        // CMU14
+        // if (lunging.Target != target)
+        //     return;
+
+        if (!_rmcLagCompensation.ValidatePredictedHit(target, ent, args.SenderSession, msg.LastRealTick, msg.Substep)) // CMU14
             return;
 
-        _rmcLagCompensation.SetLastRealTick(args.SenderSession.UserId, msg.LastRealTick);
         ApplyLungeHitEffects((ent, lunging), target, true, false);
     }
 
@@ -108,15 +115,32 @@ public sealed partial class XenoLungeSystem : EntitySystem
         _rmcPulling.TryStopAllPullsFromAndOn(xeno);
 
         var origin = _transform.GetMapCoordinates(xeno);
-        var targetCoords = _rmcLagCompensation.GetCoordinates(target, xeno);
+        // CMU14 Begin: lag compensation returns parent-local coordinates; use map space for the path.
+        var targetCoords = _transform.ToMapCoordinates(_rmcLagCompensation.GetCoordinates(target, xeno));
         var diff = targetCoords.Position - origin.Position;
-        diff = diff.Normalized() * xeno.Comp.Range;
+        var targetDistance = diff.Length();
+        diff = targetDistance > 0.0001f ? diff / targetDistance * xeno.Comp.Range : Vector2.Zero;
 
+        // Lunges must not cross barricade lines; the throw only stops on a
+        // direct fixture hit, so check the path up front. Barbed wire keeps its block.
+        // A barricade behind the victim does not obstruct reaching that victim.
+        var ray = new CollisionRay(origin.Position, targetDistance > 0.0001f ? diff.Normalized() : Vector2.UnitX, (int) CollisionGroup.BarricadeImpassable);
+        foreach (var result in _physics.IntersectRayWithPredicate(origin.MapId, ray, Math.Min(targetDistance, diff.Length()), e => !Transform(e).Anchored))
+        {
+            if (TryComp(result.HitEntity, out RMCLeapProtectionComponent? protection) &&
+                _leap.AttemptBlockLeap(result.HitEntity, protection.StunDuration, protection.BlockSound, xeno, _transform.GetMoverCoordinates(xeno), protection.FullProtection))
+                return;
+
+            _popup.PopupEntity(Loc.GetString("cmu-xeno-dash-blocked"), xeno, xeno);
+            return;
+        }
+
+        // CMU14 End
         var active = EnsureComp<XenoActiveLungeComponent>(xeno);
         active.Origin = origin;
         active.Charge = diff;
         active.Target = target;
-        active.TargetCoordinates = _transform.ToMapCoordinates(targetCoords);
+        active.TargetCoordinates = targetCoords; // CMU14
         active.Range = xeno.Comp.Range;
         active.StunTime = xeno.Comp.StunTime;
         Dirty(xeno);
@@ -182,6 +206,11 @@ public sealed partial class XenoLungeSystem : EntitySystem
         if (_mobState.IsDead(targetId))
             return false;
 
+        // CMU14: landing without contact must not grab a target that has already moved away.
+        var targetCoordinates = _transform.GetMapCoordinates(targetId);
+        if (!stopThrow && !targetCoordinates.InRange(_transform.GetMapCoordinates(xeno), 1.25f))
+            return false;
+
         if (_physicsQuery.TryGetComponent(xeno, out var physics) &&
             _thrownItemQuery.TryGetComponent(xeno, out var thrown))
         {
@@ -223,7 +252,7 @@ public sealed partial class XenoLungeSystem : EntitySystem
 
         if (_net.IsClient && predicted)
         {
-            var predictedEv = new XenoLungePredictedHitEvent(GetNetEntity(targetId), _rmcLagCompensation.GetLastRealTick(null));
+            var predictedEv = new XenoLungePredictedHitEvent(GetNetEntity(targetId), _rmcLagCompensation.GetLastRealTick(null), _rmcLagCompensation.GetClientSubstep()); // CMU14
             RaiseNetworkEvent(predictedEv);
             if (_timing.InPrediction && _timing.IsFirstTimePredicted)
             {
@@ -233,18 +262,21 @@ public sealed partial class XenoLungeSystem : EntitySystem
 
         StopLunge(xeno);
 
-        _transform.SetMapCoordinates(targetId, xeno.Comp.TargetCoordinates);
-
-        // Fixes lunges done when hugging a wall that would otherwise not move you
-        var coordinates = _transform.GetMapCoordinates(xeno);
-        if (xeno.Comp.TargetCoordinates.MapId == coordinates.MapId &&
-            !xeno.Comp.TargetCoordinates.InRange(coordinates, 1.25f))
-        {
-            var distance = xeno.Comp.TargetCoordinates.Position - coordinates.Position;
-            var length = distance.Length();
-            var newPosition = coordinates.Offset(((float) (length - 1.25) / length) * distance);
-            _transform.SetMapCoordinates(xeno, newPosition);
-        }
+        // CMU14 Begin: contact establishes the grab at the victim's current position. Rewinding either
+        // entity to the original target position can move an intercepted victim through obstacles.
+        // _transform.SetMapCoordinates(targetId, xeno.Comp.TargetCoordinates);
+        //
+        // // Fixes lunges done when hugging a wall that would otherwise not move you
+        // var coordinates = _transform.GetMapCoordinates(xeno);
+        // if (xeno.Comp.TargetCoordinates.MapId == coordinates.MapId &&
+        //     !xeno.Comp.TargetCoordinates.InRange(coordinates, 1.25f))
+        // {
+        //     var distance = xeno.Comp.TargetCoordinates.Position - coordinates.Position;
+        //     var length = distance.Length();
+        //     var newPosition = coordinates.Offset(((float) (length - 1.25) / length) * distance);
+        //     _transform.SetMapCoordinates(xeno, newPosition);
+        // }
+        // CMU14 End
 
         _pulling.TryStartPull(xeno, targetId);
         RemCompDeferred<XenoActiveLungeComponent>(xeno);
@@ -256,10 +288,20 @@ public sealed partial class XenoLungeSystem : EntitySystem
         if (args.PulledUid != ent.Owner)
             return;
 
+        var clearParalysis = false;
         foreach (var effect in ent.Comp.Effects)
         {
+            if (effect.Id is "Stun" or "KnockedDown")
+            {
+                clearParalysis = true;
+                continue;
+            }
+
             _statusEffects.TryRemoveStatusEffect(ent, effect);
         }
+
+        if (clearParalysis)
+            _stun.TryClearStunAndKnockdown(ent);
 
         RemCompDeferred<XenoLungeStunnedComponent>(ent.Owner);
     }

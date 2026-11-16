@@ -1,5 +1,5 @@
 using System.Linq;
-using Content.Shared.Body.Systems;
+using Content.Shared.Body;
 using Content.Shared.Clothing.Components;
 using Content.Shared.Humanoid;
 using Content.Shared.Preferences;
@@ -21,7 +21,6 @@ public sealed partial class LoadoutSystem : EntitySystem
 
     [Dependency] private ActorSystem _actors = default!;
     [Dependency] private SharedStationSpawningSystem _station = default!;
-    [Dependency] private IPrototypeManager _protoMan = default!;
     [Dependency] private IRobustRandom _random = default!;
 
     public override void Initialize()
@@ -29,7 +28,7 @@ public sealed partial class LoadoutSystem : EntitySystem
         base.Initialize();
 
         // Wait until the character has all their organs before we give them their loadout
-        SubscribeLocalEvent<LoadoutComponent, MapInitEvent>(OnMapInit, after: [typeof(SharedBodySystem)]);
+        SubscribeLocalEvent<LoadoutComponent, MapInitEvent>(OnMapInit, after: [typeof(InitialBodySystem)]);
     }
 
     public static string GetJobPrototype(string? loadout)
@@ -44,7 +43,7 @@ public sealed partial class LoadoutSystem : EntitySystem
     {
         EntProtoId? proto = null;
 
-        if (_protoMan.TryIndex(loadout.StartingGear, out var gear))
+        if (ProtoMan.Resolve(loadout.StartingGear, out var gear))
         {
             proto = GetFirstOrNull(gear);
         }
@@ -65,12 +64,12 @@ public sealed partial class LoadoutSystem : EntitySystem
 
         if (count == 1)
         {
-            if (gear.Equipment.Count == 1 && _protoMan.TryIndex<EntityPrototype>(gear.Equipment.Values.First(), out var proto))
+            if (gear.Equipment.Count == 1 && ProtoMan.Resolve(gear.Equipment.Values.First(), out var proto))
             {
                 return proto.ID;
             }
 
-            if (gear.Inhand.Count == 1 && _protoMan.TryIndex<EntityPrototype>(gear.Inhand[0], out proto))
+            if (gear.Inhand.Count == 1 && ProtoMan.Resolve(gear.Inhand[0], out proto))
             {
                 return proto.ID;
             }
@@ -90,15 +89,15 @@ public sealed partial class LoadoutSystem : EntitySystem
 
     public string GetName(LoadoutPrototype loadout)
     {
-        if (loadout.DummyEntity is not null && _protoMan.TryIndex<EntityPrototype>(loadout.DummyEntity, out var proto))
+        if (loadout.DummyEntity is not null && ProtoMan.Resolve(loadout.DummyEntity, out var proto))
             return proto.Name;
 
-        if (_protoMan.TryIndex(loadout.StartingGear, out var gear))
+        if (ProtoMan.Resolve(loadout.StartingGear, out var gear))
         {
             return GetName(gear);
         }
 
-        return GetName((IEquipmentLoadout) loadout);
+        return GetName((IEquipmentLoadout)loadout);
     }
 
     /// <summary>
@@ -113,12 +112,12 @@ public sealed partial class LoadoutSystem : EntitySystem
 
         if (count == 1)
         {
-            if (gear.Equipment.Count == 1 && _protoMan.TryIndex<EntityPrototype>(gear.Equipment.Values.First(), out var proto))
+            if (gear.Equipment.Count == 1 && ProtoMan.TryIndex<EntityPrototype>(gear.Equipment.Values.First(), out var proto))
             {
                 return proto.Name;
             }
 
-            if (gear.Inhand.Count == 1 && _protoMan.TryIndex<EntityPrototype>(gear.Inhand[0], out proto))
+            if (gear.Inhand.Count == 1 && ProtoMan.TryIndex<EntityPrototype>(gear.Inhand[0], out proto))
             {
                 return proto.Name;
             }
@@ -128,7 +127,7 @@ public sealed partial class LoadoutSystem : EntitySystem
                 if (values.Count != 1)
                     continue;
 
-                if (_protoMan.TryIndex<EntityPrototype>(values[0], out proto))
+                if (ProtoMan.TryIndex<EntityPrototype>(values[0], out proto))
                 {
                     return proto.Name;
                 }
@@ -150,7 +149,7 @@ public sealed partial class LoadoutSystem : EntitySystem
     {
         // First, randomly pick a startingGear profile from those specified, and equip it.
         if (startingGear != null && startingGear.Count > 0)
-            _station.EquipStartingGear(uid, _random.Pick(startingGear));
+            _station.EquipStartingGear(uid, _random.Pick(startingGear), false);
 
         if (loadoutGroups == null)
         {
@@ -161,9 +160,9 @@ public sealed partial class LoadoutSystem : EntitySystem
         // Then, randomly pick a RoleLoadout profile from those specified, and process/equip all LoadoutGroups from it.
         // For non-roundstart mobs there is no SelectedLoadout data, so minValue must be set in each LoadoutGroup to force selection.
         var id = _random.Pick(loadoutGroups);
-        var proto = _protoMan.Index(id);
+        var proto = ProtoMan.Index(id);
         var loadout = new RoleLoadout(id);
-        loadout.SetDefault(GetProfile(uid), _actors.GetSession(uid), _protoMan, true);
+        loadout.SetDefault(GetProfile(uid), _actors.GetSession(uid), ProtoMan, true);
         _station.EquipRoleLoadout(uid, loadout, proto);
 
         GearEquipped(uid);
@@ -177,11 +176,38 @@ public sealed partial class LoadoutSystem : EntitySystem
 
     public HumanoidCharacterProfile GetProfile(EntityUid? uid)
     {
-        if (TryComp(uid, out HumanoidAppearanceComponent? appearance))
-        {
-            return HumanoidCharacterProfile.DefaultWithSpecies(appearance.Species);
-        }
+        return TryComp<HumanoidProfileComponent>(uid, out var profile)
+            ? HumanoidCharacterProfile.DefaultWithSpecies(profile.Species, profile.Sex)
+            : HumanoidCharacterProfile.Random();
+    }
 
-        return HumanoidCharacterProfile.Random();
+    /// <summary>
+    /// Returns the profile key and RoleLoadoutPrototype for a job, example key: JobAU14JobGOVFORPlatCo
+    /// The prototype is the concrete job's own loadout, falling back to its nearest ancestor.
+    /// </summary>
+    public static (string ProfileKey, RoleLoadoutPrototype? Prototype) GetJobLoadoutInfo(ProtoId<JobPrototype> jobId, IPrototypeManager protoMan)
+    {
+        string key = GetJobPrototype(jobId);
+        var proto = GetRoleLoadout(jobId, protoMan);
+        return (key, proto);
+    }
+
+    /// <summary>
+    /// Returns the RoleLoadoutPrototype for a job, or null if neither it nor its ancestors define one.
+    /// </summary>
+    private static RoleLoadoutPrototype? GetRoleLoadout(ProtoId<JobPrototype> jobId, IPrototypeManager protoMan)
+    {
+        // CMU14: derived roles such as military and hazmat Working Joes have more than one level of job inheritance.
+        while (true)
+        {
+            if (protoMan.TryIndex(GetJobPrototype(jobId), out RoleLoadoutPrototype? loadout))
+                return loadout;
+
+            if (!protoMan.TryIndex(jobId, out JobPrototype? jobProto)
+                || jobProto.Parents?.FirstOrDefault() is not { } parentId)
+                return null;
+
+            jobId = parentId;
+        }
     }
 }

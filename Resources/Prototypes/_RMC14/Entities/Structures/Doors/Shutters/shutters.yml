@@ -53,6 +53,7 @@
     performCollisionCheck: false
     canCrush: false
     canPry: false
+  - type: RMCShutterBlockClimbing
   - type: Appearance
   - type: UserInterface
     interfaces:
@@ -68,12 +69,16 @@
   - type: WallMount
     arc: 360
   - type: ApcPowerReceiver
+    powerLoad: 20 # CMU14
   - type: RMCPowerReceiver
     idleLoad: 1
     activeLoad: 20
     channel: Environment
   - type: RMCOpenOnAlertLevel
   - type: RMCMesonsNonviewable
+  - type: Tag
+    tags:
+      - ForceNoFixRotations
 
 - type: entity
   parent: RMCShutterBaseIndestructible
@@ -90,13 +95,16 @@
     destroy: true
     minimumStage: 4
   - type: XenoCrusherChargable
-    instantDestroy: true
+    setDamage:
+      types:
+        Structural: 750
 
 - type: entity
   parent: RMCShutterBase
   id: RMCShutterAlmayer
   components:
   - type: VehicleSmashable
+    minContinueWeightClass: Heavy
     smashSound:
       path: /Audio/_RMC14/Effects/metal_crash.ogg
   - type: RMCPodDoor

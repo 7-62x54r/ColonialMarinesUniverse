@@ -1,4 +1,4 @@
-﻿using Content.Shared.Chemistry.Reagent;
+using Content.Shared.Chemistry.Reagent;
 using Content.Shared.Whitelist;
 using Robust.Shared.GameStates;
 using Robust.Shared.Prototypes;
@@ -25,8 +25,27 @@ public sealed partial class RMCFlamerTankComponent : Component
     public int MaxRange = 5;
 
     [DataField, AutoNetworkedField]
+    public bool IgnoreReagentRange;
+
+    [DataField, AutoNetworkedField]
     public string ExamineIcon = "/Textures/_RMC14/Structures/Storage/reagent_tank.rsi/weldtank.png";
 
     [DataField, AutoNetworkedField]
     public List<ProtoId<ReagentPrototype>>? ReagentWhitelist = null;
+
+    // CMU14 start
+    /// <summary>
+    /// Whether this tank can fire blue fire (<see cref="SharedRMCFlamerSystem.BlueFire"/> or a fire entity
+    /// inheriting from it). Only specialist tanks (M240-T, FL3 and equivalents) allow it; any other tank loaded
+    /// with a blue-fire fuel fires <see cref="FallbackFire"/> instead.
+    /// FLOW-22: blue is now the colour of intensity 40+, so this also lets the tank exceed intensity 39; every other
+    /// tank is capped at 39 by <c>CMUFuelProfileSystem.TryResolveFire</c> whatever its <see cref="MaxIntensity"/>.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public bool AllowBlueFire;
+
+    /// <summary>Fire entity used in place of a blue fire this tank does not allow.</summary>
+    [DataField, AutoNetworkedField]
+    public EntProtoId FallbackFire = "RMCTileFire";
+    // CMU14 end
 }

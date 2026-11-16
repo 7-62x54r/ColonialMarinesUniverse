@@ -35,6 +35,7 @@ public sealed partial class RMCTeleporterViewerOverlay : Overlay
     private readonly EntityQuery<XenoComponent> _xenoQuery;
 
     private readonly List<(Entity<SpriteComponent> Ent, Vector2 Position, Angle Rotation)> _toDraw = new();
+    private readonly HashSet<EntityUid> _viewerContacts = new();
 
     public override OverlaySpace Space => _overlay.HasOverlay<NightVisionOverlay>()
         ? OverlaySpace.WorldSpace
@@ -46,6 +47,7 @@ public sealed partial class RMCTeleporterViewerOverlay : Overlay
 
         _container = _entity.System<SharedContainerSystem>();
         _entityLookup = _entity.System<EntityLookupSystem>();
+        _map = _entity.System<SharedMapSystem>();
         _physics = _entity.System<SharedPhysicsSystem>();
         _sprite = _entity.System<SpriteSystem>();
         _teleporter = _entity.System<SharedRMCTeleporterSystem>();
@@ -68,7 +70,8 @@ public sealed partial class RMCTeleporterViewerOverlay : Overlay
         var eyeRot = eye?.Rotation ?? default;
         foreach (var selfContact in _physics.GetEntitiesIntersectingBody(player, (int) CollisionGroup.MobLayer))
         {
-            if (!_teleporterViewerQuery.TryComp(selfContact, out var viewer))
+            if (!_teleporterViewerQuery.TryComp(selfContact, out var viewer) ||
+                !viewer.ProjectionEnabled)
                 continue;
 
             var viewerPosition = _transform.GetWorldPosition(selfContact);
@@ -78,8 +81,22 @@ public sealed partial class RMCTeleporterViewerOverlay : Overlay
                 var viewerPositionDiff = otherViewerPosition.Position - viewerPosition;
                 var otherViewerAABB = _physics.GetWorldAABB(otherViewer);
 
+                if (!PrepareProjection(
+                        handle,
+                        viewer,
+                        otherViewer,
+                        otherViewerAABB,
+                        viewerPositionDiff,
+                        out var projectionGrid,
+                        out var projectionGridComponent))
+                {
+                    continue;
+                }
+
                 _toDraw.Clear();
-                foreach (var viewerContact in _entityLookup.GetEntitiesIntersecting(otherViewerPosition.MapId, otherViewerAABB, Uncontained))
+                _viewerContacts.Clear();
+                _entityLookup.GetEntitiesIntersecting(otherViewerPosition.MapId, otherViewerAABB, _viewerContacts, Uncontained);
+                foreach (var viewerContact in _viewerContacts)
                 {
                     if (!_spriteQuery.TryComp(viewerContact, out var viewerContactSprite) ||
                         !viewerContactSprite.Visible ||
@@ -91,7 +108,8 @@ public sealed partial class RMCTeleporterViewerOverlay : Overlay
                     if (_container.IsEntityInContainer(viewerContact))
                         continue;
 
-                    if (viewerContactTransform.Anchored &&
+                    if (!viewer.ProjectAnchored &&
+                        viewerContactTransform.Anchored &&
                         !_xenoQuery.HasComp(viewerContact) &&
                         !_tileFireQuery.HasComp(viewerContact))
                     {
@@ -102,6 +120,9 @@ public sealed partial class RMCTeleporterViewerOverlay : Overlay
                     // since they share a parent entity uid but i don't got time to do that
                     // good luck future coder
                     var (position, rotation) = _transform.GetWorldPositionRotation(viewerContactTransform);
+                    if (!IsProjectedPosition(viewer, projectionGrid, projectionGridComponent, position))
+                        continue;
+
                     _toDraw.Add(((viewerContact, viewerContactSprite), position, rotation));
                 }
 

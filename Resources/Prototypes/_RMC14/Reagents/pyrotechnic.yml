@@ -17,17 +17,18 @@
     Flammable:
       methods: [ Touch ]
       effects:
-      - !type:FlammableReaction
+      - !type:Flammable
         multiplier: 0.2
   metabolisms:
-    Poison:
+    Bloodstream:
+      cmuToxicity: [ Poison ]
       metabolismRate: 0.05
       effects:
       - !type:HealthChange
         damage:
           types:
             Poison: 0.25
-      - !type:FlammableReaction
+      - !type:Flammable
         multiplier: 0.2
 
 - type: reagent
@@ -113,6 +114,7 @@
   intensity: 15
   duration: 50
   radius: 7
+  fireSpread: true # CMU14: B-gel is the spreading fuel: wider flamer cone, longer standard-tank reach, larger chemical fires
   fireEntity: RMCTileFireGreen
 
 - type: reagent
@@ -192,12 +194,14 @@
   intensity: 72
   duration: -27
   radius: 0
+  class: Uncommon
   intensityMod: 1.8
   durationMod: -0.9
   radiusMod: -0.09
   # TODO RMC14: IGNITING = 1
   metabolisms:
-    Poison:
+    Bloodstream:
+      cmuToxicity: [ Poison ]
       metabolismRate: 0.1
       effects:
       - !type:Corrosive
@@ -215,13 +219,15 @@
   color: "#0064C8"
   toxin: true
   intensity: -6
+  class: Common
   duration: 16
   radius: 6
   intensityMod: -0.35
   durationMod: 0.25
   radiusMod: 0.095
   metabolisms:
-    Poison:
+    Bloodstream:
+      cmuToxicity: [ Poison ]
       metabolismRate: 0.1
       effects:
       - !type:Toxic

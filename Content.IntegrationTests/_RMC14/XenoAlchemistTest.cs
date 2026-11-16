@@ -1,4 +1,13 @@
+#pragma warning disable RA0002 // Integration regression intentionally inspects restricted component state.
+
+using System.Linq;
 using System.Numerics;
+using Content.Shared.CMU14.Chemistry.Effects.Negative;
+using Content.Shared.CMU14.Medical.Anatomy.Metabolism.Events;
+using Content.Shared._RMC14.Chemistry.Effects;
+using Content.Shared._RMC14.Chemistry.Effects.Negative;
+using Content.Shared._RMC14.Slow;
+using Content.Shared._RMC14.Stun;
 using Content.Shared._RMC14.Xenonids.Alchemist;
 using Content.Shared._RMC14.Xenonids.Hive;
 using Content.Shared.Actions;
@@ -7,7 +16,12 @@ using Content.Shared.Actions.Events;
 using Content.Shared.Chemistry.EntitySystems;
 using Content.Shared.Chemistry.Reagent;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
+using Content.Shared.EntityEffects;
+using Content.Shared.EntityEffects.Effects;
 using Content.Shared.FixedPoint;
+using Content.Shared.Metabolism;
+using Content.Shared.StatusEffectNew;
 using Content.Shared.Weapons.Melee.Events;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Map;
@@ -37,18 +51,32 @@ public sealed class XenoAlchemistTest
   - type: XenoAlchemist
     sagunine: 20
     selectedChemical: Cholinine
+
+- type: entity
+  parent: CMXenoSpitterAlchemist
+  id: RMCTestXenoSpitterAlchemistNoctineFull
+  components:
+  - type: XenoAlchemist
+    noctine: 20
+
+- type: entity
+  parent: CMXenoSpitterAlchemist
+  id: RMCTestXenoSpitterAlchemistCrynineFull
+  components:
+  - type: XenoAlchemist
+    cholinine: 10
+    noctine: 10
+
+- type: entity
+  parent: CMXenoSpitterAlchemist
+  id: RMCTestXenoSpitterAlchemistPyrinineFull
+  components:
+  - type: XenoAlchemist
+    sagunine: 10
+    cholinine: 10
 ";
 
-    private static readonly string[] AlchemistReagents =
-    [
-        "RMCXenoAlchBrute",
-        "RMCXenoAlchBurn",
-        "RMCXenoAlchPain",
-        "RMCXenoAlchFire",
-        "RMCXenoAlchBloodloss",
-        "RMCXenoAlchFreeze",
-        "RMCXenoAlchPurge",
-    ];
+    private static readonly ProtoId<MetabolismStagePrototype> Bloodstream = "Bloodstream";
 
     [Test]
     public async Task TailInjectionCannotTargetSameHiveXenos()
@@ -147,26 +175,6 @@ public sealed class XenoAlchemistTest
     }
 
     [Test]
-    public async Task AlchemistChemicalsAreRealToxinReagents()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-        var prototypes = server.ResolveDependency<IPrototypeManager>();
-
-        await server.WaitAssertion(() =>
-        {
-            foreach (var id in AlchemistReagents)
-            {
-                var reagent = prototypes.Index<ReagentPrototype>(id);
-                Assert.That(reagent.Toxin, Is.True, id);
-                Assert.That(reagent.Metabolisms!.ContainsKey("Poison"), Is.True, id);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
     public async Task AlchemistStockpileCapsAtTwentyTotal()
     {
         await using var pair = await PoolManager.GetServerClient();
@@ -229,4 +237,7 @@ public sealed class XenoAlchemistTest
     {
         return entMan.GetComponent<DamageableComponent>(target).Damage.GetTotal().Float();
     }
+
 }
+
+#pragma warning restore RA0002

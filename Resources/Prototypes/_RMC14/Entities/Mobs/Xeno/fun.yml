@@ -14,7 +14,7 @@
     evolvesTo: [ ]
   - type: XenoHidden
   - type: FixedIdentity
-    name: rmc-rouny
+    name: cmu-job-name-xeno-unknown
 
 - type: entity
   parent:
@@ -31,7 +31,7 @@
     evolvesTo: [ ]
   - type: XenoHidden
   - type: FixedIdentity
-    name: rmc-wehny
+    name: cmu-job-name-xeno-unknown
 
 - type: entity
   parent:
@@ -94,12 +94,16 @@
     explosionArmor: 10
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 25
+      types:
+        Blunt: 8.33
+        Slash: 8.33
+        Piercing: 8.34
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: MobState
     allowedStates:
     - Alive
@@ -173,4 +177,4 @@
         - XenoHeavy
   - type: XenoHidden
   - type: FixedIdentity
-    name: rmc-lesser-carrier
+    name: cmu-job-name-xeno-unknown

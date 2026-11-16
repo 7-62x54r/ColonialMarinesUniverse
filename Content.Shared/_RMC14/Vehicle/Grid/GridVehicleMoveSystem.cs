@@ -1,18 +1,31 @@
 using System;
 using System.Numerics;
 using System.Collections.Generic;
+using Content.Shared.ActionBlocker;
+using Content.Shared.CMU14.ZLevels.Core.Components;
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
+using Content.Shared.CMU14.ZLevels.Vehicles;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Damage.Prototypes;
 using Content.Shared.Destructible;
 using Content.Shared.Doors.Systems;
+using Content.Shared.Mobs.Components;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.Standing;
+using Content.Shared.StepTrigger.Components;
 using Content.Shared.Stunnable;
 using Content.Shared.Vehicle.Components;
 using Content.Shared._RMC14.Stun;
+using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Power;
 using Content.Shared._RMC14.Vehicle;
+using Content.Shared._RMC14.Water;
 using Content.Shared._RMC14.Xenonids;
+using Content.Shared._RMC14.Xenonids.Charge.CursorCharge; // CMU14
+using Content.Shared._RMC14.Xenonids.Fortify;
+using Content.Shared._RMC14.Xenonids.Weeds;
+using Content.Shared.Popups;
 using Robust.Shared.Audio.Systems;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Map;
@@ -32,7 +45,13 @@ namespace Content.Shared.Vehicle;
 
 public sealed partial class GridVehicleMoverSystem : EntitySystem
 {
+    [Dependency] private VehicleSqueezeUnderSystem _squeezeUnder = default!;
+    [Dependency] private XenoFortifySystem _fortify = default!;
+    [Dependency] private Content.Shared._RMC14.Vehicle.VehicleSystem _rmcVehicles = default!;
+    [Dependency] private RMCWaterSystem _rmcWater = default!;
+    [Dependency] private RMCMapSystem _rmcMap = default!;
     [Dependency] private SharedTransformSystem transform = default!;
+    [Dependency] private ActionBlockerSystem _actionBlocker = default!;
     [Dependency] private SharedMapSystem map = default!;
     [Dependency] private SharedPhysicsSystem physics = default!;
     [Dependency] private EntityLookupSystem lookup = default!;
@@ -52,6 +71,7 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
     [Dependency] private HardpointSystem _hardpoints = default!;
     [Dependency] private Content.Shared.Tag.TagSystem _tag = default!;
     [Dependency] private Content.Shared.Popups.SharedPopupSystem _popup = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
 
     private static readonly Robust.Shared.Prototypes.ProtoId<Content.Shared.Tag.TagPrototype> SmashIgnoreTag = "VehicleSmashIgnore";
     private static readonly Robust.Shared.Prototypes.ProtoId<Content.Shared.Tag.TagPrototype> PlowTag = "VehiclePlow";
@@ -87,8 +107,6 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
     private const float PushWallOverlapArea = 0.01f;
     private const float MovementFixedStep = 1f / 60f;
     private const int MaxFixedStepsPerFrame = 6;
-    private const float ClientSmoothingSnapDistance = 1.25f;
-    private const float ClientSmoothingRate = 22f;
 
 
     public static readonly List<(EntityUid grid, Vector2i tile)> DebugTestedTiles = new();
@@ -98,16 +116,40 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
     public static bool CollisionDebugEnabled { get; set; }
     public static bool MovementDebugEnabled { get; set; }
 
+    private readonly HashSet<Entity<PhysicsComponent>> _intersectingPhysics = new();
+    private readonly HashSet<EntityUid> _pushBlockedIntersecting = new();
+    private readonly HashSet<EntityUid> _pushTileIntersecting = new();
+    private readonly List<EntityUid>[] _hitsBuffers = { new(), new(), new() };
+    private int _hitsDepth;
+    private readonly HashSet<EntityUid> _vehicleBoundsIntersecting = new();
     private readonly Dictionary<EntityUid, TimeSpan> _lastMobCollision = new();
+    private readonly DamageSpecifier _mobCollisionDamage = new() { DamageDict = { [CollisionDamageType] = MobCollisionDamage } };
     private readonly Dictionary<EntityUid, TimeSpan> _nextImmobilePopupAt = new();
     private readonly HashSet<EntityUid> _immobileAnnounced = new();
+    private readonly Dictionary<EntityUid, PoweredDemolitionContact> _poweredDemolitionContacts = new();
+    private readonly VehicleCollisionCooldownTracker _wallSmashCooldowns = new();
+    private readonly VehicleCollisionContactTracker _collisionDamageContacts = new();
     private static readonly TimeSpan ImmobilePopupCooldown = TimeSpan.FromSeconds(4);
+    // Longer than the AEV's damage-pulse cooldown so a slow server frame cannot
+    // make uninterrupted forward pressure restart the demolition warmup.
+    private static readonly TimeSpan PoweredDemolitionContactGrace = TimeSpan.FromSeconds(0.75);
     private readonly Dictionary<EntityUid, bool> _hardState = new();
     private readonly Dictionary<EntityUid, bool> _lastMobPushAxis = new();
     private readonly Dictionary<EntityUid, float> _movementAccumulator = new();
     private readonly Dictionary<EntityUid, EntityUid> _activeXenoPushers = new();
     private readonly HashSet<EntityUid> _directMoveBlockers = new();
     private readonly HashSet<EntityUid> _pushIgnoredEntities = new();
+    private readonly HashSet<EntityUid> _vehiclePushIgnored = new();
+    private readonly HashSet<EntityUid> _bypassInitialBlockers = new();
+    private readonly HashSet<EntityUid> _bypassSampleBlockers = new();
+
+    private readonly record struct PoweredDemolitionContact(
+        EntityUid Target,
+        TimeSpan StartedAt,
+        TimeSpan LastContactAt,
+        TimeSpan NextSoundAt,
+        bool WorkingAnnounced,
+        bool IndestructibleAnnounced);
 
     private enum VehicleCollisionClass : byte
     {
@@ -167,14 +209,14 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
         SubscribeLocalEvent<GridVehicleMoverComponent, ComponentStartup>(OnMoverStartup);
         SubscribeLocalEvent<GridVehicleMoverComponent, ComponentShutdown>(OnMoverShutdown);
         SubscribeLocalEvent<GridVehicleMoverComponent, MoveEvent>(OnMoverMove);
-        SubscribeLocalEvent<GridVehicleMoverComponent, ReAnchorEvent>(OnMoverReAnchor);
         SubscribeLocalEvent<GridVehicleMoverComponent, VehicleCanRunEvent>(OnMoverCanRun);
         SubscribeLocalEvent<GridVehicleMoverComponent, PreventCollideEvent>(OnMoverPreventCollide);
+        SubscribeLocalEvent<XenoComponent, XenoFortifyAttemptEvent>(OnXenoFortifyAttemptVehicleBounds);
     }
 
     private void OnMoverStartup(Entity<GridVehicleMoverComponent> ent, ref ComponentStartup args)
     {
-        TrySyncMoverToCurrentGrid(ent, centerOnTile: true, force: true);
+        TrySyncMoverToCurrentGrid(ent, centerOnTile: false, force: true);
     }
 
     private void OnMoverShutdown(Entity<GridVehicleMoverComponent> ent, ref ComponentShutdown args)
@@ -182,20 +224,31 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
         _hardState.Remove(ent.Owner);
         _movementAccumulator.Remove(ent.Owner);
         _activeXenoPushers.Remove(ent.Owner);
+        _nextToxicWaterDamage.Remove(ent.Owner);
         _nextImmobilePopupAt.Remove(ent.Owner);
         _immobileAnnounced.Remove(ent.Owner);
+        _poweredDemolitionContacts.Remove(ent.Owner);
+        _wallSmashCooldowns.RemoveVehicle(ent.Owner);
+        _collisionDamageContacts.RemoveVehicle(ent.Owner);
+        _cmuResinContacts.RemoveVehicle(ent.Owner); // CMU14
     }
 
     private void OnMoverMove(Entity<GridVehicleMoverComponent> ent, ref MoveEvent args)
     {
+        CMUUpdateResinContacts(ent.Owner, args.ParentChanged); // CMU14
+        if (!_net.IsClient && _collisionDamageContacts.HasContacts(ent.Owner) &&
+            fixtureQ.TryComp(ent.Owner, out var fixtures) &&
+            TryGetFixtureAabb(fixtures, physics.GetPhysicsTransform(ent.Owner), out var bounds))
+        {
+            if (args.ParentChanged)
+                _collisionDamageContacts.RemoveVehicle(ent.Owner);
+            else
+                _collisionDamageContacts.Update(ent.Owner, bounds);
+        }
+
         if (!args.ParentChanged)
             return;
 
-        TrySyncMoverToCurrentGrid(ent, centerOnTile: false);
-    }
-
-    private void OnMoverReAnchor(Entity<GridVehicleMoverComponent> ent, ref ReAnchorEvent args)
-    {
         TrySyncMoverToCurrentGrid(ent, centerOnTile: false);
     }
 
@@ -216,6 +269,7 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
 
             ent.Comp.SyncedGrid = null;
             ent.Comp.CurrentSpeed = 0f;
+            ent.Comp.AngularVelocityDegrees = 0f;
             ent.Comp.PushDirection = Vector2i.Zero;
             ent.Comp.IsCommittedToMove = false;
             ent.Comp.IsPushMove = false;
@@ -231,6 +285,7 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
 
         var coords = transform.WithEntityId(xform.Coordinates, grid);
         var tile = map.TileIndicesFor(grid, gridComp, coords);
+        var preserveFallingMotion = ShouldPreserveVehicleZFallMotion(uid, xform);
 
         ent.Comp.SyncedGrid = grid;
         ent.Comp.CurrentTile = tile;
@@ -239,19 +294,36 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
             ? new Vector2(tile.X + 0.5f, tile.Y + 0.5f)
             : coords.Position;
         ent.Comp.TargetPosition = ent.Comp.Position;
-        ent.Comp.CurrentSpeed = 0f;
+        if (!preserveFallingMotion)
+            ent.Comp.CurrentSpeed = 0f;
+        if (!preserveFallingMotion)
+            ent.Comp.AngularVelocityDegrees = 0f;
+
         ent.Comp.PushDirection = Vector2i.Zero;
-        ent.Comp.NextPushTime = TimeSpan.Zero;
-        ent.Comp.NextTurnTime = TimeSpan.Zero;
-        ent.Comp.InPlaceTurnBlockUntil = TimeSpan.Zero;
+        if (!preserveFallingMotion)
+        {
+            ent.Comp.NextPushTime = TimeSpan.Zero;
+            ent.Comp.NextTurnTime = TimeSpan.Zero;
+            ent.Comp.InPlaceTurnBlockUntil = TimeSpan.Zero;
+        }
+
         ent.Comp.IsCommittedToMove = false;
         ent.Comp.IsPushMove = false;
-        ent.Comp.IsMoving = false;
+        ent.Comp.IsMoving = preserveFallingMotion && MathF.Abs(ent.Comp.CurrentSpeed) > MinVehicleSpeed;
         _hardState[uid] = true;
-        _movementAccumulator[uid] = 0f;
+        if (!preserveFallingMotion)
+            _movementAccumulator[uid] = 0f;
 
         Dirty(uid, ent.Comp);
         return true;
+    }
+
+    private bool ShouldPreserveVehicleZFallMotion(EntityUid uid, TransformComponent? xform = null)
+    {
+        xform ??= Transform(uid);
+        return HasComp<CMUVehicleZTraversalComponent>(uid) &&
+               HasComp<CMUZFallingComponent>(uid) &&
+               xform.MapUid == xform.ParentUid;
     }
 
     private void OnMoverCanRun(Entity<GridVehicleMoverComponent> ent, ref VehicleCanRunEvent args)
@@ -261,6 +333,12 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
 
         if (!TryComp(ent.Owner, out VehicleComponent? vehicle) || vehicle.Operator is not { } operatorUid)
             return;
+
+        if (!_actionBlocker.CanConsciouslyPerformAction(operatorUid))
+        {
+            args.CanRun = false;
+            return;
+        }
 
         if (!HasComp<XenoComponent>(operatorUid))
             return;
@@ -285,7 +363,18 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
             return;
         }
 
+        if (HasComp<MobStateComponent>(args.OtherEntity) &&
+            (_mobState.IsDead(args.OtherEntity) || _standing.IsDown(args.OtherEntity)) &&
+            !IsChargingIntoVehicle(args.OtherEntity)) // CMU14: lunge paralyzes the charger, it still has to hit the hull
+        {
+            args.Cancelled = true;
+            return;
+        }
+
         if (args.OtherBody.BodyType != BodyType.Static)
+            return;
+
+        if (!args.OtherFixture.Hard && HasComp<StepTriggerComponent>(args.OtherEntity))
             return;
 
         if (IsNormallyMobPassable(args.OtherFixture))
@@ -299,6 +388,17 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
 
         args.Cancelled = true;
     }
+
+    // CMU14 Begin
+    // StartLunge paralyzes the charger, so the downed-mob pass-through let lunges slide right through
+    // tanks and the shake-the-crew branch in XenoChargerCollisionSystem never ran
+    private bool IsChargingIntoVehicle(EntityUid uid)
+    {
+        return TryComp(uid, out XenoChargerStateComponent? charge) &&
+               charge.MoveState != XenoChargerMoveState.Idle &&
+               !_mobState.IsDead(uid);
+    }
+    // CMU14 End
 
     public override void Update(float frameTime)
     {
@@ -342,13 +442,17 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
             if (xform.GridUid is not { } grid || !gridQ.TryComp(grid, out var gridComp))
                 continue;
 
+            SyncMoverFacingToTransform(uid, mover, grid);
+
+            UpdateVehicleToxicWater(uid, mover, xform);
+
             if (_net.IsClient && !ShouldPredictVehicleMovement(vehicle))
             {
-                SmoothReplicatedVehicle(uid, grid, mover, frameTime);
+                // CMU14: replicated transforms already interpolate; moving them here fights remote eyes.
                 continue;
             }
 
-            var inputDir = GetMoverInput(uid, mover, vehicle, out var pushing);
+            var inputDir = GetMoverInput(uid, mover, vehicle, grid, out var pushing);
             var accumulator = _movementAccumulator.GetValueOrDefault(uid) + frameTime;
             var maxAccum = MovementFixedStep * MaxFixedStepsPerFrame;
             if (accumulator > maxAccum)
@@ -362,7 +466,19 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
                 if (currentXform.GridUid is not { } currentGrid || !gridQ.TryComp(currentGrid, out var currentGridComp))
                     break;
 
-                UpdateMovement(uid, mover, vehicle, currentGrid, currentGridComp, inputDir, pushing, MovementFixedStep);
+                // CMU14: unsupported vehicles drift even where zero-g suppresses Z falling.
+                // A falling marker can briefly outlive reparenting onto a shuttle grid.
+                if (TryComp(uid, out CMUVehicleZTraversalComponent? zTraversal) &&
+                    ((HasComp<CMUZFallingComponent>(uid) && currentXform.MapUid == currentXform.ParentUid) ||
+                     !HasCMUSpaceTraction((uid, zTraversal))))
+                {
+                    UpdateFallingMovement(uid, mover, currentGrid, currentGridComp, zTraversal, MovementFixedStep);
+                }
+                else
+                {
+                    UpdateMovement(uid, mover, vehicle, currentGrid, currentGridComp, inputDir, pushing, MovementFixedStep);
+                }
+
                 accumulator -= MovementFixedStep;
                 steps++;
             }
@@ -382,25 +498,82 @@ public sealed partial class GridVehicleMoverSystem : EntitySystem
         return vehicle.Operator != null && vehicle.Operator == _player.LocalEntity;
     }
 
-    private void SmoothReplicatedVehicle(EntityUid uid, EntityUid grid, GridVehicleMoverComponent mover, float frameTime)
+    private void SyncMoverFacingToTransform(EntityUid uid, GridVehicleMoverComponent mover, EntityUid grid)
     {
-        var xform = Transform(uid);
-        if (!xform.ParentUid.IsValid())
+        // Shuttle rotation can update a vehicle's transform without changing grids,
+        // so OnMoverMove has no parent-change event from which to resynchronize the
+        // mover. Keep its logical forward direction aligned with the visible chassis.
+        if (mover.CurrentDirection == Vector2i.Zero)
             return;
 
-        var coords = new EntityCoordinates(grid, mover.Position);
-        var target = transform.WithEntityId(coords, xform.ParentUid).Position;
-        var current = xform.LocalPosition;
-        var delta = target - current;
+        var relativeRotation = transform.GetWorldRotation(uid) - transform.GetWorldRotation(grid);
+        var transformDirection = relativeRotation.GetCardinalDir().ToIntVec();
+        if (transformDirection == mover.CurrentDirection)
+            return;
 
-        if (delta.LengthSquared() >= ClientSmoothingSnapDistance * ClientSmoothingSnapDistance)
+        mover.CurrentDirection = transformDirection;
+        Dirty(uid, mover);
+    }
+
+    private void OnXenoFortifyAttemptVehicleBounds(Entity<XenoComponent> xeno, ref XenoFortifyAttemptEvent args)
+    {
+        if (args.Cancelled)
+            return;
+
+        if (!IsWithinVehicleBounds(xeno.Owner))
+            return;
+
+        _popup.PopupEntity(Loc.GetString("cm-xeno-fortify-cant-vehicle"), xeno, xeno);
+        args.Cancelled = true;
+    }
+
+    private bool IsWithinVehicleBounds(EntityUid xeno)
+    {
+        var xform = Transform(xeno);
+        if (xform.MapUid == null)
+            return false;
+
+        if (!fixtureQ.TryComp(xeno, out var xenoFixtures))
+            return false;
+
+        var xenoTx = physics.GetPhysicsTransform(xeno, xform);
+        if (!TryGetFixtureAabb(xenoFixtures, xenoTx, out var xenoAabb))
+            return false;
+
+        if (xform.GridUid is { } grid && gridQ.TryComp(grid, out var gridComp))
         {
-            transform.SetLocalPosition(uid, target, xform);
-            return;
+            var tileIndices = map.TileIndicesFor(grid, gridComp, xform.Coordinates);
+            var tileLocal = map.GridTileToLocal(grid, gridComp, tileIndices);
+            var tileWorld = transform.ToMapCoordinates(tileLocal).Position;
+            xenoAabb = Box2.CenteredAround(tileWorld, xenoAabb.Size);
         }
 
-        var alpha = 1f - MathF.Exp(-ClientSmoothingRate * frameTime);
-        var smoothed = Vector2.Lerp(current, target, alpha);
-        transform.SetLocalPosition(uid, smoothed, xform);
+        _vehicleBoundsIntersecting.Clear();
+        lookup.GetEntitiesIntersecting(xform.MapID, xenoAabb, _vehicleBoundsIntersecting, LookupFlags.Dynamic | LookupFlags.Static);
+
+        foreach (var other in _vehicleBoundsIntersecting)
+        {
+            if (other == xeno)
+                continue;
+
+            if (!HasComp<GridVehicleMoverComponent>(other))
+                continue;
+
+            if (!TryComp(other, out VehicleComponent? vehicle) || vehicle.MovementKind != VehicleMovementKind.Grid)
+                continue;
+
+            if (!fixtureQ.TryComp(other, out var vehicleFixtures))
+                continue;
+
+            var vehicleTx = physics.GetPhysicsTransform(other, Transform(other));
+            if (!TryGetFixtureAabb(vehicleFixtures, vehicleTx, out var vehicleAabb))
+                continue;
+
+            if (vehicleAabb.Intersects(xenoAabb))
+                return true;
+        }
+
+        return false;
     }
+
 }

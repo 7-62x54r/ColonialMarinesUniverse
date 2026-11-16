@@ -2,12 +2,13 @@
 using Content.Shared.Inventory;
 using Robust.Shared.Audio;
 using Robust.Shared.GameStates;
+using Robust.Shared.Maths;
 using Robust.Shared.Prototypes;
 
 namespace Content.Shared._RMC14.NightVision;
 
 /// <summary>
-/// Gives a wearable item an action that applies night vision settings to the wearer.
+/// CMU14: Gives wearable items or scopes night vision settings to apply to their user.
 /// </summary>
 [RegisterComponent, NetworkedComponent, AutoGenerateComponentState]
 [Access(typeof(SharedNightVisionSystem))]
@@ -62,6 +63,13 @@ public sealed partial class NightVisionItemComponent : Component
     [DataField, AutoNetworkedField]
     public bool Green;
 
+    // CMU Related Change
+    /// <summary>
+    /// Whether night-vision-visible entities are rendered through occlusion.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public bool Overlay;
+
     /// <summary>
     /// Whether the wearer receives meson-style FoV behavior.
     /// </summary>
@@ -93,6 +101,24 @@ public sealed partial class NightVisionItemComponent : Component
     public NightVisionState DefaultState = NightVisionState.Full;
 
     /// <summary>
+    /// Whether the wearer can switch the item between half and full night vision.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public bool CanChangeMode = true; // CMU14: optics locked to their default state
+
+    [DataField, AutoNetworkedField]
+    public Color? Tint;
+
+    [DataField, AutoNetworkedField]
+    public float NoiseStrength = 0.04f;
+
+    [DataField, AutoNetworkedField]
+    public float VignetteStrength = 3.168f;
+
+    [DataField, AutoNetworkedField]
+    public bool RestorePreviousState;
+
+    /// <summary>
     /// Whether the wearer had night vision before this item was enabled.
     /// </summary>
     [DataField, AutoNetworkedField]
@@ -109,6 +135,12 @@ public sealed partial class NightVisionItemComponent : Component
     /// </summary>
     [DataField, AutoNetworkedField]
     public bool PreviousGreen;
+
+    // CMU Related Change
+    [DataField, AutoNetworkedField]
+    public bool PreviousOverlay;
+
+    public bool PreviousDrawVisibleMobs = true;
 
     /// <summary>
     /// Previous wearer meson state restored when this item is disabled.
@@ -127,6 +159,15 @@ public sealed partial class NightVisionItemComponent : Component
     /// </summary>
     [DataField, AutoNetworkedField]
     public bool PreviousBlockScopes;
+
+    [DataField, AutoNetworkedField]
+    public Color? PreviousTint;
+
+    [DataField, AutoNetworkedField]
+    public float PreviousNoiseStrength = 0.04f;
+
+    [DataField, AutoNetworkedField]
+    public float PreviousVignetteStrength = 3.168f;
 
     /// <summary>
     /// Sound played locally when this item turns on.

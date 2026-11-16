@@ -115,6 +115,15 @@ rmc-xeno-vampire-description = You lose all of your abilities and you forfeit a 
   - Execute unconscious talls with a headbite to heal your wounds.
 rmc-xeno-vampire-popup = Show no mercy! Slaughter them all!
 
+rmc-xeno-toxic-name = Manticore
+rmc-xeno-toxic-description = You lose Tail Stab, Slowing Spit, Scattered Spit, and Paralyzing Slash. In exchange, you gain higher plasma reserves, slightly stronger melee, base armor, and a toxin-focused kit built around stacking Intoxicated on hosts before consuming it.
+  You gain the ability to:
+  - Use Toxic Spit to quickly build Intoxicated stacks from range.
+  - Use Toxic Slash to briefly speed yourself up and make your next three slashes apply Intoxicated stacks.
+  - Use Drain Sting on adjacent intoxicated hosts, consuming most of their stacks to damage them, knock them down, heal yourself, and restore plasma.
+  - Trigger a temporary armor surge when Drain Sting consumes high Intoxicated stacks.
+rmc-xeno-toxic-popup = The hive's hunger coils in this one's venom. Let them weaken before the final strike.
+
 rmc-xeno-eggsac-name = Eggsac
 rmc-xeno-eggsac-description = You trade your ability to store parasites and make resin traps for stronger pheromones, more egg storage, and the ability to produce eggs.
    You gain the ability to:
@@ -219,6 +228,33 @@ rmc-xeno-bulwark-description = You trade punch, lunge, and fling for plate-based
   - Encased Plates for strong frontal defenses.
   - Plate Bash, Tail Swing, and a directional Reflective Shield.
 rmc-xeno-bulwark-popup = This one becomes the wall before the wall breaks.
+
+rmc-xeno-bloodletter-name = Bloodletter
+rmc-xeno-bloodletter-description = You trade your Abduct and most of your damage for abilities that drain your targets blood.
+    You gain:
+    - Scissor Cut, Impale, Tailstab and your Melee Attacks cause the target to lose blood.
+    - Scissor Cut always slows enemies on hit.
+    - An Exsanguinate ability that kills downed targets, drains large amounts of blood and heals you. Your attacks also heal you.
+    - Some health and movement speed.
+    You Lose:
+    - Some armor.
+    - Some attack speed.
+    - Your Blight Strike ability and Abduct ability.
+    - Most of the raw damage of your attacks and abilities.
+rmc-xeno-bloodletter-popup = Open their veins. Bleed them dry. The Mycelium will run red.
+
+cmu-xeno-haze-healer-name = Healer  
+cmu-xeno-haze-healer-description = You trade your ability to secrete structures and spread spores for the ability to heal your sisters' wounds.  
+    You gain:  
+    - The ability to heal sisters by using plasma and some of your own health.  
+    - A faster plasma transfer.  
+    - The Sacrifice ability, letting you give your life to heal a sister. You will only respawn if you maxed out your transferred health by healing.  
+    - Some health and movement speed.  
+    You lose:  
+    - Your Spore Sac and Direct Spore Infect abilities.  
+    - Your ability to build structures.
+    - Some tackle strength and attack strength.
+cmu-xeno-haze-healer-popup = The Confluence provides. Mend the bloom, and the bloom will mend you.
 
 cm-xeno-heatshield-vomit-bile-extinguish = You smother the flames with bile.
 cm-xeno-heatshield-vomit-bile-hostile = You coat the target in volatile bile.

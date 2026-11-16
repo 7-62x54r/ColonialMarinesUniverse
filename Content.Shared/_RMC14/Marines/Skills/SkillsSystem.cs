@@ -3,7 +3,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Content.Shared._RMC14.Chemistry.Reagent;
 using Content.Shared._RMC14.Xenonids;
-using Content.Shared.Chemistry.Components.SolutionManager;
 using Content.Shared.Chemistry.EntitySystems;
 using Content.Shared.Chemistry.Reagent;
 using Content.Shared.Damage;
@@ -57,7 +56,7 @@ public sealed partial class SkillsSystem : EntitySystem
         SubscribeLocalEvent<PrototypesReloadedEventArgs>(OnPrototypesReloaded);
         SubscribeLocalEvent<GetMeleeDamageEvent>(OnGetMeleeDamage);
 
-        SubscribeLocalEvent<SkillsComponent, MapInitEvent>(OnSkillsMapInit);
+        SubscribeLocalEvent<SkillsComponent, ComponentStartup>(OnSkillsStartup);
         SubscribeLocalEvent<SkillsComponent, GetVerbsEvent<ExamineVerb>>(OnSkillsVerbExamine);
 
         SubscribeLocalEvent<MedicallyUnskilledDoAfterComponent, AttemptHyposprayUseEvent>(OnAttemptHyposprayUse);
@@ -98,16 +97,39 @@ public sealed partial class SkillsSystem : EntitySystem
         args.Damage = ApplyMeleeSkillModifier(args.User, args.Damage);
     }
 
-    private void OnSkillsMapInit(Entity<SkillsComponent> ent, ref MapInitEvent args)
+    private void OnSkillsStartup(Entity<SkillsComponent> ent, ref ComponentStartup args)
     {
+        // CMU14: the server sends the effective skills, including training and squad bonuses.
+        if (_net.IsClient)
+            return;
+
         if (ent.Comp.Preset is not { } presetPrototype)
             return;
 
         if (!presetPrototype.TryGet(out var skillPreset, _prototypes, _compFactory))
             return;
 
+        var oldSkills = ent.Comp.Skills;
         ent.Comp.Skills = new(skillPreset.Skills);
         Dirty(ent);
+
+        foreach (var (skill, level) in ent.Comp.Skills)
+        {
+            if (oldSkills.GetValueOrDefault(skill) == level)
+                continue;
+
+            var ev = new SkillChangedEvent(ent.Owner, skill, level);
+            RaiseLocalEvent(ent.Owner, ref ev);
+        }
+
+        foreach (var (skill, _) in oldSkills)
+        {
+            if (ent.Comp.Skills.ContainsKey(skill))
+                continue;
+
+            var ev = new SkillChangedEvent(ent.Owner, skill, 0);
+            RaiseLocalEvent(ent.Owner, ref ev);
+        }
     }
 
     private void OnSkillsVerbExamine(Entity<SkillsComponent> ent, ref GetVerbsEvent<ExamineVerb> args)
@@ -167,7 +189,7 @@ public sealed partial class SkillsSystem : EntitySystem
         if (!HasAllSkills(args.User, ent.Comp.Skills))
         {
             var msg = Loc.GetString("rmc-skills-cant-use", ("item", args.Used));
-            _popup.PopupClient(msg, args.User, PopupType.SmallCaution);
+            _popup.PopupSelf(msg, args.User, PopupType.SmallCaution);
             args.Handled = true;
         }
     }
@@ -180,7 +202,7 @@ public sealed partial class SkillsSystem : EntitySystem
         if (!HasAllSkills(args.User, ent.Comp.Skills))
         {
             var msg = Loc.GetString("rmc-skills-no-training", ("target", ent));
-            _popup.PopupClient(msg, args.User, PopupType.SmallCaution);
+            _popup.PopupSelf(msg, args.User, PopupType.SmallCaution);
             args.Cancel();
         }
     }
@@ -190,7 +212,7 @@ public sealed partial class SkillsSystem : EntitySystem
         if (!HasAllSkills(args.User, ent.Comp.Skills))
         {
             var msg = Loc.GetString("rmc-skills-cant-use", ("item", ent));
-            _popup.PopupClient(msg, args.User, args.User, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, args.User, args.User, PopupType.SmallCaution);
             args.Handled = true;
         }
     }
@@ -200,7 +222,7 @@ public sealed partial class SkillsSystem : EntitySystem
         if (!HasAllSkills(args.User, ent.Comp.Skills))
         {
             var msg = Loc.GetString("rmc-skills-cant-use", ("item", ent));
-            _popup.PopupClient(msg, args.User, args.User, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, args.User, args.User, PopupType.SmallCaution);
             args.Cancelled = true;
         }
     }
@@ -224,7 +246,7 @@ public sealed partial class SkillsSystem : EntitySystem
         if (!HasAllSkills(args.User, ent.Comp.Skills))
         {
             var msg = Loc.GetString("rmc-skills-cant-use", ("item", ent));
-            _popup.PopupClient(msg, args.User, args.User, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, args.User, args.User, PopupType.SmallCaution);
             args.Handled = true;
         }
     }
@@ -243,18 +265,18 @@ public sealed partial class SkillsSystem : EntitySystem
 
     private void OnItemToggleDeactivateUnskilled(Entity<ItemToggleDeactivateUnskilledComponent> ent, ref GotEquippedEvent args)
     {
-        if (HasComp<LobbyPreviewEntityComponent>(args.Equipee) ||
+        if (HasComp<LobbyPreviewEntityComponent>(args.EquipTarget) ||
             HasComp<LobbyPreviewEntityComponent>(args.Equipment))
         {
             return;
         }
 
-        if (!HasAllSkills(args.Equipee, ent.Comp.Skills))
+        if (!HasAllSkills(args.EquipTarget, ent.Comp.Skills))
         {
-            if (_toggle.IsActivated(ent.Owner) && _toggle.TryDeactivate(ent.Owner, args.Equipee) && ent.Comp.Popup != null)
+            if (_toggle.IsActivated(ent.Owner) && _toggle.TryDeactivate(ent.Owner, args.EquipTarget) && ent.Comp.Popup != null)
             {
                 var msg = Loc.GetString(ent.Comp.Popup, ("item", ent));
-                _popup.PopupClient(msg, args.Equipee, args.Equipee, PopupType.SmallCaution);
+                _popup.PopupEntity(msg, args.EquipTarget, args.EquipTarget, PopupType.SmallCaution);
             }
         }
     }
@@ -292,16 +314,10 @@ public sealed partial class SkillsSystem : EntitySystem
             entityToExamine = contained.Value;
         }
 
-        if (!TryComp(entityToExamine, out SolutionContainerManagerComponent? solutionContainerManager))
-            return;
-
         var foundReagents = new List<ReagentQuantity>();
-        foreach (var solutionContainerId in solutionContainerManager.Containers)
+        foreach (var (_, solutionEntity) in _solutionContainerSystem.EnumerateSolutions(entityToExamine))
         {
-            if (!_solutionContainerSystem.TryGetSolution(entityToExamine, solutionContainerId, out _, out var solution))
-                continue;
-
-            foreach (var reagent in solution.Contents)
+            foreach (var reagent in solutionEntity.Comp.Solution.Contents)
             {
                 foundReagents.Add(reagent);
             }
@@ -353,7 +369,7 @@ public sealed partial class SkillsSystem : EntitySystem
         var skillsDict = ImmutableDictionary.CreateBuilder<string, EntProtoId<SkillDefinitionComponent>>();
         foreach (var prototype in _prototypes.EnumeratePrototypes<EntityPrototype>())
         {
-            if (!prototype.HasComponent<SkillDefinitionComponent>())
+            if (!prototype.HasComp<SkillDefinitionComponent>(_compFactory))
                 continue;
 
             var id = prototype.ID;
@@ -563,11 +579,19 @@ public sealed partial class SkillsSystem : EntitySystem
         }
 
         DebugTools.Assert(_prototypes.TryIndex(skill, out var entProto) &&
-                     entProto.HasComponent<SkillDefinitionComponent>());
+                     entProto.HasComp<SkillDefinitionComponent>(_compFactory));
 
         ent.Comp ??= EnsureComp<SkillsComponent>(ent);
+
+        var old = ent.Comp.Skills.GetValueOrDefault(skill);
         ent.Comp.Skills[skill] = to;
         Dirty(ent);
+
+        if (old != to)
+        {
+            var ev = new SkillChangedEvent(ent.Owner, skill, to);
+            RaiseLocalEvent(ent.Owner, ref ev);
+        }
     }
 
     public void SetSkills(Entity<SkillsComponent?> ent, Dictionary<EntProtoId<SkillDefinitionComponent>, int> to)
@@ -576,7 +600,13 @@ public sealed partial class SkillsSystem : EntitySystem
 
         foreach (var (skill, level) in to)
         {
+            var old = ent.Comp.Skills.GetValueOrDefault(skill);
             ent.Comp.Skills[skill] = level;
+            if (old != level)
+            {
+                var ev = new SkillChangedEvent(ent.Owner, skill, level);
+                RaiseLocalEvent(ent.Owner, ref ev);
+            }
         }
 
         Dirty(ent);
@@ -589,7 +619,13 @@ public sealed partial class SkillsSystem : EntitySystem
         var span = CollectionsMarshal.AsSpan(to);
         foreach (ref var skill in span)
         {
+            var old = ent.Comp.Skills.GetValueOrDefault(skill.Type);
             ent.Comp.Skills[skill.Type] = skill.Level;
+            if (old != skill.Level)
+            {
+                var ev = new SkillChangedEvent(ent.Owner, skill.Type, skill.Level);
+                RaiseLocalEvent(ent.Owner, ref ev);
+            }
         }
 
         Dirty(ent);
@@ -601,7 +637,13 @@ public sealed partial class SkillsSystem : EntitySystem
 
         foreach (var skill in to)
         {
+            var old = ent.Comp.Skills.GetValueOrDefault(skill.Type);
             ent.Comp.Skills[skill.Type] = skill.Level;
+            if (old != skill.Level)
+            {
+                var ev = new SkillChangedEvent(ent.Owner, skill.Type, skill.Level);
+                RaiseLocalEvent(ent.Owner, ref ev);
+            }
         }
 
         Dirty(ent);

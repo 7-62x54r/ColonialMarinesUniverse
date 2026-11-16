@@ -13,12 +13,17 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: plant_weeds
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: plant_weeds
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoPlantWeedsActionEvent
+  - type: SwappableAction
+    swappedEventTemplate: !type:XenoExpandWeedsActionEvent
+    originalEventTemplate: !type:XenoPlantWeedsActionEvent
 
 - type: entity
   id: ActionXenoChooseStructure
@@ -28,9 +33,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: place_resin
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoChooseStructureActionEvent
   - type: XenoChooseConstructionAction
@@ -52,9 +59,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: secrete_resin
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     deselectOnMiss: false
     range: 0
@@ -66,6 +75,7 @@
     checkStructureSelected: true
     checkWeeds: true
     canUpgrade: true
+  - type: XenoHiveInstantBuildAction
   - type: RMCDazeableAction
 
 - type: entity
@@ -84,9 +94,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: secrete_resin
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     deselectOnMiss: false
     range: 0
@@ -98,6 +110,7 @@
     checkStructureSelected: true
     checkWeeds: true
     canUpgrade: false
+  - type: XenoHiveInstantBuildAction
   - type: RMCDazeableAction
 
 - type: entity
@@ -108,9 +121,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: morph_resin
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoOrderConstructionActionEvent
   - type: RMCDazeableAction
@@ -133,10 +148,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: place_trap
     useDelay: 1
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: place_trap
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoPlaceResinHoleActionEvent
   - type: RMCDazeableAction
@@ -158,9 +175,11 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
       state: gardener_plant_pick
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoFruitChooseActionEvent
   - type: XenoFruitChooseAction
@@ -173,10 +192,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: gardener_plant
     useDelay: 5
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: gardener_plant
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoFruitPlantActionEvent
 
@@ -188,10 +209,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: plant_gardener_weeds
     useDelay: 120
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: plant_gardener_weeds
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoPlantWeedsActionEvent
       plasmaCost: 125
@@ -216,10 +239,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: build_tunnel
     useDelay: 300
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: build_tunnel
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:XenoDigTunnelActionEvent
 
@@ -256,10 +281,12 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon:
-      sprite: _RMC14/Actions/xeno_actions.rsi
-      state: plant_weeds
     useDelay: 0.5
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/xeno_actions.rsi
+      state: plant_weeds
+      map: ["enum.ActionVisuals.Icon"]
   - type: TargetAction
     checkCanAccess: false
     range: -1
@@ -275,24 +302,34 @@
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon: { sprite: _RMC14/Actions/designer_actions.rsi, state: design_mark_wall }
-    iconOn: { sprite: _RMC14/Actions/designer_actions.rsi, state: design_mark_door }
     useDelay: 0.2
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/designer_actions.rsi
+      state: design_mark_wall
+      map: ["enum.ActionVisuals.Icon"]
+    - sprite: _RMC14/Actions/designer_actions.rsi
+      state: design_mark_door
+      map: ["enum.ActionVisuals.IconToggled"]
+      visible: false
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Designer.DesignerSelectedDesignToggleActionEvent
   - type: RMCDazeableAction
 
-# TODO: Make this greater surge weak reflective resin wall
 - type: entity
   id: ActionXenoDesignerGreaterResinSurge
   parent: ActionXenoBase
   name: Greater Resin Surge (250)
-  description: Consumes nearby design nodes to create temporary thick resin walls.
+  description: Consumes nearby design nodes to create temporary reflective resin walls.
   components:
   - type: Action
     itemIconStyle: NoItem
-    icon: { sprite: _RMC14/Actions/designer_actions.rsi, state: greater_resin_surge }
     useDelay: 30
+  - type: Sprite
+    layers:
+    - sprite: _RMC14/Actions/designer_actions.rsi
+      state: greater_resin_surge
+      map: ["enum.ActionVisuals.Icon"]
   - type: InstantAction
     event: !type:Content.Shared._RMC14.Xenonids.Designer.DesignerGreaterResinSurgeActionEvent
   - type: RMCDazeableAction

@@ -22,12 +22,10 @@ public abstract partial class SharedMarineSystem : EntitySystem
     {
         base.Initialize();
 
-        SubscribeLocalEvent<MarineComponent, GetMarineIconEvent>(OnMarineGetIcon);
-
         SubscribeLocalEvent<GrantMarineIconsComponent, GotEquippedEvent>(OnGotEquipped);
         SubscribeLocalEvent<GrantMarineIconsComponent, GotUnequippedEvent>(OnGotUnequipped);
-
         SubscribeLocalEvent<MarineComponent, RMCGetFixedIdentityEvent>(OnIdentificationAttempt);
+        SubscribeLocalEvent<MarineComponent, GetMarineIconEvent>(OnMarineGetIcon);
     }
 
     private void OnIdentificationAttempt(Entity<MarineComponent> ent, ref RMCGetFixedIdentityEvent args)
@@ -49,7 +47,7 @@ public abstract partial class SharedMarineSystem : EntitySystem
         if ((ent.Comp.Slots & args.SlotFlags) == 0)
             return;
 
-        GiveMarineHud(args.Equipee, ent.Comp.Factions, ent.Comp.BypassFactionIcons);
+        GiveMarineHud(args.EquipTarget, ent.Comp.Factions, ent.Comp.BypassFactionIcons);
     }
 
     private void OnGotUnequipped(Entity<GrantMarineIconsComponent> ent, ref GotUnequippedEvent args)
@@ -60,8 +58,8 @@ public abstract partial class SharedMarineSystem : EntitySystem
         if ((ent.Comp.Slots & args.SlotFlags) == 0)
             return;
 
-        if (!_inventory.TryGetInventoryEntity<GrantMarineIconsComponent>(args.Equipee, out _))
-            RemCompDeferred<ShowMarineIconsComponent>(args.Equipee);
+        if (!_inventory.TryGetInventoryEntity<GrantMarineIconsComponent>(args.EquipTarget, out _))
+            RemCompDeferred<ShowMarineIconsComponent>(args.EquipTarget);
     }
 
     private void OnMarineGetIcon(Entity<MarineComponent> marine, ref GetMarineIconEvent args)
@@ -95,10 +93,10 @@ public abstract partial class SharedMarineSystem : EntitySystem
         }
     }
 
-    public void MakeMarine(EntityUid uid, SpriteSpecifier? icon)
+    public void MakeMarine(EntityUid uid, SpriteSpecifier? icon, bool hideIcon = false)
     {
         var marine = EnsureComp<MarineComponent>(uid);
-        marine.Icon = _serialization.CreateCopy(icon);
+        marine.Icon = hideIcon ? null : _serialization.CreateCopy(icon);
         Dirty(uid, marine);
     }
 

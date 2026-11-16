@@ -27,7 +27,7 @@ entities:
   - uid: 1
     components:
     - type: MetaData
-      name: Map Entity
+      name: UPP Van (Armed)
     - type: Transform
     - type: Map
       mapPaused: True
@@ -222,7 +222,8 @@ entities:
   - uid: 60
     components:
     - type: Transform
-      pos: 4.1302757,0.031710982
+      # CMU14: was at x 4.13, inside the unanchored blocker column at x 4.5 so every interaction ray hit the blocker first
+      pos: 3.85,0.031710982
       parent: 3
 - proto: VehicleSPPVanChassisArmed
   entities:
@@ -527,5 +528,12 @@ entities:
     components:
     - type: Transform
       pos: 5.5,3.5
+      parent: 3
+- proto: AU14VehicleRadioSet
+  entities:
+  - uid: 500
+    components:
+    - type: Transform
+      pos: 0.5,-0.5
       parent: 3
 ...

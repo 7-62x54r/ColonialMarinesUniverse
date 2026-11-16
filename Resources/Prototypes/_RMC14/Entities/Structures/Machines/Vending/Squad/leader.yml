@@ -15,6 +15,12 @@
     jobs:
     - CMSquadLeader
     sections:
+    # CMU14: shared allowance across all squad leader racks.
+    - name: cmu-vendor-section-sl-scopes
+      choices: { CMUSquadLeaderScope: 1 }
+      entries:
+      - id: RMCAttachmentS42xTelescopicMiniscope
+      - id: CMUAttachmentNightVisionScope
     - name: Squad Leader Kit
       takeAll: CMStandard
       entries:
@@ -120,8 +126,8 @@
         points: 13
       - id: RMCBoxClaymoreMineFilled
         points: 20
-    # - id: CMM40MFHSMetalFoamGrenade
-    #   points: 5
+      - id: RMCGrenadeMFHS
+        points: 5
     # - id: RMCElectroshockGrenadex3
     #   points: 16
     - name: Medical Supplies
@@ -232,6 +238,12 @@
     jobs:
     - CMSquadLeader
     sections:
+    # CMU14: shared allowance across all squad leader racks.
+    - name: cmu-vendor-section-sl-scopes
+      choices: { CMUSquadLeaderScope: 1 }
+      entries:
+      - id: RMCAttachmentS42xTelescopicMiniscope
+      - id: CMUAttachmentNightVisionScope
     - name: Standard Equipment
       takeAll: CMStandard
       entries:
@@ -330,9 +342,13 @@
   - type: CMVendorBundle
     bundle:
     - RMCExplosivePlastic
+    - RMCExplosiveBreachingCharge
     - RMCPackFlareCAS
     - RMCLaserDesignator
     - CMFireExtinguisherPortable
+    - RMCFulton20
+    - RMCBoxZiptie
+    - RMCWhistle
 
 - type: entity
   parent: RMCKitBase
@@ -395,8 +411,8 @@
 - type: entity
   parent: RMCKitBase
   id: RMCKitPyroMini
-  name: M34 pyrotechnician support kit
-  description: Contains a M34 incinerator unit, a G4-1 fueltank, 3 incinerator tanks, and a portable fire extinguisher.
+  name: M240 pyrotechnician support kit #cmu14
+  description: Contains a M240 incinerator unit, a G4-1 fueltank, 3 incinerator tanks, and a portable fire extinguisher. #cmu14
   components:
   - type: Storage
     maxItemSize: Huge

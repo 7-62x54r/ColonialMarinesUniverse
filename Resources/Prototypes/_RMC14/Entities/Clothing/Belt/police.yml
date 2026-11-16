@@ -14,11 +14,13 @@
     - 0,0,13,1 # 7 slots
     whitelist:
       tags:
+      - Stunbaton
       - SecBeltEquip
       - Taser
       - Flashlight
       - CMMagazinePistol
       - RMCShellShotgun
+      - RMCShellShotgunHDSG
       - RMCMagazineRevolver
       - Donut
       - RMCGrenadeFlashBang
@@ -27,7 +29,6 @@
       - Handcuff
       - Flash
       - FlashOnTrigger
-      - Stunbaton
       - ForensicScanner
       - MeleeWeapon
       - Gun

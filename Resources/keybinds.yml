@@ -1,5 +1,9 @@
-﻿version: 1 # Not used right now, whatever.
+version: 1 # Not used right now, whatever.
 binds:
+- function: CMUToggleFirstPersonMouse # CMU14: first-person mouse capture (rebindable).
+  type: State
+  key: F8
+  mod1: Alt
 - function: UIClick
   type: State
   key: MouseLeft
@@ -256,6 +260,18 @@ binds:
   type: State
   key: E
   mod1: Shift
+- function: SmartEquipPocket1
+  type: State
+  key: N
+  mod1: Shift
+- function: SmartEquipPocket2
+  type: State
+  key: M
+  mod1: Shift
+- function: SmartEquipSuitStorage
+  type: State
+  key: H
+  mod1: Shift
 - function: OpenBackpack
   type: State
   key: V
@@ -269,6 +285,14 @@ binds:
 - function: InspectEntity
   type: State
   key: v
+  mod1: Alt
+- function: InspectServerComponent
+  type: State
+  key: b
+  mod1: Alt
+- function: InspectClientComponent
+  type: State
+  key: c
   mod1: Alt
 - function: MouseMiddle
   type: State
@@ -471,7 +495,7 @@ binds:
   type: State
   key: F8
 - function: ToggleRoundEndSummaryWindow
-  type: Toggle
+  type: State
   key: F9
 - function: OpenSandboxWindow
   type: State
@@ -526,6 +550,10 @@ binds:
 - function: Arcade3
   type: State
   key: Z
+# CMU14: vanilla prone removed
+# - function: ToggleKnockdown
+#   type: State
+#   key: C
 - function: OpenAbilitiesMenu
   type: State
   key: K
@@ -652,6 +680,42 @@ binds:
   key: Space
   mod1: Shift
   mod2: Control
+- function: CMUGunshipForward
+  type: State
+  key: W
+- function: CMUGunshipBack
+  type: State
+  key: S
+- function: CMUGunshipLeft
+  type: State
+  key: A
+- function: CMUGunshipRight
+  type: State
+  key: D
+- function: CMUGunshipRotateLeft
+  type: State
+  key: Q
+- function: CMUGunshipRotateRight
+  type: State
+  key: E
+- function: CMUGunshipAscend
+  type: State
+  key: PageUp
+- function: CMUGunshipDescend
+  type: State
+  key: PageDown
+- function: CMUGunshipCycleCamera
+  type: State
+  key: F
+  priority: 20
+- function: CMUGunshipTogglePanning
+  type: State
+  key: Space
+  priority: 20
+- function: CMUOpenMedicalCraftingMenu
+  type: State
+  key: C
+  mod1: Alt
 - function: CMUniqueAction
   type: State
   key: Space
@@ -687,3 +751,15 @@ binds:
   type: State
   key: R
   mod1: Shift
+- function: SmartEquipUniform
+  type: State
+  key: N
+  mod1: Alt
+- function: SmartEquipArmor
+  type: State
+  key: M
+  mod1: Alt
+- function: SmartEquipHelmet
+  type: State
+  key: H
+  mod1: Alt

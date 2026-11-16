@@ -3,6 +3,7 @@ using Content.Shared._RMC14.Medical.Surgery;
 using Content.Shared.Damage;
 using Robust.Shared.Audio;
 using Robust.Shared.GameStates;
+using Robust.Shared.Network;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization.TypeSerializers.Implementations.Custom;
 using Robust.Shared.Utility;
@@ -83,6 +84,24 @@ public sealed partial class VictimInfectedComponent : Component
     [DataField, AutoNetworkedField]
     public EntityUid? Hive;
 
+    /// <summary>
+    ///     Player who should control this infection's larva once it is spawned.
+    /// </summary>
+    public NetUserId? InfectorUser;
+
+    // CMU14: retain the prompt's infection identity after the spent parasite is deleted.
+    public NetEntity? InfectorParasite;
+
+    /// <summary>
+    ///     Whether the infector accepted becoming the larva from this infection.
+    /// </summary>
+    public bool InfectorWantsLarva;
+
+    /// <summary>
+    ///     Whether the infector has an unanswered larva claim prompt for this infection.
+    /// </summary>
+    public bool InfectorLarvaClaimPending;
+
     [DataField]
     public int FinalStage = 6;
 
@@ -157,4 +176,7 @@ public sealed partial class VictimInfectedComponent : Component
     /// </summary>
     [DataField]
     public TimeSpan LarvaInvincibilityTime = TimeSpan.FromSeconds(1);
+
+    [DataField, AutoNetworkedField]
+    public bool BurstsFromBack;
 }

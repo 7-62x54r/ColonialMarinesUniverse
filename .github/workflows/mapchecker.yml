@@ -3,16 +3,20 @@ name: Map checker
 permissions:
   contents: read
 
+concurrency:
+  group: map-checker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     branches: ["master"]
     paths:
       # Run if maps are changed.
       - "Resources/Maps/_RMC14/**/*.yml"
-      - "Resources/Maps/_CMU14/**/*.yml"
-      - "Resources/Maps/_AU14/**/*.yml"
+      - "Content.CMU/Resources/Maps/CMU14/**/*.yml"
       # Also run if the mapchecker itself or its config is changed.
       - ".github/map_checker/**"
+      - ".github/workflows/mapchecker.yml"
   workflow_dispatch:
 
 env:
@@ -22,14 +26,17 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # CMU14: compare the complete PR diff, including renames.
 
       - name: Setup Rust
         run: rustup update stable && rustup default stable
 
       - name: Cache Cargo registry
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
@@ -37,7 +44,7 @@ jobs:
             ${{ runner.os }}-cargo-registry-
 
       - name: Cache Cargo build
-        uses: actions/cache@v5.0.5
+        uses: actions/cache@v6.1.0
         with:
           path: .github/map_checker/target
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.toml') }}
@@ -47,28 +54,37 @@ jobs:
       - name: Build
         run: cd .github/map_checker && cargo b --release
 
-      - name: Check _RMC14
-        id: check_rmc14
-        continue-on-error: true
-        run: ./.github/map_checker/target/release/map_checker -c .github/map_checker/matchers.yml -m Resources/Maps/_RMC14
-
-      - name: Check _CMU14
-        id: check_cmu14
-        continue-on-error: true
-        run: ./.github/map_checker/target/release/map_checker -c .github/map_checker/matchers.yml -m Resources/Maps/_CMU14
-
-      - name: Check _AU14
-        id: check_au14
-        continue-on-error: true
-        run: ./.github/map_checker/target/release/map_checker -c .github/map_checker/matchers.yml -m Resources/Maps/_AU14
-
-      - name: Failure Detected
-        if: |
-          steps.check_rmc14.outcome == 'failure'
-          || steps.check_cmu14.outcome == 'failure'
-          || steps.check_au14.outcome == 'failure'
+      # CMU14: check changed map files; checker/config changes and manual runs check both trees.
+      - name: Check affected maps
+        shell: python
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          echo "_RMC14: ${{ steps.check_rmc14.outcome }}"
-          echo "_CMU14: ${{ steps.check_cmu14.outcome }}"
-          echo "_AU14:  ${{ steps.check_au14.outcome }}"
-          exit 1
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          roots = ("Resources/Maps/_RMC14", "Content.CMU/Resources/Maps/CMU14")
+          targets = list(roots)
+          base, head = os.environ["CI_BASE_SHA"], os.environ["CI_HEAD_SHA"]
+          if all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (base, head)):
+              try:
+                  changed = subprocess.check_output([
+                      "git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                      "--name-only", "-z", f"{base}...{head}", "--"
+                  ]).decode("utf-8").split("\0")
+                  if not any(p.startswith(".github/map_checker/") or
+                             p == ".github/workflows/mapchecker.yml" for p in changed):
+                      targets = [p for p in changed if p.endswith(".yml") and
+                                 any(p.startswith(root + "/") for root in roots) and Path(p).is_file()]
+              except (subprocess.CalledProcessError, UnicodeError):
+                  print("Map diff unavailable; checking both map trees.", flush=True)
+          status = 0
+          for target in targets:
+              status |= subprocess.run([
+                  "./.github/map_checker/target/release/map_checker",
+                  "-c", ".github/map_checker/matchers.yml", "-m", target
+              ]).returncode
+          raise SystemExit(status)

@@ -6,11 +6,12 @@
     whitelist:
       components:
       - Gun
-      - Stunbaton
       - CrewMonitoringConsole
       tags:
+      - Stunbaton
       #TODO any analyzer - plant etc
       - Radio
+      - RMCG8Pouch
       - Crowbar
       - Handcuffs
       - Binoculars
@@ -28,7 +29,7 @@
       - RMCDetector
 
 - type: entity
-  parent: [ClothingOuterStorageBase, RMCAllowSuitStorageClothingExternalWebbing]
+  parent: [ClothingOuterStorageBase, RMCAllowSuitStorageClothingExternalWebbing, RMCBaseUniformAccessoryItemOuterClothing]
   id: RMCOuterClothingExternalWebbing
   name: external webbing
   description: Designed to be worn over a jumpsuit rather than clipped on.

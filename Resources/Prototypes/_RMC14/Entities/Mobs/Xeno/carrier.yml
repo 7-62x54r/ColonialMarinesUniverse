@@ -13,7 +13,7 @@
   components:
   - type: CanBuildThickFromConstructNode
   - type: GhostRole
-    name: cm-job-name-xeno-carrier
+    name: cmu-job-name-xeno-unknown
   - type: MobState
     allowedStates:
     - Alive
@@ -51,18 +51,40 @@
   - type: XenoDevour
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 27.5
+      types:
+        Blunt: 9.16
+        Slash: 9.17
+        Piercing: 9.17
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 42
+      types:
+        Blunt: 14
+        Slash: 14
+        Piercing: 14
   - type: Tackle
     max: 4
     chance: 0.5
     stunMin: 4
     stunMax: 5
   - type: TunnelRenamer
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 300
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 300
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaPurple
+        Quantity: 1
   - type: MovementSpeedModifier
     baseWalkSpeed: 2
     baseSprintSpeed: 3.5
@@ -103,7 +125,7 @@
   - type: IntelRecoverCorpseObjectiveOnDeath
     value: 0.2
   - type: FixedIdentity
-    name: cm-job-name-xeno-carrier
+    name: cmu-job-name-xeno-unknown
   - type: RMCSurgeryXenoHeart
     item: RMCOrganXenoHeartT2
 
@@ -111,11 +133,16 @@
   parent: RMCXenoCarrierBase
   id: CMXenoCarrier
   components:
+  - type: FiremanCarriable # CMU14: Yautja can aggressively grab, carry and throw this caste, matching
+    canThrow: true           # CM-SS13's grab gate (mob_grab.dm:82-89: Yautja reach MOB_SIZE_XENO, 3).
+    carrierWhitelist:
+      components:
+      - Yautja
   - type: GuideHelp
     guides:
     - RMCGuideRoleCarrier
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Carrier/carrier.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Carrier/carrier.rsi # AU14-Edit
     layers:
     - map: [ "enum.XenoVisualLayers.Base" ]
       state: alive
@@ -133,6 +160,9 @@
       visible: false
     - map: [ "enum.XenoInhandVisualLayers.Right" ]
       visible: false
+    - map: [ "enum.RMCShieldVisuals.Base" ]
+      sprite: _RMC14/Effects/xeno_shields.rsi
+      visible: false
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -149,9 +179,6 @@
     - ActionXenoDevolve
   - type: XenoParasiteThrower
   - type: XenoEvolution
-    max: 500
-    evolvesTo:
-    - CMXenoReaper
     strains:
     - RMCXenoCarrierEggsac
   - type: RMCActionOrder
@@ -167,7 +194,7 @@
     guides:
     - RMCGuideRoleEggsac
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Carrier/eggsac_carrier.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Carrier/eggsac_carrier.rsi # AU14-Edit
     layers:
     - map: [ "enum.XenoVisualLayers.Base" ]
       state: alive
@@ -196,8 +223,27 @@
     - ActionXenoDevolve
   - type: XenoStrain
     name: rmc-xeno-eggsac-name
+    baseCaste: CMXenoCarrier # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-eggsac-description
     popup: rmc-xeno-eggsac-popup
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 300
+      - ReagentId: CMUXenoPlasmaEgg
+        Quantity: 300
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaEgg
+        Quantity: 1
   - type: XenoPheromones
     pheromonesMultiplier: 3
     pheroSuffix: strong

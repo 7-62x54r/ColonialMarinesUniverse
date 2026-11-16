@@ -5,6 +5,7 @@ using Content.Shared._RMC14.Xenonids;
 using Content.Shared._RMC14.Xenonids.Projectile;
 using Content.Shared.Inventory;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.DoAfter;
 using Content.Shared.Hands.Components;
 using Content.Shared.Hands.EntitySystems;
@@ -142,8 +143,16 @@ public abstract partial class SharedRMCLandmineSystem : EntitySystem
 
     private void OnPreventCollide(Entity<RMCLandmineComponent> ent, ref PreventCollideEvent args)
     {
-        if (ent.Comp.Armed && !HasComp<XenoProjectileComponent>(args.OtherEntity) && !HasComp<MobStateComponent>(args.OtherEntity))
+        if (ent.Comp.Armed &&
+            !CanProjectileTrigger(ent, args.OtherEntity) &&
+            !HasComp<MobStateComponent>(args.OtherEntity))
             args.Cancelled = true;
+    }
+
+    protected bool CanProjectileTrigger(Entity<RMCLandmineComponent> ent, EntityUid projectile)
+    {
+        return HasComp<XenoProjectileComponent>(projectile) ||
+               ent.Comp.TriggerOnAnyProjectile && HasComp<ProjectileComponent>(projectile);
     }
 
     private void OnBeforeDamageChanged(Entity<RMCLandmineComponent> ent, ref BeforeDamageChangedEvent args)
@@ -174,7 +183,7 @@ public abstract partial class SharedRMCLandmineSystem : EntitySystem
         if (_container.IsEntityInContainer(user))
         {
             var msg = Loc.GetString("rmc-explosive-deploy-container", ("explosive", ent));
-            _popup.PopupClient(msg, user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
             return false;
         }
 
@@ -186,7 +195,7 @@ public abstract partial class SharedRMCLandmineSystem : EntitySystem
                 continue;
 
             var msg = Loc.GetString("rmc-mine-deploy-fail-occupied");
-            _popup.PopupClient(msg, user, user, PopupType.SmallCaution);
+            _popup.PopupEntity(msg, user, user, PopupType.SmallCaution);
             return false;
         }
 

@@ -1,4 +1,4 @@
-﻿using Robust.Shared.Configuration;
+using Robust.Shared.Configuration;
 
 namespace Content.Shared.CCVar;
 
@@ -48,6 +48,12 @@ public sealed partial class CCVars
         CVarDef.Create("discord.votekick_webhook", string.Empty, CVar.SERVERONLY);
 
     /// <summary>
+    ///     URL of the Discord webhook which will relay event logs. If left empty, disables the webhook.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordEventWebhook =
+        CVarDef.Create("discord.event_webhook", string.Empty, CVar.SERVERONLY);
+
+    /// <summary>
     ///     URL of the Discord webhook which will relay round restart messages.
     /// </summary>
     public static readonly CVarDef<string> DiscordRoundUpdateWebhook =
@@ -58,6 +64,55 @@ public sealed partial class CCVars
     /// </summary>
     public static readonly CVarDef<string> DiscordRoundEndRoleWebhook =
         CVarDef.Create("discord.round_end_role", string.Empty, CVar.SERVERONLY);
+
+    /// <summary>
+    ///     Role id for the Discord round status webhook to ping when a Distress Signal round ends.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusDistressSignalRole =
+        CVarDef.Create("discord.round_status_distress_signal_role", string.Empty, CVar.SERVERONLY);
+
+    /// <summary>
+    ///     Role id for the Discord round status webhook to ping when a Colony Fall round ends.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusColonyFallRole =
+        CVarDef.Create("discord.round_status_colony_fall_role", string.Empty, CVar.SERVERONLY);
+
+    /// <summary>
+    ///     Role id for the Discord round status webhook to ping when an Insurgency round ends.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusInsurgencyRole =
+        CVarDef.Create("discord.round_status_insurgency_role", string.Empty, CVar.SERVERONLY);
+
+    /// <summary>
+    ///     How often, in seconds, the Discord round status webhook should edit the active status embed.
+    ///     Set to zero to disable periodic status edits.
+    /// </summary>
+    public static readonly CVarDef<float> DiscordRoundStatusUpdateInterval =
+        CVarDef.Create("discord.round_status_update_interval", 60f, CVar.SERVERONLY);
+
+    /// <summary>
+    ///     HEX color for the Discord round status embed when the server has started and is in lobby.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusStartingColor =
+        CVarDef.Create("discord.round_status_starting_color", "F0C419", CVar.SERVERONLY);
+
+    /// <summary>
+    ///     HEX color for the Discord round status embed while the round is running.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusRunningColor =
+        CVarDef.Create("discord.round_status_running_color", "23EB49", CVar.SERVERONLY);
+
+    /// <summary>
+    ///     HEX color for the Discord round status embed when the round ends.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusEndedColor =
+        CVarDef.Create("discord.round_status_ended_color", "CD1010", CVar.SERVERONLY);
+
+    /// <summary>
+    ///     HEX color for the Discord round status embed when the server shuts down.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordRoundStatusShutdownColor =
+        CVarDef.Create("discord.round_status_shutdown_color", "6B7280", CVar.SERVERONLY);
 
 
     /// <summary>
@@ -114,4 +169,9 @@ public sealed partial class CCVars
     public static readonly CVarDef<bool> DiscordNewsWebhookSendDuringRound =
         CVarDef.Create("discord.news_webhook_send_during_round", false, CVar.SERVERONLY);
 
+    /// <summary>
+    ///     URL of the Discord webhook which will relay all mhelp messages.
+    /// </summary>
+    public static readonly CVarDef<string> DiscordMentorHelpWebhook =
+        CVarDef.Create("discord.mentorhelp_webhook", string.Empty, CVar.SERVERONLY | CVar.CONFIDENTIAL);
 }

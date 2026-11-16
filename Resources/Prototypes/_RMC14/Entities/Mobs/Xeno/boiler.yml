@@ -11,13 +11,18 @@
   name: Boiler
   description: A huge, grotesque xenonid covered in glowing, oozing acid slime.
   components:
+  - type: FiremanCarriable # CMU14: Yautja can aggressively grab, carry and throw this caste, matching
+    canThrow: true           # CM-SS13's grab gate (mob_grab.dm:82-89: Yautja reach MOB_SIZE_XENO, 3).
+    carrierWhitelist:
+      components:
+      - Yautja
   - type: GuideHelp
     guides:
     - RMCGuideRoleBoiler
   - type: GhostRole
-    name: cm-job-name-xeno-boiler
+    name: cmu-job-name-xeno-unknown
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Boiler/boiler.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Boiler/boiler.rsi # AU14-Edit
   - type: Fixtures
     fixtures:
       fix1:
@@ -73,6 +78,24 @@
     plasma: 400
     maxPlasma: 400
     plasmaRegenOnWeeds: 7
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 300
+      - ReagentId: CMUXenoPlasmaNeuro
+        Quantity: 300
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaNeuro
+        Quantity: 1
   - type: XenoAcid
   - type: CMArmor
     xenoArmor: 20
@@ -91,8 +114,10 @@
     inject:
       RMCMolecularAcid: 6
     tailDamage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: XenoSprayAcid
     acid: XenoAcidSprayStrong
     barricadeDamage:
@@ -100,8 +125,10 @@
         Heat: 5
   - type: MeleeWeapon
     damage:
-      groups:
-        Brute: 22.5
+      types:
+        Blunt: 7.5
+        Slash: 7.5
+        Piercing: 7.5
   - type: Tackle
     chance: 0.25
     stunMin: 3
@@ -141,14 +168,17 @@
     affectsDead: false
     affectsInfectedNested: false
     toxinDamage:
-        groups:
-          Toxin: 2
+        types:
+          Poison: 1
+          Radiation: 1
     oxygenDamage:
         types:
           Asphyxiation: 150
     coughDamage:
-        groups:
-          Brute: 5
+        types:
+          Blunt: 1.66
+          Slash: 1.67
+          Piercing: 1.67
   - type: RMCXenoDamageVisuals
     prefix: boiler
   - type: TacticalMapIcon
@@ -163,7 +193,7 @@
     enabled: false
   - type: XenoToggleChargingStop
   - type: FixedIdentity
-    name: cm-job-name-xeno-boiler
+    name: cmu-job-name-xeno-unknown
   - type: RMCActionOrder
     id: CMXenoBoiler
 
@@ -200,7 +230,7 @@
   suffix: Sapper
   components:
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Boiler/boiler.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Boiler/boiler.rsi # AU14-Edit
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -215,6 +245,7 @@
     - ActionXenoDevolve
   - type: XenoStrain
     name: rmc-xeno-trapper-name
+    baseCaste: CMXenoBoiler # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-trapper-description
     popup: rmc-xeno-trapper-popup
   - type: CMArmor
@@ -238,8 +269,10 @@
     inject:
       RMCMolecularAcid: 6
     tailDamage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: XenoAcidMine
   - type: XenoAcidShotgun
   - type: XenoDeployTraps
@@ -247,5 +280,3 @@
   - type: XenoAdrenalineSurge
   - type: RMCActionOrder
     id: RMCXenoBoilerSapper
-
-

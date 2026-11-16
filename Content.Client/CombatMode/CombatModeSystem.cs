@@ -1,10 +1,10 @@
 using Content.Client.Hands.Systems;
-using Content.Client.NPC.HTN;
 using Content.Shared.CCVar;
 using Content.Shared.CombatMode;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.Player;
+using Robust.Client.ResourceManagement;
 using Robust.Shared.Configuration;
 
 namespace Content.Client.CombatMode;
@@ -16,6 +16,7 @@ public sealed partial class CombatModeSystem : SharedCombatModeSystem
     [Dependency] private IConfigurationManager _cfg = default!;
     [Dependency] private IInputManager _inputManager = default!;
     [Dependency] private IEyeManager _eye = default!;
+    [Dependency] private IResourceCache _resourceCache = default!;
 
     /// <summary>
     /// Raised whenever combat mode changes.
@@ -26,12 +27,12 @@ public sealed partial class CombatModeSystem : SharedCombatModeSystem
     {
         base.Initialize();
 
-        SubscribeLocalEvent<CombatModeComponent, AfterAutoHandleStateEvent>(OnHandleState);
+        SubscribeLocalEvent<CombatModeComponent, CombatModeStateAppliedEvent>(OnHandleState);
 
         Subs.CVar(_cfg, CCVars.CombatModeIndicatorsPointShow, OnShowCombatIndicatorsChanged, true);
     }
 
-    private void OnHandleState(EntityUid uid, CombatModeComponent component, ref AfterAutoHandleStateEvent args)
+    private void OnHandleState(EntityUid uid, CombatModeComponent component, ref CombatModeStateAppliedEvent args)
     {
         UpdateHud(uid);
     }
@@ -59,11 +60,6 @@ public sealed partial class CombatModeSystem : SharedCombatModeSystem
         UpdateHud(entity);
     }
 
-    protected override bool IsNpc(EntityUid uid)
-    {
-        return HasComp<HTNComponent>(uid);
-    }
-
     private void UpdateHud(EntityUid entity)
     {
         if (entity != _playerManager.LocalEntity || !Timing.IsFirstTimePredicted)
@@ -84,7 +80,9 @@ public sealed partial class CombatModeSystem : SharedCombatModeSystem
                 EntityManager,
                 _eye,
                 this,
-                EntityManager.System<HandsSystem>()));
+                EntityManager.System<HandsSystem>(),
+                _playerManager,
+                _resourceCache));
         }
         else
         {

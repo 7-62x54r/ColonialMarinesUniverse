@@ -36,6 +36,7 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
     private readonly Dictionary<NetEntity, OverwatchSquadView> _squadViews = new();
     private readonly Dictionary<NetEntity, PanelContainer> _squads = new();
     private readonly Dictionary<NetEntity, Dictionary<NetEntity, OverwatchRow>> _rows = new();
+    private readonly Dictionary<NetEntity, List<OverwatchMarine>> _marines = new();
     private SquadObjectivesWindow? _objectivesWindow;
 
     public OverwatchConsoleBui(EntityUid owner, Enum uiKey) : base(owner, uiKey)
@@ -52,6 +53,9 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
 
         Window = this.CreatePopOutableWindow<OverwatchConsoleWindow>();
         Window.OverwatchHeader.SetMarkupPermissive($"[color=#88C7FA]{Loc.GetString("rmc-overwatch-console-disabled-select-squad")}[/color]");
+        // cmu edit start
+        CMUOnWindowCreated();
+        // cmu edit end
 
         if (State is OverwatchConsoleBuiState s)
             RefreshState(s);
@@ -73,13 +77,21 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
             return;
         }
 
+        RefreshAntiAirHeader(s);
+
         var squads = s.Squads.ToList();
         squads.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
 
-        foreach (var (id, panel) in _squads)
+        foreach (var (id, panel) in _squads.ToArray())
         {
             if (squads.All(oldSquad => oldSquad.Id != id))
+            {
                 panel.Orphan();
+                _squads.Remove(id);
+                if (_squadViews.Remove(id, out var view))
+                    view.Orphan();
+                _rows.Remove(id);
+            }
         }
 
         foreach (var squad in squads)
@@ -95,6 +107,9 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
             };
 
             squadButton.OnPressed += _ => SendPredictedMessage(new OverwatchConsoleSelectSquadBuiMsg(squad.Id));
+            // cmu edit start
+            CMUStyleSquadButton(squadButton, squad.Color);
+            // cmu edit end
 
             var panel = CreatePanel();
             panel.AddChild(squadButton);
@@ -106,15 +121,39 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
         var roleSorting = new Dictionary<ProtoId<JobPrototype>, int>();
         var activeSquad = GetActiveSquad();
         var margin = new Thickness(2);
+        var tripodIds = s.Cameras.Values.SelectMany(cameras => cameras).Select(camera => camera.Id).ToHashSet();
         foreach (var squad in s.Squads)
         {
-            if (!s.Marines.TryGetValue(squad.Id, out var marines))
-                continue;
+            s.Marines.TryGetValue(squad.Id, out var squadMarines);
+            var marines = squadMarines?.ToList() ?? new List<OverwatchMarine>();
+            if (s.Cameras.TryGetValue(squad.Id, out var cameras))
+            {
+                foreach (var camera in cameras)
+                {
+                    marines.Add(new OverwatchMarine(
+                        camera.Id,
+                        camera.Id,
+                        camera.Name,
+                        MobState.Alive,
+                        false,
+                        null,
+                        true,
+                        camera.Location,
+                        camera.AreaName,
+                        null,
+                        null,
+                        null));
+                }
+            }
+            _marines[squad.Id] = marines;
 
             marines.Sort((a, b) =>
             {
                 int Sorting(OverwatchMarine marine)
                 {
+                    if (tripodIds.Contains(marine.Id))
+                        return int.MaxValue;
+
                     if (squad.Leader == marine.Id)
                         return 1000;
 
@@ -139,7 +178,7 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
 
             if (_squadViews.TryGetValue(squad.Id, out var monitor))
             {
-                monitor.RolesContainer.DisposeAllChildren();
+                monitor.RolesContainer.ReleaseChildren();
             }
             else
             {
@@ -147,13 +186,22 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                 monitor.Visible = squad.Id == activeSquad;
                 monitor.TacticalMapButton.OnPressed += _ => SendPredictedMessage(new OverwatchViewTacticalMapBuiMsg());
                 monitor.OperatorButton.OnPressed += _ => SendPredictedMessage(new OverwatchConsoleTakeOperatorBuiMsg());
-                monitor.SearchBar.OnTextChanged += _ => monitor.UpdateResults(
-                    console.Location,
-                    console.ShowDead,
-                    console.ShowHidden,
-                    marines,
-                    console
-                );
+                monitor.SearchBar.OnTextChanged += _ =>
+                {
+                    if (!EntMan.TryGetComponent(Owner, out OverwatchConsoleComponent? currentConsole))
+                        return;
+
+                    if (!_marines.TryGetValue(squad.Id, out var currentMarines))
+                        currentMarines = new List<OverwatchMarine>();
+
+                    monitor.UpdateResults(
+                        currentConsole.Location,
+                        currentConsole.ShowDead,
+                        currentConsole.ShowHidden,
+                        currentMarines,
+                        currentConsole
+                    );
+                };
 
                 monitor.ShowLocationButton.Label.ModulateSelfOverride = Color.Black;
                 monitor.ShowLocationButton.OnPressed += _ =>
@@ -211,8 +259,10 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                 monitor.OrbitalSaveButton.OnPressed +=
                     _ =>
                     {
-                        var longitude = (int)monitor.Longitude.Value;
-                        var latitude = (int)monitor.Latitude.Value;
+                        // cmu edit start: save the orbital coordinates, not the supply drop's
+                        var longitude = (int)monitor.OrbitalLongitude.Value;
+                        var latitude = (int)monitor.OrbitalLatitude.Value;
+                        // cmu edit end
                         var msg = new OverwatchConsoleOrbitalSaveBuiMsg(longitude, latitude);
                         SendPredictedMessage(msg);
                     };
@@ -291,8 +341,11 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                     }
                 };
 
-                monitor.FireteamsButton.OnPressed += _ =>
-                    SendPredictedMessage(new OverwatchConsoleOpenSquadFireteamsBuiMsg(squad.Id));
+                // cmu edit start: the Fireteams tab manages fireteams itself (CMUOverwatchFireteamPanel)
+                // monitor.FireteamsButton.OnPressed += _ =>
+                //     SendPredictedMessage(new OverwatchConsoleOpenSquadFireteamsBuiMsg(squad.Id));
+                // cmu edit end
+                monitor.OnStop += () => SendPredictedMessage(new OverwatchConsoleStopOverwatchBuiMsg());
 
                 var canSupplyDrop = EntMan.HasComponent<SupplyDropComputerComponent>(Owner) && squad.CanSupplyDrop;
                 TabContainer.SetTabVisible(monitor.SupplyDrop, canSupplyDrop);
@@ -309,12 +362,13 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                 }
 
                 _squadViews[squad.Id] = monitor;
+                // cmu edit start
+                CMUSetupSquadView(squad, monitor);
+                // cmu edit end
                 Window.SquadViewContainer.AddChild(monitor);
             }
 
             monitor.OverwatchLabel.Text = Loc.GetString("rmc-overwatch-console-dashboard", ("squadName", squad.Name));
-
-            monitor.OnStop += () => SendPredictedMessage(new OverwatchConsoleStopOverwatchBuiMsg());
 
             // Fireteams are handled by the SquadInfo UI (opened by Overwatch) so we don't populate them locally here.
 
@@ -339,13 +393,18 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                 row.Distance.Panel.Orphan();
                 row.Buttons.Container.Orphan();
 
-                _rows.Remove(id);
+                squadRows.Remove(id);
             }
 
+            // cmu edit start
+            var cmuRoster = new List<Content.Client.CMU14.Overwatch.CMURosterEntry>();
+            // cmu edit end
             foreach (var marine in marines)
             {
                 var roleName = Loc.GetString("rmc-overwatch-console-role-none");
                 string? rankName = null;
+                if (tripodIds.Contains(marine.Id))
+                    roleName = Loc.GetString("rmc-overwatch-tripod-camera-role");
                 if (marine.Role != null)
                 {
                     if (marine.RoleOverride is { } roleOverride && _localization.TryGetString(roleOverride, out var localizedName))
@@ -377,10 +436,13 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                 if (marine.Rank != null)
                 {
                     if (_prototypes.TryIndex(marine.Rank, out var rank))
-                        rankName = rank.Prefix;
+                        rankName = _localization.TryGetString($"rank-{rank.ID}.prefix", out var lp) ? lp : rank.Prefix;
                 }
 
                 var name = rankName != null ? $"{rankName} {marine.Name}" : marine.Name;
+                // cmu edit start
+                cmuRoster.Add(new Content.Client.CMU14.Overwatch.CMURosterEntry(marine, name, roleName, tripodIds.Contains(marine.Id)));
+                // cmu edit end
                 if (!squadRows.TryGetValue(marine.Id, out var row))
                 {
                     var watchButton = new Button
@@ -516,6 +578,9 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                     _ => (Loc.GetString("rmc-overwatch-console-state-conscious"), GreenColor),
                 };
 
+                if (tripodIds.Contains(marine.Id))
+                    mobState = Loc.GetString("rmc-overwatch-tripod-camera-active");
+
                 if (marine.SSD && marine.State != MobState.Dead)
                     mobState = $"{mobState} {Loc.GetString("rmc-overwatch-console-ssd")}";
 
@@ -545,10 +610,15 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                     row.Buttons.Hide.ToolTip = Loc.GetString("rmc-overwatch-console-hide-marine");
                 }
 
-                if (squad.Leader == marine.Id)
+                if (squad.Leader == marine.Id || tripodIds.Contains(marine.Id))
                 {
                     row.Buttons.Hide.Visible = false;
                     row.Buttons.Promote.Visible = false;
+                }
+                else
+                {
+                    row.Buttons.Hide.Visible = true;
+                    row.Buttons.Promote.Visible = true;
                 }
             }
 
@@ -626,7 +696,7 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                     Margin = new Thickness(0, 3, 0, 3)
                 };
                 var localeName = role.OverwatchRoleName is { } raw
-                    ? (Loc.TryGetString(raw, out var loc) ? loc : raw)
+                    ? (_localization.TryGetString(raw, out var loc) ? loc : raw)
                     : string.Empty;
                 roleNameLabel.SetMarkupPermissive($"[bold]{localeName}[/bold]");
 
@@ -702,7 +772,8 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
             });
 
             var totalCountLabel = new RichTextLabel();
-            totalCountLabel.SetMarkupPermissive($"[bold]{marines.Count} {Loc.GetString("rmc-overwatch-console-total")}[/bold]");
+            var marineCount = marines.Count(marine => !tripodIds.Contains(marine.Id));
+            totalCountLabel.SetMarkupPermissive($"[bold]{marineCount} {Loc.GetString("rmc-overwatch-console-total")}[/bold]");
 
             totalPanel.AddChild(new BoxContainer
             {
@@ -736,10 +807,42 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
 
             monitor.RolesContainer.AddChild(totalPanel);
             monitor.UpdateResults(console.Location, console.ShowDead, console.ShowHidden, marines, console);
+            // cmu edit start
+            CMUUpdateRoster(squad, monitor, cmuRoster, s, console);
+            // cmu edit end
         }
 
         UpdateView();
         UpdateObjectivesWindow(s);
+    }
+
+    private void RefreshAntiAirHeader(OverwatchConsoleBuiState s)
+    {
+        if (Window == null)
+            return;
+
+        var selectSquad = Loc.GetString("rmc-overwatch-console-disabled-select-squad");
+        if (!s.AntiAir.HasConsole)
+        {
+            Window.OverwatchHeader.SetMarkupPermissive($"[color=#88C7FA]{selectSquad}[/color]");
+            return;
+        }
+
+        var status = s.AntiAir.Disabled
+            ? Loc.GetString("rmc-anti-air-status-disabled")
+            : Loc.GetString("rmc-anti-air-status-operational");
+
+        var zone = s.AntiAir.ProtectedZone ?? Loc.GetString("rmc-anti-air-zone-none");
+        var engagement = !s.AntiAir.Disabled && s.AntiAir.ProtectedZone != null
+            ? Loc.GetString("rmc-anti-air-status-engaged")
+            : Loc.GetString("rmc-anti-air-status-disengaged");
+
+        var antiAir = Loc.GetString("rmc-overwatch-anti-air-status",
+            ("status", status),
+            ("zone", zone),
+            ("engagement", engagement));
+
+        Window.OverwatchHeader.SetMarkupPermissive($"[color=#88C7FA]{selectSquad}[/color]\n[color=#CED22B]{antiAir}[/color]");
     }
 
     private void UpdateObjectivesWindow(OverwatchConsoleBuiState s)
@@ -842,8 +945,9 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
             }
 
             AddSaving(squad.OrbitalLongitudes, squad.OrbitalLatitudes, squad.OrbitalComments, squad.OrbitalSaves, margin);
+            // cmu edit start: the orbital tab lists and loads its own saved coordinates
             AddSavedLocation(
-                console.SavedLocations,
+                console.OrbitalSavedLocations,
                 margin,
                 squad.OrbitalLongitudes,
                 squad.OrbitalLatitudes,
@@ -851,22 +955,28 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
                 squad.OrbitalSaves,
                 location =>
                 {
-                    squad.Longitude.Value = location.Longitude;
-                    squad.Latitude.Value = location.Latitude;
+                    squad.OrbitalLongitude.Value = location.Longitude;
+                    squad.OrbitalLatitude.Value = location.Latitude;
 
                     SendPredictedMessage(new OverwatchConsoleOrbitalLongitudeBuiMsg(location.Longitude));
                     SendPredictedMessage(new OverwatchConsoleOrbitalLatitudeBuiMsg(location.Latitude));
-                }
+                },
+                orbital: true
             );
+            // cmu edit end
 
             squad.HasOrbital = console.HasOrbital;
             squad.NextOrbitalAt = console.NextOrbitalLaunch;
         }
+
+        // cmu edit start
+        CMUApplyTheme();
+        // cmu edit end
     }
 
     private void AddSaving(BoxContainer longitudes, BoxContainer latitudes, BoxContainer comments, BoxContainer saves, Thickness margin)
     {
-        longitudes.DisposeAllChildren();
+        longitudes.ReleaseChildren();
 
         var panel = CreatePanel(50);
         panel.AddChild(new Label
@@ -876,7 +986,7 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
         });
         longitudes.AddChild(panel);
 
-        latitudes.DisposeAllChildren();
+        latitudes.ReleaseChildren();
         panel = CreatePanel(50);
         panel.AddChild(new Label
         {
@@ -885,7 +995,7 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
         });
         latitudes.AddChild(panel);
 
-        comments.DisposeAllChildren();
+        comments.ReleaseChildren();
         panel = CreatePanel(50);
         panel.AddChild(new Label
         {
@@ -894,7 +1004,7 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
         });
         comments.AddChild(panel);
 
-        saves.DisposeAllChildren();
+        saves.ReleaseChildren();
         panel = CreatePanel(50);
         panel.AddChild(new Label
         {
@@ -912,7 +1022,10 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
         BoxContainer latitudes,
         BoxContainer comments,
         BoxContainer saves,
-        Action<OverwatchSavedLocation> onSave)
+        // cmu edit start
+        Action<OverwatchSavedLocation> onSave,
+        bool orbital = false)
+        // cmu edit end
     {
         for (var i = 0; i < locations.Length; i++)
         {
@@ -937,7 +1050,15 @@ public sealed partial class OverwatchConsoleBui : RMCPopOutBui<OverwatchConsoleW
 
             var comment = new LineEdit { Text = $"{location.Comment}" };
             var index = i;
-            comment.OnTextEntered += args => SaveComment(index, args.Text);
+            // cmu edit start: orbital comments go to the orbital list
+            comment.OnTextEntered += args =>
+            {
+                if (orbital)
+                    SendPredictedMessage(new OverwatchConsoleOrbitalCommentBuiMsg(index, args.Text.Length > 50 ? args.Text[..50] : args.Text));
+                else
+                    SaveComment(index, args.Text);
+            };
+            // cmu edit end
 
             panel = CreatePanel(50);
             panel.AddChild(comment);

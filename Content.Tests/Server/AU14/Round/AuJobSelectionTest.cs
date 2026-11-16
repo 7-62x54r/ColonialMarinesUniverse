@@ -1,15 +1,58 @@
-using Content.Server.AU14.Round;
-using Content.Shared.AU14.Threats;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using Content.Server.CMU14.Threats;
+using Content.Server.CMU14.Round;
+using Content.Server.GameTicking;
+using Content.Shared.Body;
+using Content.Shared._RMC14.Rules;
+using Content.Shared.CMU14.Threats;
 using Content.Shared.Preferences;
 using Content.Shared.Roles;
 using NUnit.Framework;
+using Robust.Shared.IoC;
+using Robust.Shared.Network;
 using Robust.Shared.Prototypes;
+using Robust.Shared.Serialization.Manager;
 
-namespace Content.Tests.Server.AU14.Round;
+namespace Content.Tests.Server.CMU14.Round;
 
 [TestFixture]
-public sealed class AuJobSelectionTest
+[NonParallelizable]
+public sealed class AuJobSelectionTest : ContentUnitTest
 {
+    protected override Type[] ExtraComponents => [typeof(InitialBodyComponent)];
+
+    private const string ProfilePrototypes = """
+        - type: entity
+          id: TestHuman
+
+        - type: skinColoration
+          id: HumanToned
+          strategy: !type:HumanTonedSkinColoration {}
+
+        - type: species
+          id: Human
+          name: test-species-human
+          roundStart: true
+          prototype: TestHuman
+          dollPrototype: TestHuman
+          skinColoration: HumanToned
+        """;
+
+    [OneTimeSetUp]
+    public void InitializeProfilePrototypes()
+    {
+        IoCManager.Resolve<ISerializationManager>().Initialize();
+
+        var prototypeManager = IoCManager.Resolve<IPrototypeManager>();
+        prototypeManager.Initialize();
+        prototypeManager.LoadString(ProfilePrototypes);
+        prototypeManager.ResolveResults();
+    }
+
     [Test]
     public void ThreatJobEligibilityAllowsEmptyThreatPreferenceList()
     {
@@ -28,20 +71,444 @@ public sealed class AuJobSelectionTest
     public void ThreatJobEligibilityRequiresSelectedThreatPreference()
     {
         var threatMember = new ProtoId<JobPrototype>("AU14JobThreatMember");
-        var abomination = new ProtoId<ThreatPrototype>("abominationsThreat");
+        var biomorph = new ProtoId<ThreatPrototype>("BiomorphsThreatCF"); // CMU14
         var xeno = new ProtoId<ThreatPrototype>("XenoThreat");
 
         var profile = HumanoidCharacterProfile.DefaultWithSpecies()
             .WithGamemodeJobPriority("DistressSignal", threatMember, JobPriority.High)
-            .WithGamemodeThreatPreference("DistressSignal", abomination, false)
+            .WithGamemodeThreatPreference("DistressSignal", biomorph, false) // CMU14
             .WithGamemodeThreatPreference("DistressSignal", xeno, true);
 
         Assert.That(
-            AuJobSelectionSystem.CanAssignThreatJob(profile, "DistressSignal", threatMember, abomination),
+            AuJobSelectionSystem.CanAssignThreatJob(profile, "DistressSignal", threatMember, biomorph), // CMU14
             Is.False);
 
         Assert.That(
             AuJobSelectionSystem.CanAssignThreatJob(profile, "DistressSignal", threatMember, xeno),
             Is.True);
+    }
+
+    [Test]
+    public void ThreatVoteSpawnAssignmentsDoNotPromoteMembersToLeaderSlots()
+    {
+        var memberOnly = new NetUserId(new Guid("00000000-0000-0000-0000-000000000001"));
+        var leader = new NetUserId(new Guid("00000000-0000-0000-0000-000000000002"));
+        var heldAssignments = new List<ThreatVoteAssignment>
+        {
+            new(memberOnly, ThreatVoteSelection.ThreatMemberJobId),
+            new(leader, ThreatVoteSelection.ThreatLeaderJobId),
+        };
+
+        var assignments = ThreatVoteSelection.BuildSpawnAssignments(heldAssignments, leaderBodies: 1, memberBodies: 1);
+
+        Assert.That(
+            assignments,
+            Has.Some.EqualTo(new ThreatVoteAssignment(leader, ThreatVoteSelection.ThreatLeaderJobId)));
+        Assert.That(
+            assignments,
+            Has.Some.EqualTo(new ThreatVoteAssignment(memberOnly, ThreatVoteSelection.ThreatMemberJobId)));
+        Assert.That(
+            assignments,
+            Has.None.EqualTo(new ThreatVoteAssignment(memberOnly, ThreatVoteSelection.ThreatLeaderJobId)));
+    }
+
+    [Test]
+    public void ThreatVoteHeldAssignmentsReserveLeaderSlotsBeforeMembers()
+    {
+        var member = new NetUserId(new Guid("00000000-0000-0000-0000-000000000001"));
+        var leader = new NetUserId(new Guid("00000000-0000-0000-0000-000000000002"));
+        var candidateThreats = new List<ProtoId<ThreatPrototype>>
+        {
+            new("XenoThreat"),
+        };
+        var shuffledPlayers = new List<NetUserId>
+        {
+            member,
+            leader,
+        };
+        var profiles = new Dictionary<NetUserId, HumanoidCharacterProfile>
+        {
+            [member] = HumanoidCharacterProfile.DefaultWithSpecies()
+                .WithGamemodeJobPriority("DistressSignal", ThreatVoteSelection.ThreatMemberJobId, JobPriority.High),
+            [leader] = HumanoidCharacterProfile.DefaultWithSpecies()
+                .WithGamemodeJobPriority("DistressSignal", ThreatVoteSelection.ThreatLeaderJobId, JobPriority.High),
+        };
+
+        var assignments = ThreatVoteSelection.BuildHeldAssignments(
+            shuffledPlayers,
+            profiles,
+            candidateThreats,
+            leaderSlots: 1,
+            memberSlots: 1,
+            presetId: "DistressSignal");
+
+        Assert.That(assignments, Is.EqualTo(new List<ThreatVoteAssignment>
+        {
+            new(leader, ThreatVoteSelection.ThreatLeaderJobId),
+            new(member, ThreatVoteSelection.ThreatMemberJobId),
+        }));
+    }
+
+    // BUG-1061: a volunteer without the queen's playtime took her slot, then the force wouldn't let them in
+    [Test]
+    public void ThreatVoteHeldAssignmentsSkipPlayersWhoCannotPlayTheJob()
+    {
+        var unqualified = new NetUserId(new Guid("00000000-0000-0000-0000-000000000001"));
+        var qualified = new NetUserId(new Guid("00000000-0000-0000-0000-000000000002"));
+        var candidateThreats = new List<ProtoId<ThreatPrototype>> { new("XenoThreat") };
+        var leaderAndMember = HumanoidCharacterProfile.DefaultWithSpecies()
+            .WithGamemodeJobPriority("DistressSignal", ThreatVoteSelection.ThreatLeaderJobId, JobPriority.High)
+            .WithGamemodeJobPriority("DistressSignal", ThreatVoteSelection.ThreatMemberJobId, JobPriority.Medium);
+        var profiles = new Dictionary<NetUserId, HumanoidCharacterProfile>
+        {
+            [unqualified] = leaderAndMember,
+            [qualified] = leaderAndMember,
+        };
+
+        var assignments = ThreatVoteSelection.BuildHeldAssignments(
+            new List<NetUserId> { unqualified, qualified },
+            profiles,
+            candidateThreats,
+            leaderSlots: 1,
+            memberSlots: 1,
+            presetId: "DistressSignal",
+            canPlayJob: (player, job) => player != unqualified || job != ThreatVoteSelection.ThreatLeaderJobId);
+
+        // the unqualified one still gets a larva slot, the queen goes to someone who can take her
+        Assert.That(assignments, Is.EqualTo(new List<ThreatVoteAssignment>
+        {
+            new(qualified, ThreatVoteSelection.ThreatLeaderJobId),
+            new(unqualified, ThreatVoteSelection.ThreatMemberJobId),
+        }));
+    }
+
+    [TestCase(0, 0)]
+    [TestCase(1, 1)]
+    [TestCase(10, 3)]
+    [TestCase(15, 4)]
+    [TestCase(20, 5)]
+    [TestCase(100, 25)]
+    public void ThreatPlayerBudgetUsesReadyPopulation(int readyPlayerCount, int expectedBudget)
+    {
+        Assert.That(
+            ThreatVoteSelection.CalculateThreatPlayerBudget(readyPlayerCount, 0.25f),
+            Is.EqualTo(expectedBudget));
+    }
+
+    [Test]
+    public void ThreatBodyCountIsLimitedToPlayerBudget()
+    {
+        ThreatVoteBodyCount bodyCount = ThreatVoteSelection.LimitBodyCount(
+            new ThreatVoteBodyCount(2, 8),
+            maxTotal: 4);
+
+        Assert.That(bodyCount, Is.EqualTo(new ThreatVoteBodyCount(2, 2)));
+    }
+
+    [Test]
+    public void ThreatVoteReservationDoesNotCombineCandidateMaximums()
+    {
+        ThreatVoteBodyCount bodyCount = ThreatVoteSelection.GetRequiredVoteBodyCount(
+        [
+            new ThreatVoteBodyCount(1, 3),
+            new ThreatVoteBodyCount(2, 2),
+        ]);
+
+        Assert.That(bodyCount, Is.EqualTo(new ThreatVoteBodyCount(2, 2)));
+    }
+
+    [Test]
+    public void ThreatSpawnBodiesAreLimitedUsingSameLeaderFirstBudget()
+    {
+        var leaders = new Dictionary<string, int>
+        {
+            ["Leader"] = 2,
+        };
+        var members = new Dictionary<string, int>
+        {
+            ["Mimic"] = 4,
+            ["Spider"] = 2,
+            ["Skitter"] = 2,
+        };
+
+        ThreatVoteSelection.LimitBodies(leaders, members, maxTotal: 4);
+
+        Assert.That(leaders.Values.Sum(), Is.EqualTo(2));
+        Assert.That(members.Values.Sum(), Is.EqualTo(2));
+    }
+
+    [Test]
+    public void ThreatVoteRoundJoinBlockTracksHeldPlayersUntilCleared()
+    {
+        var held = new NetUserId(new Guid("00000000-0000-0000-0000-000000000001"));
+        var other = new NetUserId(new Guid("00000000-0000-0000-0000-000000000002"));
+        var vote = new ThreatVoteSystem();
+
+        vote.BlockRoundJoinsForHeldPlayers([held]);
+
+        Assert.That(vote.IsRoundJoinBlocked(held), Is.True);
+        Assert.That(vote.IsRoundJoinBlocked(other), Is.False);
+
+        vote.ClearRoundJoinBlocks();
+
+        Assert.That(vote.IsRoundJoinBlocked(held), Is.False);
+    }
+
+    [Test]
+    public void ThirdPartyBodyBudgetUsesRatioAndThreatBodyCap()
+    {
+        Assert.That(
+            AuRoundSystem.CalculateThirdPartyBodyBudget(35, 0.15f),
+            Is.EqualTo(5));
+        Assert.That(
+            AuRoundSystem.CalculateThirdPartyBodyBudget(35, 0.15f, new ThreatVoteBodyCount(1, 4)),
+            Is.EqualTo(5));
+        Assert.That(
+            AuRoundSystem.CalculateThirdPartyBodyBudget(35, 0.15f, new ThreatVoteBodyCount(1, 2)),
+            Is.EqualTo(3));
+    }
+
+    [Test]
+    public void ThirdPartySelectionSkipsPartiesThatDoNotFitRemainingBodyBudget()
+    {
+        var large = CreateThirdPartyPrototype("Large");
+        var medium = CreateThirdPartyPrototype("Medium");
+        var small = CreateThirdPartyPrototype("Small");
+        var bodyCounts = new Dictionary<ThirdPartyPrototype, int>
+        {
+            [large] = 8,
+            [medium] = 4,
+            [small] = 2,
+        };
+
+        var selected = AuRoundSystem.SelectThirdPartiesWithinBodyBudget(
+            [large, medium, small],
+            maxThirdParties: 7,
+            bodyBudget: 5,
+            PickFirst,
+            party => bodyCounts[party],
+            out var selectedBodies);
+
+        Assert.That(selected, Is.EqualTo(new List<ThirdPartyPrototype> { medium }));
+        Assert.That(selectedBodies, Is.EqualTo(4));
+        return;
+
+        static ThirdPartyPrototype PickFirst(IReadOnlyList<ThirdPartyPrototype> candidates)
+            => candidates[0];
+    }
+
+    [Test]
+    public void ThirdPartySelectionDoesNotSelectDuplicatePrototypeIds()
+    {
+        var duplicate = CreateThirdPartyPrototype("Duplicate");
+        var duplicateWithDifferentCase = CreateThirdPartyPrototype("duplicate");
+        var other = CreateThirdPartyPrototype("Other");
+
+        var selected = AuRoundSystem.SelectThirdPartiesWithinBodyBudget(
+            [duplicate, duplicateWithDifferentCase, other],
+            maxThirdParties: 3,
+            bodyBudget: 3,
+            PickFirst,
+            _ => 1,
+            out var selectedBodies);
+
+        Assert.That(selected, Is.EqualTo(new[] { duplicate, other }));
+        Assert.That(selectedBodies, Is.EqualTo(2));
+        return;
+
+        static ThirdPartyPrototype PickFirst(IReadOnlyList<ThirdPartyPrototype> candidates)
+            => candidates[0];
+    }
+
+    [Test]
+    public void DistressSignalThirdPartyFillUsesRemainingThreatCapacity()
+    {
+        var lockedLarge = CreateThirdPartyPrototype("LockedLarge");
+        var lockedSmall = CreateThirdPartyPrototype("LockedSmall");
+        var tooLarge = CreateThirdPartyPrototype("TooLarge");
+        var fits = CreateThirdPartyPrototype("Fits");
+        var tiny = CreateThirdPartyPrototype("Tiny");
+        var bodyCounts = new Dictionary<ThirdPartyPrototype, int>
+        {
+            [lockedLarge] = 4,
+            [lockedSmall] = 2,
+            [tooLarge] = 4,
+            [fits] = 2,
+            [tiny] = 1,
+        };
+
+        var additional = AuRoundSystem.SelectAdditionalDistressSignalThirdParties(
+            [lockedLarge, lockedSmall, tooLarge, fits, tiny],
+            [lockedLarge, lockedSmall],
+            maxThirdParties: 3,
+            bodyBudget: 9,
+            PickFirst,
+            party => bodyCounts[party],
+            out var lockedBodies,
+            out var additionalBodies);
+
+        Assert.That(additional, Is.EqualTo(new[] { fits }));
+        Assert.That(lockedBodies, Is.EqualTo(6));
+        Assert.That(additionalBodies, Is.EqualTo(2));
+        return;
+
+        static ThirdPartyPrototype PickFirst(IReadOnlyList<ThirdPartyPrototype> candidates)
+            => candidates[0];
+    }
+
+    [Test]
+    public void DistressSignalThirdPartyFillPreservesAnnouncedSurvivorCount()
+    {
+        var lockedSurvivor = CreateThirdPartyPrototype(
+            "LockedSurvivor",
+            roundStart: true,
+            announceAsSurvivors: true);
+        var duplicateLockedParty = CreateThirdPartyPrototype("LockedSurvivor");
+        var additionalSurvivor = CreateThirdPartyPrototype(
+            "AdditionalSurvivor",
+            roundStart: true,
+            announceAsSurvivors: true);
+        var delayedSurvivor = CreateThirdPartyPrototype(
+            "DelayedSurvivor",
+            announceAsSurvivors: true);
+        var unrelatedRoundStart = CreateThirdPartyPrototype("UnrelatedRoundStart", roundStart: true);
+        var bodyCounts = new Dictionary<ThirdPartyPrototype, int>
+        {
+            [lockedSurvivor] = 3,
+            [duplicateLockedParty] = 3,
+            [additionalSurvivor] = 2,
+            [delayedSurvivor] = 2,
+            [unrelatedRoundStart] = 1,
+        };
+
+        var additional = AuRoundSystem.SelectAdditionalDistressSignalThirdParties(
+            [duplicateLockedParty, additionalSurvivor, delayedSurvivor, unrelatedRoundStart],
+            [lockedSurvivor],
+            maxThirdParties: 3,
+            bodyBudget: 10,
+            PickFirst,
+            party => bodyCounts[party],
+            out var lockedBodies,
+            out var additionalBodies);
+
+        Assert.That(additional, Is.EqualTo(new[] { delayedSurvivor, unrelatedRoundStart }));
+        Assert.That(lockedBodies, Is.EqualTo(3));
+        Assert.That(additionalBodies, Is.EqualTo(3));
+        Assert.That(
+            AuRoundSystem.CalculateAnnouncedSurvivorCount(
+                new[] { lockedSurvivor }.Concat(additional),
+                party => bodyCounts[party]),
+            Is.EqualTo(3));
+        return;
+
+        static ThirdPartyPrototype PickFirst(IReadOnlyList<ThirdPartyPrototype> candidates)
+            => candidates[0];
+    }
+
+    [Test]
+    public void DistressSignalThirdPartyLimitsUseMostRestrictiveThreat()
+    {
+        var limits = AuRoundSystem.GetConservativeThirdPartyLimits(
+        [
+            (MaxThirdParties: 7, BodyBudget: 8),
+            (MaxThirdParties: 3, BodyBudget: 10),
+            (MaxThirdParties: 5, BodyBudget: 4),
+        ]);
+
+        Assert.That(limits.MaxThirdParties, Is.EqualTo(3));
+        Assert.That(limits.BodyBudget, Is.EqualTo(4));
+        Assert.That(AuRoundSystem.GetConservativeThirdPartyLimits([]), Is.EqualTo(default((int, int))));
+    }
+
+    [Test]
+    public void SurvivorCountIncludesOnlyApprovedPartyFamilies()
+    {
+        var approvedRoundStart = CreateThirdPartyPrototype(roundStart: true, announceAsSurvivors: true);
+        var approvedDelayed = CreateThirdPartyPrototype(announceAsSurvivors: true);
+        var unrelated = CreateThirdPartyPrototype(roundStart: true);
+        var bodyCounts = new Dictionary<ThirdPartyPrototype, int>
+        {
+            [approvedRoundStart] = 3,
+            [approvedDelayed] = 2,
+            [unrelated] = 8,
+        };
+
+        var count = AuRoundSystem.CalculateAnnouncedSurvivorCount(
+            [approvedRoundStart, approvedDelayed, unrelated],
+            party => bodyCounts[party]);
+
+        Assert.That(count, Is.EqualTo(3));
+    }
+
+    [Test]
+    public void ResettingDistressSignalLockPreservesOrdinaryThirdPartySelection()
+    {
+        var state = new AuRoundSelectionState();
+        var ordinaryParty = CreateThirdPartyPrototype();
+        state.SelectedThirdParties.Add(ordinaryParty);
+
+        state.ResetDistressSignalThirdPartyLock();
+
+        Assert.That(state.SelectedThirdParties, Is.EqualTo(new[] { ordinaryParty }));
+
+        state.DistressSignalThirdPartiesLocked = true;
+        state.DistressSignalThirdPartyFillCompleted = true;
+        state.DistressSignalSurvivorCount = 3;
+        state.ResetDistressSignalThirdPartyLock();
+
+        Assert.That(state.SelectedThirdParties, Is.Empty);
+        Assert.That(state.DistressSignalThirdPartiesLocked, Is.False);
+        Assert.That(state.DistressSignalThirdPartyFillCompleted, Is.False);
+        Assert.That(state.DistressSignalSurvivorCount, Is.Zero);
+    }
+
+    // cmu edit start
+
+    [Test]
+    public void DistressSignalLeavesItsLeftoverCapacityToCallIns()
+    {
+        var locked = CreateThirdPartyPrototype("Locked");
+        var candidates = Enumerable.Range(0, 6).Select(i => CreateThirdPartyPrototype($"Random{i}")).ToList();
+
+        var additional = AuRoundSystem.SelectAdditionalDistressSignalThirdParties(
+            candidates,
+            [locked],
+            maxThirdParties: 5,
+            bodyBudget: 20,
+            PickFirst,
+            _ => 1,
+            out _,
+            out var additionalBodies,
+            AuRoundSystem.DistressSignalRandomThirdPartyShare);
+
+        // Four slots are left after the locked party; Distress Signal leaves them for call-ins.
+        Assert.That(additional, Is.Empty);
+        Assert.That(additionalBodies, Is.EqualTo(0));
+        return;
+
+        static ThirdPartyPrototype PickFirst(IReadOnlyList<ThirdPartyPrototype> candidates)
+            => candidates[0];
+    }
+    // cmu edit end
+
+    private static ThirdPartyPrototype CreateThirdPartyPrototype(
+        string id = "TestThirdParty",
+        bool roundStart = false,
+        bool announceAsSurvivors = false)
+    {
+        var party = (ThirdPartyPrototype) RuntimeHelpers.GetUninitializedObject(typeof(ThirdPartyPrototype));
+        typeof(ThirdPartyPrototype)
+            .GetField($"<{nameof(ThirdPartyPrototype.ID)}>k__BackingField",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(party, id);
+        typeof(ThirdPartyPrototype)
+            .GetField($"<{nameof(ThirdPartyPrototype.RoundStart)}>k__BackingField",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(party, roundStart);
+        typeof(ThirdPartyPrototype)
+            .GetField($"<{nameof(ThirdPartyPrototype.AnnounceAsSurvivors)}>k__BackingField",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(party, announceAsSurvivors);
+        return party;
     }
 }

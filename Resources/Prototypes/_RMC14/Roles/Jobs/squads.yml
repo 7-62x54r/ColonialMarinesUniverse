@@ -222,7 +222,7 @@
 - type: entity
   parent: SquadBase
   id: SquadPara
-  name: Para Marines
+  name: IASF
   components:
   - type: SquadTeam
     color: "#3D6F43"
@@ -265,7 +265,7 @@
     - Goggles
     - Armor
     - Gloves
-    radio: Provost
+    radio: radioProvost
     minimapBackground:
       sprite: /Textures/_RMC14/Interface/map_blips.rsi
       state: background_twe

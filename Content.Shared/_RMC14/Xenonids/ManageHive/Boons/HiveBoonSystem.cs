@@ -10,6 +10,7 @@ using Content.Shared._RMC14.GameTicking;
 using Content.Shared._RMC14.Map;
 using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Marines.Announce;
+using Content.Shared._RMC14.PlayTimeTracking;
 using Content.Shared._RMC14.Repairable;
 using Content.Shared._RMC14.Rules;
 using Content.Shared._RMC14.Xenonids.Announce;
@@ -17,14 +18,16 @@ using Content.Shared._RMC14.Xenonids.Construction;
 using Content.Shared._RMC14.Xenonids.Hive;
 using Content.Shared._RMC14.Xenonids.Weeds;
 using Content.Shared.Coordinates;
+using Content.Shared.Damage;
 using Content.Shared.Examine;
 using Content.Shared.GameTicking;
 using Content.Shared.Mind;
 using Content.Shared.Mobs.Systems;
-using Content.Shared.Players.PlayTimeTracking;
 using Content.Shared.Popups;
 using Content.Shared.Roles;
+using Content.Shared.Weapons.Melee.Events;
 using Robust.Shared.Configuration;
+using Robust.Shared.GameStates;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
 using Robust.Shared.Player;
@@ -49,13 +52,13 @@ public sealed partial class HiveBoonSystem : EntitySystem
     [Dependency] private SharedMindSystem _mind = default!;
     [Dependency] private MobStateSystem _mobState = default!;
     [Dependency] private INetManager _net = default!;
-    [Dependency] private ISharedPlaytimeManager _playtime = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
     [Dependency] private IPrototypeManager _prototype = default!;
     [Dependency] private IRobustRandom _random = default!;
     [Dependency] private SharedRMCGameTickerSystem _rmcGameTicker = default!;
     [Dependency] private RMCMapSystem _rmcMap = default!;
     [Dependency] private RMCPlanetSystem _rmcPlanet = default!;
+    [Dependency] private SharedRMCPlayTimeManager _rmcPlaytime = default!;
     [Dependency] private ISerializationManager _serialization = default!;
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private SharedXenoAnnounceSystem _xenoAnnounce = default!;
@@ -80,16 +83,21 @@ public sealed partial class HiveBoonSystem : EntitySystem
 
     private EntityQuery<ExcludedFromKingVoteComponent> _excludedFromKingVoteQuery;
 
-    private readonly HashSet<ProtoId<PlayTimeTrackerPrototype>> _xenoJobs = new();
-
     public override void Initialize()
     {
         _excludedFromKingVoteQuery = GetEntityQuery<ExcludedFromKingVoteComponent>();
+
+        SubscribeLocalEvent<HiveBoonsComponent, ComponentGetState>(OnBoonsGetState);
+        SubscribeLocalEvent<HiveBoonsComponent, ComponentHandleState>(OnBoonsHandleState);
 
         SubscribeLocalEvent<PrototypesReloadedEventArgs>(OnPrototypesReloaded);
         SubscribeLocalEvent<HiveBoonActivateFireResistanceEvent>(OnActivateFireResistance);
         SubscribeLocalEvent<HiveBoonActivateLarvaSurgeEvent>(OnActivateLarvaSurge);
         SubscribeLocalEvent<HiveBoonActivateKingEvent>(OnActivateKing);
+        SubscribeLocalEvent<HiveBoonActivateEvolutionEvent>(OnActivateEvolution);
+        SubscribeLocalEvent<HiveBoonActivateAggressionEvent>(OnActivateAggression);
+
+        SubscribeLocalEvent<GetMeleeDamageEvent>(OnGetMeleeDamage);
 
         SubscribeLocalEvent<XenoComponent, RMCGetFireImmunityEvent>(OnGetTileFireImmunity);
         SubscribeLocalEvent<XenoComponent, GetIgnitionImmunityEvent>(OnGetTileFireIgnitionImmunity);
@@ -163,20 +171,31 @@ public sealed partial class HiveBoonSystem : EntitySystem
 
     private void OnActivateLarvaSurge(HiveBoonActivateLarvaSurgeEvent ev)
     {
-        _hive.IncreaseBurrowedLarva(ev.Hive, 5);
+        _hive.ChangeBurrowedLarva(ev.Hive, 5);
         _xenoAnnounce.AnnounceSameHiveDefaultSound(ev.Boon, "The Queen has awakened 5 extra burrowed larva to join the hive!");
+    }
+
+    private void OnActivateEvolution(HiveBoonActivateEvolutionEvent ev)
+    {
+        _xenoAnnounce.AnnounceSameHiveDefaultSound(ev.Boon, "The Queen has hastened our growth. We will mature far quicker!");
+    }
+
+    private void OnActivateAggression(HiveBoonActivateAggressionEvent ev)
+    {
+        _xenoAnnounce.AnnounceSameHiveDefaultSound(ev.Boon, "The Queen has sharpened our claws. Our strikes will land far harder!");
     }
 
     private void OnActivateKing(HiveBoonActivateKingEvent ev)
     {
+
+        if (ev.Core is not { } core)
+            return;
+
         var pylonQuery = EntityQueryEnumerator<HivePylonComponent>();
         while (pylonQuery.MoveNext(out var uid, out _))
         {
             _area.TrySetCanOrbitalBombardRoofing(uid, false);
         }
-
-        if (ev.Core is not { } core)
-            return;
 
         var cocoon = SpawnAtPosition(KingCocoonId, core.ToCoordinates());
         _hive.SetHive(cocoon, ev.Hive);
@@ -207,6 +226,21 @@ public sealed partial class HiveBoonSystem : EntitySystem
         {
             if (_hive.FromSameHive(uid, xeno.Owner))
                 args.Ignite = false;
+        }
+    }
+
+    private void OnGetMeleeDamage(ref GetMeleeDamageEvent args)
+    {
+        if (!HasComp<XenoComponent>(args.User))
+            return;
+
+        var query = EntityQueryEnumerator<HiveBoonMeleeDamageComponent>();
+        while (query.MoveNext(out var uid, out var boon))
+        {
+            if (!_hive.FromSameHive(uid, args.User))
+                continue;
+
+            args.Damage += new DamageSpecifier(_prototype.Index(boon.DamageGroup), boon.Amount);
         }
     }
 
@@ -354,8 +388,6 @@ public sealed partial class HiveBoonSystem : EntitySystem
 
     private void StartKingVote(Entity<HiveKingCocoonComponent> cocoon)
     {
-        RefreshXenoJobs();
-
         var hasEligibleCandidate = false;
         var xenosQuery = EntityQueryEnumerator<ActorComponent, XenoComponent>();
         while (xenosQuery.MoveNext(out var uid, out var actor, out _))
@@ -380,8 +412,6 @@ public sealed partial class HiveBoonSystem : EntitySystem
 
     private void OpenKingVoteForVoters(Entity<HiveKingCocoonComponent> cocoon)
     {
-        RefreshXenoJobs();
-
         var vote = EnsureVote(cocoon);
         var netCocoon = GetNetEntity(cocoon);
 
@@ -407,16 +437,6 @@ public sealed partial class HiveBoonSystem : EntitySystem
                 continue;
 
             _dialog.OpenOptions(uid, "Choose a sister", options, "Vote for a sister you wish to become the King.");
-        }
-    }
-
-    private void RefreshXenoJobs()
-    {
-        _xenoJobs.Clear();
-        foreach (var prototype in _prototype.EnumeratePrototypes<PlayTimeTrackerPrototype>())
-        {
-            if (prototype.IsXeno)
-                _xenoJobs.Add(prototype.ID);
         }
     }
 
@@ -448,27 +468,16 @@ public sealed partial class HiveBoonSystem : EntitySystem
         }
 
         canVote = true;
-        IReadOnlyDictionary<string, TimeSpan> playTimes;
+
         try
         {
-            playTimes = _playtime.GetPlayTimes(xeno.Comp.PlayerSession);
+            if (_rmcPlaytime.GetTotalXenoPlaytime(xeno.Comp.PlayerSession) < _kingVoteCandidateTimeRequired)
+                return;
         }
         catch
         {
             return;
         }
-
-        var totalTime = TimeSpan.Zero;
-        foreach (var (jobId, jobTime) in playTimes)
-        {
-            if (!_xenoJobs.Contains(jobId))
-                continue;
-
-            totalTime += jobTime;
-        }
-
-        if (totalTime < _kingVoteCandidateTimeRequired)
-            return;
 
         canBeKing = true;
     }
@@ -522,16 +531,26 @@ public sealed partial class HiveBoonSystem : EntitySystem
             return;
         }
 
-        foreach (var curWeed in oldWeeds.Spread)
+        foreach (var curWeed in oldWeeds.Spread.ToArray())
         {
+            if (TerminatingOrDeleted(curWeed))
+            {
+                oldWeeds.Spread.Remove(curWeed);
+                continue;
+            }
+
             var curWeedComp = EnsureComp<XenoWeedsComponent>(curWeed);
             curWeedComp.Range = newWeedSourceComp.Range;
             curWeedComp.Source = newWeedSource;
-            newWeedSourceComp.Spread.Add(curWeed);
+            Dirty(curWeed, curWeedComp);
+
+            if (!newWeedSourceComp.Spread.Contains(curWeed))
+                newWeedSourceComp.Spread.Add(curWeed);
         }
 
         oldWeeds.Spread.Clear();
         Dirty(cluster, oldWeeds);
+        Dirty(newWeedSource, newWeedSourceComp);
 
         RemComp<XenoWeedsSpreadingComponent>(newWeedSource);
         QueueDel(cluster);
@@ -540,7 +559,7 @@ public sealed partial class HiveBoonSystem : EntitySystem
     public void TryActivateBoon(Entity<ManageHiveComponent> manage, EntProtoId<HiveBoonDefinitionComponent> boon)
     {
         if (!_prototype.TryIndex(boon, out var boonProto) ||
-            !boonProto.TryGetComponent(out HiveBoonDefinitionComponent? boonComp, _compFactory))
+            !boonProto.TryComp(out HiveBoonDefinitionComponent? boonComp, _compFactory))
         {
             return;
         }
@@ -671,7 +690,7 @@ public sealed partial class HiveBoonSystem : EntitySystem
     private bool TryGetUnlockAt(Entity<HiveBoonsComponent> boons, EntProtoId<HiveBoonDefinitionComponent> boonId, out TimeSpan unlockAt)
     {
         if (!_prototype.TryIndex(boonId, out var boon) ||
-            !boon.TryGetComponent(out HiveBoonDefinitionComponent? boonComp, _compFactory))
+            !boon.TryComp(out HiveBoonDefinitionComponent? boonComp, _compFactory))
         {
             unlockAt = TimeSpan.Zero;
             return false;
@@ -700,7 +719,7 @@ public sealed partial class HiveBoonSystem : EntitySystem
         var boons = ImmutableArray.CreateBuilder<(EntityPrototype Prototype, HiveBoonDefinitionComponent Component)>();
         foreach (var prototype in _prototype.EnumeratePrototypes<EntityPrototype>())
         {
-            if (!prototype.TryGetComponent(out HiveBoonDefinitionComponent? comp, _compFactory))
+            if (!prototype.TryComp(out HiveBoonDefinitionComponent? comp, _compFactory))
                 continue;
 
             boons.Add((prototype, comp));

@@ -1,13 +1,12 @@
-using Content.Shared.DeviceNetwork;
-using JetBrains.Annotations;
-using Robust.Shared.Prototypes;
-using Robust.Shared.Random;
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
+using Content.Shared.DeviceNetwork;
 using Content.Shared.DeviceNetwork.Components;
 using Content.Shared.DeviceNetwork.Events;
 using Content.Shared.DeviceNetwork.Systems;
 using Content.Shared.Examine;
+using JetBrains.Annotations;
+using Robust.Shared.Random;
 
 namespace Content.Server.DeviceNetwork.Systems
 {
@@ -19,7 +18,6 @@ namespace Content.Server.DeviceNetwork.Systems
     public sealed partial class DeviceNetworkSystem : SharedDeviceNetworkSystem
     {
         [Dependency] private IRobustRandom _random = default!;
-        [Dependency] private IPrototypeManager _protoMan = default!;
         [Dependency] private SharedTransformSystem _transformSystem = default!;
         [Dependency] private DeviceListSystem _deviceLists = default!;
         [Dependency] private NetworkConfiguratorSystem _configurator = default!;
@@ -109,14 +107,14 @@ namespace Content.Server.DeviceNetwork.Systems
 
             if (device.ReceiveFrequency == null
                 && device.ReceiveFrequencyId != null
-                && _protoMan.TryIndex<DeviceFrequencyPrototype>(device.ReceiveFrequencyId, out var receive))
+                && ProtoMan.TryIndex<DeviceFrequencyPrototype>(device.ReceiveFrequencyId, out var receive))
             {
                 device.ReceiveFrequency = receive.Frequency;
             }
 
             if (device.TransmitFrequency == null
                 && device.TransmitFrequencyId != null
-                && _protoMan.TryIndex<DeviceFrequencyPrototype>(device.TransmitFrequencyId, out var xmit))
+                && ProtoMan.TryIndex<DeviceFrequencyPrototype>(device.TransmitFrequencyId, out var xmit))
             {
                 device.TransmitFrequency = xmit.Frequency;
             }
@@ -319,10 +317,10 @@ namespace Content.Server.DeviceNetwork.Systems
         /// <returns>false if the broadcast was canceled</returns>
         private bool CheckRecipientsList(DeviceNetworkPacketEvent packet, ref HashSet<DeviceNetworkComponent> recipients)
         {
-            if (!_networks.ContainsKey(packet.NetId) || !_networks[packet.NetId].Devices.ContainsKey(packet.SenderAddress))
+            if (!_networks.TryGetValue(packet.NetId, out var network) ||
+                !network.Devices.TryGetValue(packet.SenderAddress, out var sender))
                 return false;
 
-            var sender = _networks[packet.NetId].Devices[packet.SenderAddress];
             if (!sender.SendBroadcastAttemptEvent)
                 return true;
 
@@ -355,7 +353,7 @@ namespace Content.Server.DeviceNetwork.Systems
                 if (connectionUid == packet.Sender)
                     continue;
 
-                BeforePacketSentEvent beforeEv = new(packet.Sender, xform, senderPos, connection.NetIdEnum.ToString());
+                BeforePacketSentEvent beforeEv = new(packet.Sender, xform, senderPos, connection.NetIdEnum.ToString(), packet.Frequency);
                 RaiseLocalEvent(connectionUid, beforeEv, false);
 
                 if (!beforeEv.Cancelled)

@@ -2,8 +2,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Content.Shared._RMC14.Input;
 using Content.Shared._RMC14.Marines.Skills;
+using Content.Shared._RMC14.Storage;
 using Content.Shared._RMC14.Xenonids.Devour;
 using Content.Shared.Administration.Logs;
+using Content.Shared.Blocking;
+using Content.Shared.Blocking.Components;
 using Content.Shared.Clothing.Components;
 using Content.Shared.Containers.ItemSlots;
 using Content.Shared.Database;
@@ -41,6 +44,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
     [Dependency] private InventorySystem _inventory = default!;
     [Dependency] private ItemSlotsSystem _itemSlots = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
+    [Dependency] private RMCStorageSystem _rmcStorage = default!;
     [Dependency] private SharedStorageSystem _storage = default!;
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private EntityWhitelistSystem _whitelist = default!;
@@ -80,7 +84,8 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
         _pickupDroppedItemsQuery = GetEntityQuery<RMCPickupDroppedItemsComponent>();
 
         SubscribeLocalEvent<GunComponent, IsUnholsterableEvent>(AllowUnholster);
-        SubscribeLocalEvent<MeleeWeaponComponent, IsUnholsterableEvent>(AllowUnholster);
+        SubscribeLocalEvent<MeleeWeaponComponent, IsUnholsterableEvent>(OnMeleeIsUnholsterable); // CMU14: flashlights and other 0 damage utility items aren't weapons
+        SubscribeLocalEvent<BlockingComponent, IsUnholsterableEvent>(AllowUnholster);
 
         SubscribeLocalEvent<CMItemSlotsComponent, MapInitEvent>(OnSlotsFillMapInit);
         SubscribeLocalEvent<CMItemSlotsComponent, AfterAutoHandleStateEvent>(OnSlotsComponentHandleState);
@@ -113,7 +118,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
                 InputCmdHandler.FromDelegate(session =>
                 {
                     if (session?.AttachedEntity is { } entity)
-                        OnHolster(entity, 1);
+                        OnHolsterSecondary(entity); // CMU14: draws the next weapon after the one primary would take
                 }, handle: false))
             .Bind(CMKeyFunctions.CMHolsterTertiary,
                 InputCmdHandler.FromDelegate(session =>
@@ -192,7 +197,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
             var copy = new ItemSlot(slot);
             copy.Name = $"{copy.Name} {n}";
 
-            _itemSlots.AddItemSlot(ent, $"{slot.Name}{n}", copy);
+            _itemSlots.AddItemSlot((ent.Owner, slots), $"{slot.Name}{n}", copy);
 
             if (items.Count > i)
             {
@@ -266,7 +271,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
                 if(!_container.TryGetContainer(ent, itemSlot.Key, out var container))
                     continue;
 
-                if(_itemSlots.CanInsert(ent.Owner, args.Used, args.User, itemSlot.Value))
+                if(_itemSlots.CanInsert(ent.Owner, itemSlot.Value, args.Used, args.User))
                 {
                     // If the container fits, break the loop and insert the container.
                     if (_container.Insert(args.Used, container))
@@ -280,7 +285,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
                 // If the container does not fit, check if the entities in the container do.
                 foreach (var entity in usedContainer.ContainedEntities)
                 {
-                    if (!_itemSlots.CanInsert(ent.Owner, entity, args.User, itemSlot.Value))
+                    if (!_itemSlots.CanInsert(ent.Owner, itemSlot.Value, entity, args.User))
                         continue;
 
                     if (!_container.Insert(entity, container))
@@ -361,6 +366,10 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
         if (!_pickupDroppedItemsQuery.TryComp(user, out var pickupDroppedItems) || HasComp<DevouredComponent>(user))
             return;
 
+        var removed = pickupDroppedItems.DroppedItems.RemoveAll(uid => TerminatingOrDeleted(uid));
+        if (removed > 0)
+            Dirty(user, pickupDroppedItems);
+
         // Sort items by importance
         var sortedItems = pickupDroppedItems.DroppedItems
             .OrderByDescending(item => HasComp<GunComponent>(item))
@@ -369,6 +378,9 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
 
         foreach (var item in sortedItems.Distinct())
         {
+            if (TerminatingOrDeleted(item))
+                continue;
+
             if (!_container.IsEntityInContainer(item) && _interaction.InRangeUnobstructed(user, item))
             {
                 if (_hands.TryPickupAnyHand(user, item))
@@ -540,8 +552,9 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
 
                 // If holster has StorageComponent
                 // And item can be inserted
-                if (HasComp<StorageComponent>(clothing) &&
-                    _storage.CanInsert(clothing, item, user, out _))
+                if (TryComp(clothing, out StorageComponent? clothingStorage) &&
+                    _storage.CanInsert(clothing, item, out _, clothingStorage) &&
+                    _rmcStorage.CanInsert((clothing, clothingStorage), item, user, out _))
                 {
                     validSlots.Add(new HolsterSlot(priority, true, null, clothing, null));
                 }
@@ -566,7 +579,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
 
             // Try insert into ItemSlot-based holster
             if (slot.ItemSlot != null &&
-                _itemSlots.CanInsert(slot.Ent, item, user, slot.ItemSlot))
+                _itemSlots.CanInsert(slot.Ent, slot.ItemSlot, item, user))
             {
                 if (act)
                 {
@@ -583,7 +596,8 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
                 TryComp(slot.Ent, out CMHolsterComponent? holster) &&
                 !holster.Contents.Contains(item) &&
                 _hands.CanDrop(user, item) &&
-                _storage.CanInsert(slot.Ent, item, user, out _, storage))
+                _storage.CanInsert(slot.Ent, item, out _, storage) &&
+                _rmcStorage.CanInsert((slot.Ent, storage), item, user, out _))
             {
                 if (act && _hands.TryDrop(user, item))
                 {
@@ -596,7 +610,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
             }
         }
 
-        _popup.PopupClient(Loc.GetString("cm-inventory-unable-equip"), user, user, PopupType.SmallCaution);
+        _popup.PopupEntity(Loc.GetString("cm-inventory-unable-equip"), user, user, PopupType.SmallCaution);
         return false;
     }
 
@@ -663,7 +677,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
             if (emptyOnly && slot.ContainerSlot?.ContainedEntity != null)
                 continue;
 
-            if (_itemSlots.CanInsert(ent, item, userEnt, slot))
+            if (_itemSlots.CanInsert(ent.Owner, slot, item, userEnt?.Owner))
                 slots.Add(slot);
         }
 
@@ -753,7 +767,7 @@ public abstract partial class SharedCMInventorySystem : EntitySystem
                 _timing.CurTime < holster.LastEjectAt + cooldown)
             {
                 stop = true;
-                _popup.PopupPredicted(holster.CooldownPopup, user, user, PopupType.SmallCaution);
+                _popup.PopupBroadcast(holster.CooldownPopup, user, user, PopupType.SmallCaution);
                 return false;
             }
 

@@ -1,36 +1,52 @@
+#pragma warning disable RA0002 // Integration regression intentionally inspects restricted component state.
+
 using System.Collections.Generic;
+using Content.IntegrationTests.CMU14.Medical.Anatomy.BodyParts;
+using System.Numerics;
 using System.Reflection;
-using Content.Shared._CMU14.Medical;
-using Content.Shared._CMU14.Medical.BodyPart;
-using Content.Shared._CMU14.Medical.Bones;
-using Content.Shared._CMU14.Medical.Bones.Events;
-using Content.Shared._CMU14.Medical.Wounds;
-using Content.Server._CMU14.Medical.Wounds;
+using Content.Shared.CMU14.Medical.Core;
+using Content.Shared.CMU14.Medical.Anatomy.BodyParts;
+using Content.Shared.CMU14.Medical.Anatomy.BodyParts.Events;
+using Content.Shared.CMU14.Medical.Anatomy.Bones;
+using Content.Shared.CMU14.Medical.Anatomy.Bones.Events;
+using Content.Shared.CMU14.Medical.Injuries.Shrapnel;
+using Content.Shared.CMU14.Medical.Injuries.Wounds;
+using Content.Server.CMU14.Medical.Injuries.Wounds;
+using Content.Shared.CMU14.Medical.Anatomy.Organs.Heart;
 using Content.Shared._RMC14.Explosion;
-using Content.Shared._CMU14.Medical.Surgery;
-using Content.Shared._CMU14.Medical.Surgery.Markers;
-using Content.Server._CMU14.Medical.Surgery;
+using Content.Shared.CMU14.Medical.Treatment.Surgery;
+using Content.Shared.CMU14.Medical.Treatment.Surgery.Markers;
+using Content.Server.CMU14.Medical.Treatment.Surgery;
 using Content.Shared.Chemistry.EntitySystems;
 using Content.Shared.Fluids.Components;
 using Content.Shared._RMC14.Marines.Skills;
+using Content.Shared._RMC14.Medical.Stasis;
 using Content.Shared._RMC14.Medical.Wounds;
 using Content.Shared._RMC14.Medical.Surgery;
 using Content.Shared._RMC14.Medical.Surgery.Steps.Parts;
 using Content.Shared._RMC14.Synth;
 using Content.Shared._RMC14.TacticalMap;
-using Content.Shared.Body.Components;
-using Content.Shared.Body.Organ;
+using Content.Shared.Body;
 using Content.Shared.Body.Part;
 using Content.Shared.Body.Systems;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
+using Content.Shared.Damage.Prototypes;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Eye;
 using Content.Shared.Explosion;
 using Content.Shared.FixedPoint;
+using Content.Shared.Hands.Components;
 using Content.Shared.Hands.EntitySystems;
 using Content.Shared.Interaction;
+using Content.Shared.Mobs;
+using Content.Shared.Mobs.Systems;
 using Content.Shared.Standing;
+using Content.Shared.StatusEffectNew;
 using Content.Shared.Stacks;
+using Robust.Shared.Configuration;
 using Robust.Shared.GameObjects;
+using Robust.Shared.Localization;
 using Robust.Shared.Map;
 using Robust.Shared.Map.Components;
 using Robust.Shared.Maths;
@@ -41,63 +57,7 @@ namespace Content.IntegrationTests._RMC14;
 [TestFixture]
 public sealed class RMCHumanPrototypeRegressionTest
 {
-    [Test]
-    public async Task CMMobHumanHasExpectedBuis()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-
-        await server.WaitAssertion(() =>
-        {
-            var entMan = server.EntMan;
-            var ui = entMan.System<SharedUserInterfaceSystem>();
-            var human = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-
-            try
-            {
-                Assert.Multiple(() =>
-                {
-                    Assert.That(ui.HasUi(human, TacticalMapUserUi.Key), Is.True);
-                    Assert.That(ui.HasUi(human, CMUSurgeryUIKey.Key), Is.True);
-                });
-            }
-            finally
-            {
-                entMan.DeleteEntity(human);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
-    public async Task MobHumanDummyUsesCmuMedicalBody()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-
-        await server.WaitAssertion(() =>
-        {
-            var entMan = server.EntMan;
-            var dummy = entMan.SpawnEntity("MobHumanDummy", MapCoordinates.Nullspace);
-
-            try
-            {
-                Assert.Multiple(() =>
-                {
-                    Assert.That(entMan.HasComponent<CMUHumanMedicalComponent>(dummy), Is.True);
-                    Assert.That(entMan.HasComponent<CMSurgeryTargetComponent>(dummy), Is.True);
-                    Assert.That(entMan.GetComponent<BodyComponent>(dummy).Prototype?.Id, Is.EqualTo("CMUHumanBody"));
-                });
-            }
-            finally
-            {
-                entMan.DeleteEntity(dummy);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
+    private static readonly EntProtoId CardiacArrestStatus = "StatusEffectCMUCardiacArrest";
 
     [TestCase("CMSurgicalLine", WoundType.Brute)]
     [TestCase("CMSynthGraft", WoundType.Burn)]
@@ -139,49 +99,137 @@ public sealed class RMCHumanPrototypeRegressionTest
 
     [TestCase("CMTraumaKit10", WoundType.Brute)]
     [TestCase("CMBurnKit10", WoundType.Burn)]
-    public async Task CmuTraumaAndBurnKitsInstantlyCleanTwoWoundsPerUse(string treaterId, WoundType woundType)
+    public async Task CmuTraumaAndBurnKitsCleanTwoWoundsAfterAutomaticSearch(string treaterId, WoundType woundType)
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid treater = default;
+        EntityUid part = default;
 
         await server.WaitAssertion(() =>
         {
             var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            part = GetFirstBodyPart(entMan, patient);
+            AddBodyPartWound(entMan, part, woundType);
+            AddBodyPartWound(entMan, part, woundType);
+
+            var interact = new AfterInteractEvent(patient, treater, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(part);
+            Assert.Multiple(() =>
+            {
+                Assert.That(interact.Handled, Is.True);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+                Assert.That(CountTreatedWounds(ledger, wounds, woundType), Is.Zero);
+                Assert.That(entMan.GetComponent<StackComponent>(treater).Count, Is.EqualTo(10));
+            });
+        });
+
+        await pair.RunSeconds(0.3f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(part);
+            var entries = ledger.GetEntries(wounds);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.False);
+                Assert.That(CountTreatedWounds(ledger, wounds, woundType), Is.EqualTo(2));
+                Assert.That(entries, Has.Count.EqualTo(2));
+                foreach (var entry in entries)
+                {
+                    Assert.That(entry.Bandages,
+                        Is.EqualTo(WoundSizeProfile.BandagesRequired(entry.Size, entry.Wound.Damage.Float())));
+                }
+                Assert.That(entMan.GetComponent<StackComponent>(treater).Count, Is.EqualTo(9));
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(treater))
+                entMan.DeleteEntity(treater);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuTargetedHealingRequiresWoundOnSelectedPart()
+    {
+        await using var pair = await PoolManager.GetServerClient(new PoolSettings
+        {
+            Connected = true,
+            Dirty = true,
+        });
+        var server = pair.Server;
+        var client = pair.Client;
+        EntityUid? originalAttached = null;
+
+        await client.WaitPost(() =>
+            client.CfgMan.SetCVar(CMUMedicalCCVars.TargetedHealingEnabled, true));
+        await pair.RunTicksSync(2);
+
+        await server.WaitAssertion(() =>
+        {
+            var player = server.PlayerMan.Sessions[0];
+            var netConfig = server.ResolveDependency<INetConfigurationManager>();
+            Assert.That(netConfig.GetClientCVar(player.Channel, CMUMedicalCCVars.TargetedHealingEnabled), Is.True);
+        });
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            var targeting = entMan.System<SharedBodyZoneTargetingSystem>();
             var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+            var gauze = entMan.SpawnEntity("CMGauze10", MapCoordinates.Nullspace);
 
             try
             {
-                var part = GetFirstBodyPart(entMan, patient);
-                AddBodyPartWound(entMan, part, woundType);
-                AddBodyPartWound(entMan, part, woundType);
+                var player = server.PlayerMan.Sessions[0];
+                originalAttached = player.AttachedEntity;
+                server.PlayerMan.SetAttachedEntity(player, patient);
+                skills.SetSkill(patient, "RMCSkillMedical", 2);
+                Assert.That(entMan.HasComponent<BodyZoneTargetingComponent>(patient), Is.True);
+                targeting.SelectZone((patient, null), TargetBodyZone.Chest);
 
-                var interact = new AfterInteractEvent(patient, treater, patient, default, true);
-                entMan.EventBus.RaiseLocalEvent(treater, interact);
+                var rightArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Right);
+                AddBodyPartWound(entMan, rightArm, WoundType.Brute);
 
-                var wounds = entMan.GetComponent<BodyPartWoundComponent>(part);
-                var woundList = GetField<List<Wound>>(wounds, nameof(BodyPartWoundComponent.Wounds));
-                var bandages = GetField<List<int>>(wounds, nameof(BodyPartWoundComponent.Bandages));
-                var treated = 0;
-                foreach (var wound in woundList)
-                {
-                    if (wound.Type == woundType && wound.Treated)
-                        treated++;
-                }
+                var interact = new AfterInteractEvent(patient, gauze, patient, default, true);
+                entMan.EventBus.RaiseLocalEvent(gauze, interact);
+
+                var wounds = entMan.GetComponent<BodyPartWoundComponent>(rightArm);
+                var wound = ledger.GetEntries(wounds)[0].Wound;
 
                 Assert.Multiple(() =>
                 {
                     Assert.That(interact.Handled, Is.True);
                     Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.False);
-                    Assert.That(treated, Is.EqualTo(2));
-                    Assert.That(bandages.Count, Is.EqualTo(2));
-                    Assert.That(bandages, Has.All.EqualTo(WoundSizeProfile.BandagesRequired(WoundSize.Deep)));
-                    Assert.That(entMan.GetComponent<StackComponent>(treater).Count, Is.EqualTo(9));
+                    Assert.That(wound.Treated, Is.False);
+                    Assert.That(entMan.GetComponent<StackComponent>(gauze).Count, Is.EqualTo(10));
                 });
             }
             finally
             {
-                entMan.DeleteEntity(treater);
+                server.PlayerMan.SetAttachedEntity(server.PlayerMan.Sessions[0], originalAttached);
+                entMan.DeleteEntity(gauze);
                 entMan.DeleteEntity(patient);
             }
         });
@@ -190,7 +238,875 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task CmuBodyPartHealingPrefersTreatmentOriginPart()
+    public async Task CmuAutomaticHealingTreatsSelectedPartThenSearchesForNextPart()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid medic = default;
+        EntityUid patient = default;
+        EntityUid gauze = default;
+        EntityUid chest = default;
+        EntityUid head = default;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            var targeting = entMan.System<SharedBodyZoneTargetingSystem>();
+            medic = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            gauze = entMan.SpawnEntity("CMGauze10", MapCoordinates.Nullspace);
+            chest = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
+            head = GetBodyPart(entMan, patient, BodyPartType.Head, BodyPartSymmetry.None);
+
+            skills.SetSkill(medic, "RMCSkillMedical", 2);
+            targeting.SelectZone((medic, null), TargetBodyZone.Chest);
+            AddBodyPartWound(entMan, chest, WoundType.Brute, size: WoundSize.CutSmall);
+            AddBodyPartWound(entMan, head, WoundType.Brute, size: WoundSize.CutSmall);
+
+            var clicks = new[]
+            {
+                new AfterInteractEvent(medic, gauze, patient, default, true),
+                new AfterInteractEvent(medic, gauze, patient, default, true),
+                new AfterInteractEvent(medic, gauze, patient, default, true),
+            };
+            foreach (var click in clicks)
+                entMan.EventBus.RaiseLocalEvent(gauze, click);
+
+            var chestWounds = entMan.GetComponent<BodyPartWoundComponent>(chest);
+            var headWounds = entMan.GetComponent<BodyPartWoundComponent>(head);
+            Assert.Multiple(() =>
+            {
+                foreach (var click in clicks)
+                    Assert.That(click.Handled, Is.True);
+                Assert.That(ledger.GetEntries(chestWounds)[0].Wound.Treated, Is.False);
+                Assert.That(ledger.GetEntries(headWounds)[0].Wound.Treated, Is.False);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.True);
+                Assert.That(entMan.GetComponent<StackComponent>(gauze).Count, Is.EqualTo(10));
+            });
+        });
+
+        await pair.RunSeconds(1.6f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var chestWounds = entMan.GetComponent<BodyPartWoundComponent>(chest);
+            var headWounds = entMan.GetComponent<BodyPartWoundComponent>(head);
+            Assert.Multiple(() =>
+            {
+                Assert.That(ledger.GetEntries(chestWounds)[0].Wound.Treated, Is.True);
+                Assert.That(ledger.GetEntries(headWounds)[0].Wound.Treated, Is.False);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.True);
+                Assert.That(entMan.GetComponent<StackComponent>(gauze).Count, Is.EqualTo(9));
+            });
+        });
+
+        await pair.RunSeconds(1.8f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var headWounds = entMan.GetComponent<BodyPartWoundComponent>(head);
+            Assert.Multiple(() =>
+            {
+                Assert.That(ledger.GetEntries(headWounds)[0].Wound.Treated, Is.True);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.False);
+                Assert.That(entMan.GetComponent<StackComponent>(gauze).Count, Is.EqualTo(8));
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            foreach (var entity in new[] { gauze, patient, medic })
+            {
+                if (entMan.EntityExists(entity))
+                    entMan.DeleteEntity(entity);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMTraumaKit10", WoundType.Brute, false)]
+    [TestCase("CMTraumaKit10", WoundType.Brute, true)]
+    [TestCase("CMBurnKit10", WoundType.Burn, false)]
+    [TestCase("CMBurnKit10", WoundType.Burn, true)]
+    public async Task CmuAutoReapplyInstantKitTreatsRemainingWounds(
+        string kitId,
+        WoundType woundType,
+        bool selfTreatment)
+    {
+        await using var pair = await PoolManager.GetServerClient(new PoolSettings
+        {
+            Connected = true,
+            Dirty = true,
+        });
+        var server = pair.Server;
+        EntityUid medic = default;
+        EntityUid patient = default;
+        EntityUid kit = default;
+        EntityUid chest = default;
+        EntityUid head = default;
+        EntityUid? originalAttached = null;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            var targeting = entMan.System<SharedBodyZoneTargetingSystem>();
+            medic = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            patient = selfTreatment
+                ? medic
+                : entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            kit = entMan.SpawnEntity(kitId, MapCoordinates.Nullspace);
+            chest = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
+            head = GetBodyPart(entMan, patient, BodyPartType.Head, BodyPartSymmetry.None);
+
+            var player = server.PlayerMan.Sessions[0];
+            originalAttached = player.AttachedEntity;
+            server.PlayerMan.SetAttachedEntity(player, medic);
+            skills.SetSkill(medic, "RMCSkillMedical", 2);
+            targeting.SelectZone((medic, null), TargetBodyZone.Chest);
+            AddBodyPartWound(entMan, chest, woundType, size: WoundSize.CutSmall);
+            AddBodyPartWound(entMan, head, woundType, size: WoundSize.CutSmall);
+
+            var interact = new AfterInteractEvent(medic, kit, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(kit, interact);
+
+            var chestWounds = entMan.GetComponent<BodyPartWoundComponent>(chest);
+            var headWounds = entMan.GetComponent<BodyPartWoundComponent>(head);
+            Assert.Multiple(() =>
+            {
+                Assert.That(interact.Handled, Is.True);
+                Assert.That(ledger.GetEntries(chestWounds)[0].Wound.Treated, Is.False);
+                Assert.That(ledger.GetEntries(headWounds)[0].Wound.Treated, Is.False);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.True);
+                Assert.That(entMan.GetComponent<StackComponent>(kit).Count, Is.EqualTo(10));
+            });
+        });
+
+        await pair.RunSeconds(0.3f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var chestWounds = entMan.GetComponent<BodyPartWoundComponent>(chest);
+            var headWounds = entMan.GetComponent<BodyPartWoundComponent>(head);
+            Assert.Multiple(() =>
+            {
+                Assert.That(ledger.GetEntries(chestWounds)[0].Wound.Treated, Is.True);
+                Assert.That(ledger.GetEntries(headWounds)[0].Wound.Treated, Is.False);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.True);
+                Assert.That(entMan.GetComponent<StackComponent>(kit).Count, Is.EqualTo(9));
+            });
+        });
+
+        await pair.RunSeconds(0.3f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var headWounds = entMan.GetComponent<BodyPartWoundComponent>(head);
+            Assert.Multiple(() =>
+            {
+                Assert.That(ledger.GetEntries(headWounds)[0].Wound.Treated, Is.True);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.False);
+                Assert.That(entMan.GetComponent<StackComponent>(kit).Count, Is.EqualTo(8));
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            server.PlayerMan.SetAttachedEntity(server.PlayerMan.Sessions[0], originalAttached);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuAutoReapplyInstantKitCanBeDisabled()
+    {
+        await using var pair = await PoolManager.GetServerClient(new PoolSettings
+        {
+            Connected = true,
+            Dirty = true,
+        });
+        var server = pair.Server;
+        var client = pair.Client;
+        EntityUid? originalAttached = null;
+
+        await client.WaitPost(() =>
+            client.CfgMan.SetCVar(CMUMedicalCCVars.AutoReapplyKitsEnabled, false));
+        await pair.RunTicksSync(2);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            var targeting = entMan.System<SharedBodyZoneTargetingSystem>();
+            var medic = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            var kit = entMan.SpawnEntity("CMTraumaKit10", MapCoordinates.Nullspace);
+
+            try
+            {
+                var player = server.PlayerMan.Sessions[0];
+                originalAttached = player.AttachedEntity;
+                server.PlayerMan.SetAttachedEntity(player, medic);
+                skills.SetSkill(medic, "RMCSkillMedical", 2);
+                targeting.SelectZone((medic, null), TargetBodyZone.Chest);
+
+                var chest = GetBodyPart(entMan, medic, BodyPartType.Torso, BodyPartSymmetry.None);
+                var head = GetBodyPart(entMan, medic, BodyPartType.Head, BodyPartSymmetry.None);
+                AddBodyPartWound(entMan, chest, WoundType.Brute, size: WoundSize.CutSmall);
+                AddBodyPartWound(entMan, head, WoundType.Brute, size: WoundSize.CutSmall);
+
+                var interact = new AfterInteractEvent(medic, kit, medic, default, true);
+                entMan.EventBus.RaiseLocalEvent(kit, interact);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(interact.Handled, Is.True);
+                    Assert.That(ledger.GetEntries(entMan.GetComponent<BodyPartWoundComponent>(chest))[0].Wound.Treated, Is.True);
+                    Assert.That(ledger.GetEntries(entMan.GetComponent<BodyPartWoundComponent>(head))[0].Wound.Treated, Is.False);
+                    Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(medic), Is.False);
+                    Assert.That(entMan.GetComponent<StackComponent>(kit).Count, Is.EqualTo(9));
+                });
+            }
+            finally
+            {
+                server.PlayerMan.SetAttachedEntity(server.PlayerMan.Sessions[0], originalAttached);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMTraumaKit10", WoundType.Brute, WoundCleanupFlags.PoorClosure)]
+    [TestCase("CMGauze10", WoundType.Brute, WoundCleanupFlags.PoorClosure)]
+    [TestCase("AU14HemostaticGauze", WoundType.Brute, WoundCleanupFlags.RetainedFragment)]
+    [TestCase("CMBurnKit10", WoundType.Burn, WoundCleanupFlags.PoorClosure)]
+    [TestCase("CMOintment10", WoundType.Burn, WoundCleanupFlags.PoorClosure)]
+    public async Task CmuBaseWoundTreatersClearCleanupAndRecoverOnlyTheDressedWoundBurden(
+        string treaterId,
+        WoundType woundType,
+        WoundCleanupFlags cleanup)
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid treater = default;
+        EntityUid part = default;
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            var partHealth = entMan.System<SharedBodyPartHealthSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+            part = GetFirstBodyPart(entMan, patient);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            AddBodyPartWound(entMan, part, woundType, FixedPoint2.New(1), cleanup, WoundSize.CutSmall,
+                woundType == WoundType.Burn ? WoundMechanism.Burn : WoundMechanism.Slash);
+            var health = entMan.GetComponent<BodyPartHealthComponent>(part);
+            partHealth.SetCurrent((part, health), health.Max - FixedPoint2.New(4));
+
+            var interact = new AfterInteractEvent(patient, treater, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+            Assert.That(interact.Handled, Is.True);
+            Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+        });
+
+        await pair.RunSeconds(12);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var health = entMan.GetComponent<BodyPartHealthComponent>(part);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(entMan.HasComponent<BodyPartWoundComponent>(part), Is.False);
+                Assert.That(health.Current, Is.EqualTo(health.Max - FixedPoint2.New(3)),
+                    "One dressed wound unit cannot heal three unrelated structural damage units.");
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(treater))
+                entMan.DeleteEntity(treater);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMTraumaKit10")]
+    [TestCase("CMGauze10")]
+    public async Task CmuWoundTreatersPreferDeadShrapnelPatientWoundsOverArmedSurgery(string treaterId)
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var flow = entMan.System<CMUSurgeryFlowSystem>();
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var mobState = entMan.System<MobStateSystem>();
+            var shrapnel = entMan.System<SharedCMUShrapnelSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            var surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            var treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+
+            try
+            {
+                skills.SetSkill(surgeon, "RMCSkillMedical", 2);
+                var part = GetFirstBodyPart(entMan, patient);
+                AddBodyPartWound(entMan, part, WoundType.Brute);
+                shrapnel.AddShrapnel(part, 1, 10f);
+                mobState.ChangeMobState(patient, MobState.Dead);
+
+                var armed = flow.TryArmStep(
+                    surgeon,
+                    patient,
+                    part,
+                    "CMUSurgeryExtractForeignBody",
+                    0);
+
+                Assert.That(armed, Is.Not.Null);
+                Assert.That(armed!.RequiredToolCategory, Is.EqualTo("hemostat"));
+
+                var interact = new AfterInteractEvent(surgeon, treater, patient, default, true);
+                entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+                var wounds = entMan.GetComponent<BodyPartWoundComponent>(part);
+                var entries = ledger.GetEntries(wounds);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(interact.Handled, Is.True);
+                    Assert.That(entries[0].Wound.Treated, Is.False);
+                    Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(surgeon), Is.True);
+                    Assert.That(entMan.GetComponent<StackComponent>(treater).Count, Is.EqualTo(10));
+                });
+            }
+            finally
+            {
+                entMan.DeleteEntity(treater);
+                entMan.DeleteEntity(surgeon);
+                entMan.DeleteEntity(patient);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuPreparedTraumaDressingsAreInstantAfterSearchForCorpsmenOnly()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid unskilled = default;
+        EntityUid unskilledTreater = default;
+        EntityUid unskilledPart = default;
+        EntityUid corpsman = default;
+        EntityUid corpsmanTreater = default;
+        EntityUid corpsmanPart = default;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+            unskilled = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            unskilledTreater = entMan.SpawnEntity("CMUHemostaticTraumaDressing4", MapCoordinates.Nullspace);
+            corpsman = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            corpsmanTreater = entMan.SpawnEntity("CMUHemostaticTraumaDressing4", MapCoordinates.Nullspace);
+
+            skills.SetSkill(unskilled, "RMCSkillMedical", 0);
+            unskilledPart = GetFirstBodyPart(entMan, unskilled);
+            AddBodyPartWound(entMan, unskilledPart, WoundType.Brute, mechanism: WoundMechanism.Slash);
+            AddBodyPartWound(entMan, unskilledPart, WoundType.Brute, mechanism: WoundMechanism.Slash);
+
+            var unskilledInteract = new AfterInteractEvent(unskilled, unskilledTreater, unskilled, default, true);
+            entMan.EventBus.RaiseLocalEvent(unskilledTreater, unskilledInteract);
+
+            var unskilledWounds = entMan.GetComponent<BodyPartWoundComponent>(unskilledPart);
+
+            skills.SetSkill(corpsman, "RMCSkillMedical", 2);
+            corpsmanPart = GetFirstBodyPart(entMan, corpsman);
+            AddBodyPartWound(entMan, corpsmanPart, WoundType.Brute, mechanism: WoundMechanism.Slash);
+            AddBodyPartWound(entMan, corpsmanPart, WoundType.Brute, mechanism: WoundMechanism.Slash);
+
+            var corpsmanInteract = new AfterInteractEvent(corpsman, corpsmanTreater, corpsman, default, true);
+            entMan.EventBus.RaiseLocalEvent(corpsmanTreater, corpsmanInteract);
+
+            var corpsmanWounds = entMan.GetComponent<BodyPartWoundComponent>(corpsmanPart);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(unskilledInteract.Handled, Is.True);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(unskilled), Is.True);
+                Assert.That(CountTreatedWounds(ledger, unskilledWounds, WoundType.Brute), Is.Zero);
+                Assert.That(entMan.GetComponent<StackComponent>(unskilledTreater).Count, Is.EqualTo(6));
+
+                Assert.That(corpsmanInteract.Handled, Is.True);
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(corpsman), Is.True);
+                Assert.That(CountTreatedWounds(ledger, corpsmanWounds, WoundType.Brute), Is.Zero);
+                Assert.That(entMan.GetComponent<StackComponent>(corpsmanTreater).Count, Is.EqualTo(6));
+            });
+        });
+
+        await pair.RunSeconds(0.3f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var unskilledWounds = entMan.GetComponent<BodyPartWoundComponent>(unskilledPart);
+            var corpsmanWounds = entMan.GetComponent<BodyPartWoundComponent>(corpsmanPart);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(unskilled), Is.True);
+                Assert.That(CountTreatedWounds(ledger, unskilledWounds, WoundType.Brute), Is.Zero);
+                Assert.That(entMan.GetComponent<StackComponent>(unskilledTreater).Count, Is.EqualTo(6));
+
+                Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(corpsman), Is.False);
+                Assert.That(CountTreatedWounds(ledger, corpsmanWounds, WoundType.Brute), Is.EqualTo(2));
+                Assert.That(entMan.GetComponent<StackComponent>(corpsmanTreater).Count, Is.EqualTo(5));
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            foreach (var entity in new[] { unskilledTreater, unskilled, corpsmanTreater, corpsman })
+            {
+                if (entMan.EntityExists(entity))
+                    entMan.DeleteEntity(entity);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMSurgicalLine", WoundType.Brute, "Slash")]
+    [TestCase("CMSynthGraft", WoundType.Burn, "Heat")]
+    public async Task CmuLegacyLineAndGraftHealToWoundCapWithoutTreatingWounds(
+        string treaterId,
+        WoundType woundType,
+        string damageType)
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid treater = default;
+        EntityUid torso = default;
+        FixedPoint2 cap = default;
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            var partHealth = entMan.System<SharedBodyPartHealthSystem>();
+            var hands = entMan.System<SharedHandsSystem>();
+            var skills = entMan.System<SkillsSystem>();
+
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            Assert.That(hands.TryPickupAnyHand(patient, treater, checkActionBlocker: false), Is.True);
+
+            torso = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
+            SeedAttributedMedicalDamage(entMan, patient, torso, damageType, FixedPoint2.New(50));
+            AddBodyPartWound(entMan, torso, woundType);
+
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(torso);
+            var health = entMan.GetComponent<BodyPartHealthComponent>(torso);
+            cap = health.Max * SharedCMUWoundsSystem.ComputeFieldTreatmentCap(wounds);
+            partHealth.SetCurrent((torso, health), cap - FixedPoint2.New(2));
+
+            var interact = new AfterInteractEvent(patient, treater, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+            Assert.That(interact.Handled, Is.True);
+            Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+        });
+
+        await pair.RunSeconds(4.75f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(torso);
+            var entry = ledger.GetEntries(wounds)[0];
+            var afterHealth = entMan.GetComponent<BodyPartHealthComponent>(torso);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(entry.Wound.Treated, Is.False);
+                Assert.That(entry.TreatmentQuality, Is.EqualTo(WoundTreatmentQuality.Untreated));
+                Assert.That(afterHealth.Current, Is.EqualTo(cap));
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(treater))
+                entMan.DeleteEntity(treater);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMSurgicalLine", WoundType.Brute, "Slash")]
+    [TestCase("CMSynthGraft", WoundType.Burn, "Heat")]
+    public async Task CmuLegacyLineAndGraftSkipCappedPartAndHealAnotherPart(
+        string treaterId,
+        WoundType woundType,
+        string damageType)
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid treater = default;
+        EntityUid torso = default;
+        EntityUid rightArm = default;
+        FixedPoint2 torsoCap = default;
+        FixedPoint2 armCap = default;
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            var partHealth = entMan.System<SharedBodyPartHealthSystem>();
+            var hands = entMan.System<SharedHandsSystem>();
+            var skills = entMan.System<SkillsSystem>();
+
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            Assert.That(hands.TryPickupAnyHand(patient, treater, checkActionBlocker: false), Is.True);
+
+            torso = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
+            rightArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Right);
+
+            SeedAttributedMedicalDamage(entMan, patient, torso, damageType, FixedPoint2.New(25));
+            SeedAttributedMedicalDamage(entMan, patient, rightArm, damageType, FixedPoint2.New(25));
+            AddBodyPartWound(entMan, torso, woundType);
+            AddBodyPartWound(entMan, rightArm, woundType);
+
+            var torsoWounds = entMan.GetComponent<BodyPartWoundComponent>(torso);
+            var armWounds = entMan.GetComponent<BodyPartWoundComponent>(rightArm);
+            var torsoHealth = entMan.GetComponent<BodyPartHealthComponent>(torso);
+            var armHealth = entMan.GetComponent<BodyPartHealthComponent>(rightArm);
+
+            torsoCap = torsoHealth.Max * SharedCMUWoundsSystem.ComputeFieldTreatmentCap(torsoWounds);
+            armCap = armHealth.Max * SharedCMUWoundsSystem.ComputeFieldTreatmentCap(armWounds);
+            partHealth.SetCurrent((torso, torsoHealth), torsoCap);
+            partHealth.SetCurrent((rightArm, armHealth), armCap - FixedPoint2.New(2));
+
+            var interact = new AfterInteractEvent(patient, treater, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+            Assert.That(interact.Handled, Is.True);
+            Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+        });
+
+        await pair.RunSeconds(6);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var torsoHealth = entMan.GetComponent<BodyPartHealthComponent>(torso);
+            var armHealth = entMan.GetComponent<BodyPartHealthComponent>(rightArm);
+            var torsoEntry = ledger.GetEntries(entMan.GetComponent<BodyPartWoundComponent>(torso))[0];
+            var armEntry = ledger.GetEntries(entMan.GetComponent<BodyPartWoundComponent>(rightArm))[0];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(torsoHealth.Current, Is.EqualTo(torsoCap));
+                Assert.That(armHealth.Current, Is.EqualTo(armCap));
+                Assert.That(torsoEntry.Wound.Treated, Is.False);
+                Assert.That(armEntry.Wound.Treated, Is.False);
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(treater))
+                entMan.DeleteEntity(treater);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMSurgicalLine", WoundType.Brute, "Slash")]
+    [TestCase("CMSynthGraft", WoundType.Burn, "Heat")]
+    public async Task CmuLegacyLineAndGraftStopAtHalfInitialRegionDamage(
+        string treaterId,
+        WoundType woundType,
+        string damageType)
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid treater = default;
+        EntityUid torso = default;
+        FixedPoint2 expectedCap = default;
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            var partHealth = entMan.System<SharedBodyPartHealthSystem>();
+            var hands = entMan.System<SharedHandsSystem>();
+            var skills = entMan.System<SkillsSystem>();
+
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            Assert.That(hands.TryPickupAnyHand(patient, treater, checkActionBlocker: false), Is.True);
+
+            torso = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
+            SeedAttributedMedicalDamage(entMan, patient, torso, damageType, FixedPoint2.New(50));
+            AddBodyPartWound(entMan, torso, woundType, size: WoundSize.CutSmall);
+
+            var health = entMan.GetComponent<BodyPartHealthComponent>(torso);
+            var initialHealth = health.Max - FixedPoint2.New(15);
+            expectedCap = initialHealth + (health.Max - initialHealth) / 2;
+            partHealth.SetCurrent((torso, health), initialHealth);
+
+            var interact = new AfterInteractEvent(patient, treater, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+            Assert.That(interact.Handled, Is.True);
+            Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+        });
+
+        await pair.RunSeconds(2.75f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var afterHealth = entMan.GetComponent<BodyPartHealthComponent>(torso);
+
+            Assert.That(afterHealth.Current, Is.EqualTo(expectedCap));
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(treater))
+                entMan.DeleteEntity(treater);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [TestCase("CMSurgicalLine", WoundType.Brute, "Slash")]
+    [TestCase("CMSynthGraft", WoundType.Burn, "Heat")]
+    public async Task CmuLegacyLineAndGraftUseLargestWoundCapOnly(
+        string treaterId,
+        WoundType woundType,
+        string damageType)
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid treater = default;
+        EntityUid torso = default;
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            var partHealth = entMan.System<SharedBodyPartHealthSystem>();
+            var hands = entMan.System<SharedHandsSystem>();
+            var skills = entMan.System<SkillsSystem>();
+
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            treater = entMan.SpawnEntity(treaterId, MapCoordinates.Nullspace);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            Assert.That(hands.TryPickupAnyHand(patient, treater, checkActionBlocker: false), Is.True);
+
+            torso = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
+            SeedAttributedMedicalDamage(entMan, patient, torso, damageType, FixedPoint2.New(50));
+            AddBodyPartWound(entMan, torso, woundType, size: WoundSize.CutSmall);
+            AddBodyPartWound(entMan, torso, woundType, size: WoundSize.CutMassive);
+
+            var health = entMan.GetComponent<BodyPartHealthComponent>(torso);
+            partHealth.SetCurrent((torso, health), FixedPoint2.New(60));
+
+            var interact = new AfterInteractEvent(patient, treater, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(treater, interact);
+
+            Assert.That(interact.Handled, Is.True);
+            Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+        });
+
+        await pair.RunSeconds(8.5f);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var afterHealth = entMan.GetComponent<BodyPartHealthComponent>(torso);
+
+            Assert.That(afterHealth.Current, Is.EqualTo(FixedPoint2.New(70)));
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(treater))
+                entMan.DeleteEntity(treater);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuSurgicalLineStopsArterialBleedingWithoutTreatingWound()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid line = default;
+        EntityUid rightArm = default;
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            var hands = entMan.System<SharedHandsSystem>();
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var skills = entMan.System<SkillsSystem>();
+
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            line = entMan.SpawnEntity("CMSurgicalLine", MapCoordinates.Nullspace);
+
+            skills.SetSkill(patient, "RMCSkillMedical", 2);
+            Assert.That(hands.TryPickupAnyHand(patient, line, checkActionBlocker: false), Is.True);
+
+            rightArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Right);
+            AddBodyPartWound(entMan, rightArm, WoundType.Brute);
+
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(rightArm);
+            Assert.That(ledger.TryUpdateExternalBleeding(rightArm, ExternalBleedTier.Arterial, wounds), Is.True);
+
+            var interact = new AfterInteractEvent(patient, line, patient, default, true);
+            entMan.EventBus.RaiseLocalEvent(line, interact);
+
+            Assert.That(interact.Handled, Is.True);
+            Assert.That(entMan.HasComponent<CMUBandagePendingComponent>(patient), Is.True);
+        });
+
+        await pair.RunSeconds(6);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(rightArm);
+            var entry = ledger.GetEntries(wounds)[0];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(wounds.ExternalBleeding, Is.EqualTo(ExternalBleedTier.None));
+                Assert.That(entry.Wound.Treated, Is.False);
+            });
+        });
+
+        await server.WaitPost(() =>
+        {
+            var entMan = server.EntMan;
+            if (entMan.EntityExists(line))
+                entMan.DeleteEntity(line);
+            if (entMan.EntityExists(patient))
+                entMan.DeleteEntity(patient);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuSeveringSyntheticWoundsDoesNotEraseUnattributedBodyDamage()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var damageable = entMan.System<DamageableSystem>();
+            var prototypes = server.ResolveDependency<IPrototypeManager>();
+            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+
+            try
+            {
+                var rightArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Right);
+                AddBodyPartWound(entMan, rightArm, WoundType.Brute, FixedPoint2.New(35));
+                AddBodyPartWound(entMan, rightArm, WoundType.Burn, FixedPoint2.New(15));
+
+                var damage = entMan.GetComponent<DamageableComponent>(patient);
+                damageable.SetDamage((patient, damage), new DamageSpecifier
+                {
+                    DamageDict =
+                    {
+                        ["Slash"] = FixedPoint2.New(35),
+                        ["Heat"] = FixedPoint2.New(15),
+                    },
+                });
+
+                var severed = new BodyPartSeverAttemptEvent(patient, rightArm, BodyPartType.Arm);
+                entMan.EventBus.RaiseLocalEvent(rightArm, ref severed);
+
+                var after = entMan.GetComponent<DamageableComponent>(patient);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(DamageInGroup(prototypes, after.Damage, "Brute"), Is.EqualTo(FixedPoint2.New(35)));
+                    Assert.That(DamageInGroup(prototypes, after.Damage, "Burn"), Is.EqualTo(FixedPoint2.New(15)));
+                });
+            }
+            finally
+            {
+                entMan.DeleteEntity(patient);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuBodyPartHealingUsesExplicitAttributedSite()
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
@@ -207,6 +1123,7 @@ public sealed class RMCHumanPrototypeRegressionTest
                 var torso = GetBodyPart(entMan, patient, BodyPartType.Torso, BodyPartSymmetry.None);
                 var leftArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Left);
 
+                entMan.System<SharedHitLocationSystem>().SetForcedHit(patient, BodyPartType.Torso);
                 damageable.TryChangeDamage(patient, new DamageSpecifier
                 {
                     DamageDict = { ["Blunt"] = FixedPoint2.New(50) },
@@ -220,16 +1137,12 @@ public sealed class RMCHumanPrototypeRegressionTest
                 var torsoBefore = torsoHealth.Current;
                 var armBefore = armHealth.Current;
 
-                var damage = entMan.GetComponent<DamageableComponent>(patient);
-                damageable.TryChangeDamage(patient, new DamageSpecifier
-                {
-                    DamageDict = { ["Blunt"] = FixedPoint2.New(-10) },
-                }, true, false, damage, origin: leftArm);
+                partHealth.HealPartDamage(patient, torso, "Brute", FixedPoint2.New(10));
 
                 Assert.Multiple(() =>
                 {
-                    Assert.That(armHealth.Current, Is.GreaterThan(armBefore));
-                    Assert.That(torsoHealth.Current, Is.EqualTo(torsoBefore));
+                    Assert.That(armHealth.Current, Is.EqualTo(armBefore));
+                    Assert.That(torsoHealth.Current, Is.GreaterThan(torsoBefore));
                 });
             }
             finally
@@ -242,59 +1155,14 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task CmuAttachedInternalsUsePrivateVisibilityLayer()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-
-        await server.WaitAssertion(() =>
-        {
-            var entMan = server.EntMan;
-            var body = entMan.System<SharedBodySystem>();
-            var human = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var internalLayer = (ushort) VisibilityFlags.CMUMedicalInternals;
-
-            try
-            {
-                var checkedParts = 0;
-                foreach (var (partUid, _) in body.GetBodyChildren(human))
-                {
-                    checkedParts++;
-                    var visibility = entMan.GetComponent<VisibilityComponent>(partUid);
-                    Assert.That(visibility.Layer & internalLayer, Is.EqualTo(internalLayer));
-                }
-
-                var checkedOrgans = 0;
-                foreach (var organ in body.GetBodyOrgans(human))
-                {
-                    checkedOrgans++;
-                    var visibility = entMan.GetComponent<VisibilityComponent>(organ.Id);
-                    Assert.That(visibility.Layer & internalLayer, Is.EqualTo(internalLayer));
-                }
-
-                Assert.Multiple(() =>
-                {
-                    Assert.That(checkedParts, Is.GreaterThan(0));
-                    Assert.That(checkedOrgans, Is.GreaterThan(0));
-                });
-            }
-            finally
-            {
-                entMan.DeleteEntity(human);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
-    public async Task CmuDetachedOrgansLeavePrivateVisibilityLayer()
+    public async Task CmuRemovingHeartCausesCardiacArrestAndAsphyxiation()
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
         EntityUid human = default;
-        EntityUid organ = default;
-        var internalLayer = (ushort) VisibilityFlags.CMUMedicalInternals;
+        EntityUid heart = default;
+        FixedPoint2 beforeDamage = default;
+        FixedPoint2 firstDamage = default;
 
         await server.WaitAssertion(() =>
         {
@@ -302,29 +1170,45 @@ public sealed class RMCHumanPrototypeRegressionTest
             var body = entMan.System<SharedBodySystem>();
             human = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
 
-            foreach (var bodyOrgan in body.GetBodyOrgans(human))
+            foreach (var organ in body.GetBodyOrganEntityComps<HeartComponent>(human))
             {
-                organ = bodyOrgan.Id;
+                heart = organ.Owner;
                 break;
             }
 
-            Assert.That(organ, Is.Not.EqualTo(default(EntityUid)));
+            Assert.That(heart, Is.Not.EqualTo(default(EntityUid)));
+            beforeDamage = entMan.GetComponent<DamageableComponent>(human).TotalDamage;
 
-            var visibility = entMan.GetComponent<VisibilityComponent>(organ);
-            Assert.That(visibility.Layer & internalLayer, Is.EqualTo(internalLayer));
-
-            Assert.That(body.RemoveOrgan(organ), Is.True);
+            Assert.That(body.RemoveOrgan(heart), Is.True);
         });
 
-        await server.WaitRunTicks(1);
+        await server.WaitRunTicks(60);
 
         await server.WaitAssertion(() =>
         {
             var entMan = server.EntMan;
-            var visibility = entMan.GetComponent<VisibilityComponent>(organ);
-            Assert.That(visibility.Layer & internalLayer, Is.EqualTo(0));
+            var status = entMan.System<StatusEffectsSystem>();
+            var damage = entMan.GetComponent<DamageableComponent>(human);
 
-            entMan.DeleteEntity(organ);
+            Assert.Multiple(() =>
+            {
+                Assert.That(status.HasStatusEffect(human, CardiacArrestStatus), Is.True);
+                Assert.That(damage.TotalDamage, Is.GreaterThan(beforeDamage));
+            });
+
+            firstDamage = damage.TotalDamage;
+        });
+
+        await server.WaitRunTicks(60);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var damage = entMan.GetComponent<DamageableComponent>(human);
+
+            Assert.That(damage.TotalDamage, Is.GreaterThan(firstDamage));
+
+            entMan.DeleteEntity(heart);
             entMan.DeleteEntity(human);
         });
 
@@ -332,70 +1216,16 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task CmuSynthMissingLimbShowsSynthReattachSurgery()
+    public async Task CmuSynthRepairToolRepairsDamageBeforeReattachMenu()
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
-
-        await server.WaitAssertion(() =>
-        {
-            var entMan = server.EntMan;
-            var body = entMan.System<SharedBodySystem>();
-            var dispatch = entMan.System<CMUSurgeryDispatchSystem>();
-            var standing = entMan.System<StandingStateSystem>();
-            var skills = entMan.System<SkillsSystem>();
-            var xform = entMan.System<SharedTransformSystem>();
-
-            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-
-            try
-            {
-                entMan.EnsureComponent<SynthComponent>(patient);
-                skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
-                standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
-
-                EntityUid leftArm = default;
-                foreach (var (partUid, part) in body.GetBodyChildren(patient))
-                {
-                    if (part.PartType != BodyPartType.Arm || part.Symmetry != BodyPartSymmetry.Left)
-                        continue;
-                    leftArm = partUid;
-                    break;
-                }
-
-                Assert.That(leftArm, Is.Not.EqualTo(default(EntityUid)));
-                xform.DetachEntity(leftArm, entMan.GetComponent<TransformComponent>(leftArm));
-
-                var entries = dispatch.BuildPartEntries(patient, surgeon);
-                var leftArmEntry = entries.Find(entry =>
-                    entry.Type == BodyPartType.Arm &&
-                    entry.Symmetry == BodyPartSymmetry.Left);
-
-                Assert.That(leftArmEntry, Is.Not.Null);
-
-                var surgeryIds = leftArmEntry!.EligibleSurgeries.ConvertAll(entry => entry.SurgeryId);
-                Assert.Multiple(() =>
-                {
-                    Assert.That(surgeryIds, Does.Contain("RMCSynthSurgeryReattachLimb"));
-                    Assert.That(surgeryIds, Does.Not.Contain("CMUSurgeryReattachLimb"));
-                });
-            }
-            finally
-            {
-                entMan.DeleteEntity(patient);
-                entMan.DeleteEntity(surgeon);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
-    public async Task CmuSynthRepairToolOpensReattachMenuBeforeRepair()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid surgeon = default;
+        EntityUid cable = default;
+        EntityUid leftArm = default;
+        EntityUid detachedBody = default;
+        FixedPoint2 damageBefore = FixedPoint2.Zero;
 
         await server.WaitAssertion(() =>
         {
@@ -404,50 +1234,54 @@ public sealed class RMCHumanPrototypeRegressionTest
             var damageable = entMan.System<DamageableSystem>();
             var standing = entMan.System<StandingStateSystem>();
             var skills = entMan.System<SkillsSystem>();
-            var xform = entMan.System<SharedTransformSystem>();
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            cable = entMan.SpawnEntity("RMCCableCoil30", MapCoordinates.Nullspace);
 
-            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var cable = entMan.SpawnEntity("RMCCableCoil30", MapCoordinates.Nullspace);
-            EntityUid leftArm = default;
+            entMan.EnsureComponent<SynthComponent>(patient);
+            skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
+            skills.SetSkill(surgeon, "RMCSkillConstruction", 3); // CMU14: synth repair with construction-scaled doafter
+            standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
 
-            try
+            foreach (var (partUid, part) in body.GetBodyChildren(patient))
             {
-                entMan.EnsureComponent<SynthComponent>(patient);
-                skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
-                standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
+                if (part.PartType != BodyPartType.Arm || part.Symmetry != BodyPartSymmetry.Left)
+                    continue;
 
-                foreach (var (partUid, part) in body.GetBodyChildren(patient))
-                {
-                    if (part.PartType != BodyPartType.Arm || part.Symmetry != BodyPartSymmetry.Left)
-                        continue;
-
-                    leftArm = partUid;
-                    break;
-                }
-
-                Assert.That(leftArm, Is.Not.EqualTo(default(EntityUid)));
-                xform.DetachEntity(leftArm, entMan.GetComponent<TransformComponent>(leftArm));
-                damageable.TryChangeDamage(patient, new DamageSpecifier { DamageDict = { ["Heat"] = 10 } }, true);
-
-                var interact = new InteractUsingEvent(surgeon, cable, patient, entMan.GetComponent<TransformComponent>(patient).Coordinates);
-                entMan.EventBus.RaiseLocalEvent(patient, interact);
-
-                Assert.Multiple(() =>
-                {
-                    Assert.That(interact.Handled, Is.True);
-                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(surgeon), Is.True);
-                    Assert.That(entMan.GetComponent<CMUSurgeryWindowOpenComponent>(surgeon).Patient, Is.EqualTo(patient));
-                });
+                leftArm = partUid;
+                break;
             }
-            finally
+
+            Assert.That(leftArm, Is.Not.EqualTo(default(EntityUid)));
+            detachedBody = DetachBodyPart(entMan, leftArm);
+            damageable.TryChangeDamage(patient, new DamageSpecifier { DamageDict = { ["Heat"] = 10 } }, true);
+            damageBefore = entMan.GetComponent<DamageableComponent>(patient).TotalDamage;
+
+            var interact = new InteractUsingEvent(surgeon, cable, patient, entMan.GetComponent<TransformComponent>(patient).Coordinates);
+            entMan.EventBus.RaiseLocalEvent(patient, interact);
+
+            Assert.Multiple(() =>
             {
-                if (leftArm != default)
-                    entMan.DeleteEntity(leftArm);
-                entMan.DeleteEntity(cable);
-                entMan.DeleteEntity(patient);
-                entMan.DeleteEntity(surgeon);
-            }
+                Assert.That(interact.Handled, Is.True);
+                Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(surgeon), Is.False);
+            });
+        });
+
+        // CMU14: 3.5s doafter (7s base * 0.5 construction multiplier), 60 tps
+        await server.WaitRunTicks(300);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var damage = entMan.GetComponent<DamageableComponent>(patient).TotalDamage;
+
+            Assert.That(damage, Is.LessThan(damageBefore));
+
+            if (entMan.EntityExists(detachedBody))
+                entMan.DeleteEntity(detachedBody);
+            entMan.DeleteEntity(cable);
+            entMan.DeleteEntity(patient);
+            entMan.DeleteEntity(surgeon);
         });
 
         await pair.CleanReturnAsync();
@@ -461,6 +1295,8 @@ public sealed class RMCHumanPrototypeRegressionTest
         EntityUid patient = default;
         EntityUid surgeon = default;
         EntityUid leftArm = default;
+        EntityUid leftHand = default;
+        EntityUid detachedBody = default;
         EntityUid socketAnchor = default;
 
         await server.WaitAssertion(() =>
@@ -471,7 +1307,6 @@ public sealed class RMCHumanPrototypeRegressionTest
             var hands = entMan.System<SharedHandsSystem>();
             var standing = entMan.System<StandingStateSystem>();
             var skills = entMan.System<SkillsSystem>();
-            var xform = entMan.System<SharedTransformSystem>();
 
             patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
             surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
@@ -494,9 +1329,32 @@ public sealed class RMCHumanPrototypeRegressionTest
             }
 
             Assert.That(leftArm, Is.Not.EqualTo(default(EntityUid)));
-
-            xform.DetachEntity(leftArm, entMan.GetComponent<TransformComponent>(leftArm));
-            Assert.That(hands.TryPickupAnyHand(surgeon, leftArm, checkActionBlocker: false), Is.True);
+            leftHand = GetBodyPart(entMan, patient, BodyPartType.Hand, BodyPartSymmetry.Left);
+            detachedBody = DetachBodyPart(entMan, leftArm);
+            Assert.That(entMan.GetComponent<ChildOrganComponent>(leftHand).Parent, Is.EqualTo(leftArm));
+            Assert.That(hands.TryPickupAnyHand(surgeon, detachedBody, checkActionBlocker: false), Is.True);
+            var surgeonTorso = GetBodyPart(entMan, surgeon, BodyPartType.Torso, BodyPartSymmetry.None);
+            var occupiedAttach = body.AttachPart(surgeonTorso, "left_arm", leftArm);
+            Assert.Multiple(() =>
+            {
+                Assert.That(flow.ToolMatchesCategory(detachedBody, "severed_limb"), Is.True);
+                Assert.That(flow.ToolMatchesCategory(surgeon, "severed_limb"), Is.False,
+                    "an arbitrary Body entity must not masquerade as a DetachedBody carrier");
+                Assert.That(flow.LimbMatchesMissingSlot(patient, detachedBody, BodyPartType.Arm, BodyPartSymmetry.Left),
+                    Is.True);
+                Assert.That(flow.LimbMatchesMissingSlot(surgeon, detachedBody, BodyPartType.Arm, BodyPartSymmetry.Left),
+                    Is.False,
+                    "the intact surgeon's occupied left-arm slot must reject the carrier");
+                Assert.That(hands.IsHolding(surgeon, detachedBody, out _), Is.True,
+                    "failed occupied-slot selection must leave the carrier recoverable");
+                Assert.That(occupiedAttach, Is.False,
+                    "an actual attach into the surgeon's occupied left-arm slot must fail");
+                Assert.That(entMan.EntityExists(detachedBody), Is.True,
+                    "a failed attach must retain the carrier");
+                Assert.That(entMan.GetComponent<ChildOrganComponent>(leftHand).Parent, Is.EqualTo(leftArm),
+                    "a failed attach must retain the carrier's arm-hand subtree");
+                Assert.That(body.GetRootPartOrNull(detachedBody)?.Entity, Is.EqualTo(leftArm));
+            });
 
             entMan.EnsureComponent<CMUStumpRemovedComponent>(socketAnchor);
             entMan.EnsureComponent<CMUReattachPreppedComponent>(socketAnchor);
@@ -515,7 +1373,7 @@ public sealed class RMCHumanPrototypeRegressionTest
             {
                 Assert.That(armed!.StepLabel, Is.EqualTo("Reattach Synth Limb"));
                 Assert.That(armed.RequiredToolCategory, Is.EqualTo("severed_limb"));
-                Assert.That(flow.TryHandleArmedToolUse(patient, armed, surgeon, leftArm, socketAnchor, out var handled, out var started), Is.True);
+                Assert.That(flow.TryHandleArmedToolUse(patient, armed, surgeon, detachedBody, socketAnchor, out var handled, out var started), Is.True);
                 Assert.That(handled, Is.True);
                 Assert.That(started, Is.True);
             });
@@ -527,6 +1385,7 @@ public sealed class RMCHumanPrototypeRegressionTest
         {
             var entMan = server.EntMan;
             var body = entMan.System<SharedBodySystem>();
+            var hands = entMan.GetComponent<HandsComponent>(patient);
 
             var found = false;
             foreach (var (partUid, part) in body.GetBodyChildren(patient))
@@ -541,12 +1400,169 @@ public sealed class RMCHumanPrototypeRegressionTest
             Assert.Multiple(() =>
             {
                 Assert.That(found, Is.True);
+                Assert.That(entMan.EntityExists(detachedBody), Is.False);
+                Assert.That(entMan.GetComponent<ChildOrganComponent>(leftHand).Parent, Is.EqualTo(leftArm));
+                Assert.That(hands.Hands.Keys, Is.EquivalentTo(new[] { "left", "right" }));
+                Assert.That(hands.SortedHands, Is.EqualTo(new[] { "right", "left" }));
+                Assert.That(hands.ActiveHandId, Is.Not.Null);
                 Assert.That(entMan.HasComponent<CMUReattachCompleteComponent>(leftArm), Is.True);
                 Assert.That(entMan.GetComponent<CMUSurgeryArmedStepComponent>(patient).RequiredToolCategory, Is.EqualTo("blowtorch"));
             });
 
             entMan.DeleteEntity(patient);
             entMan.DeleteEntity(surgeon);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuSynthLimbReattachClearsOrganicWoundState()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        EntityUid patient = default;
+        EntityUid surgeon = default;
+        EntityUid leftArm = default;
+        EntityUid detachedBody = default;
+        EntityUid socketAnchor = default;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var body = entMan.System<SharedBodySystem>();
+            var flow = entMan.System<CMUSurgeryFlowSystem>();
+            var hands = entMan.System<SharedHandsSystem>();
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var standing = entMan.System<StandingStateSystem>();
+            var skills = entMan.System<SkillsSystem>();
+
+            patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+
+            entMan.EnsureComponent<SynthComponent>(patient);
+            skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
+            standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
+
+            var root = body.GetRootPartOrNull(patient);
+            Assert.That(root, Is.Not.Null);
+            socketAnchor = root!.Value.Entity;
+
+            leftArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Left);
+            detachedBody = DetachBodyPart(entMan, leftArm);
+
+            AddBodyPartWound(entMan, leftArm, WoundType.Brute);
+            var wounds = entMan.GetComponent<BodyPartWoundComponent>(leftArm);
+            Assert.That(ledger.TryUpdateExternalBleeding(leftArm, ExternalBleedTier.Arterial, wounds), Is.True);
+            entMan.EnsureComponent<InternalBleedingComponent>(leftArm);
+            entMan.EnsureComponent<CMUTourniquetComponent>(leftArm);
+            entMan.EnsureComponent<CMUEscharComponent>(leftArm);
+            entMan.EnsureComponent<CMUNecroticComponent>(leftArm);
+
+            Assert.That(hands.TryPickupAnyHand(surgeon, detachedBody, checkActionBlocker: false), Is.True);
+
+            entMan.EnsureComponent<CMUStumpRemovedComponent>(socketAnchor);
+            entMan.EnsureComponent<CMUReattachPreppedComponent>(socketAnchor);
+
+            var armed = flow.TryArmStep(
+                surgeon,
+                patient,
+                socketAnchor,
+                "RMCSynthSurgeryReattachLimb",
+                0,
+                BodyPartType.Arm,
+                BodyPartSymmetry.Left);
+
+            Assert.That(armed, Is.Not.Null);
+            Assert.That(flow.TryHandleArmedToolUse(
+                patient,
+                armed!,
+                surgeon,
+                detachedBody,
+                socketAnchor,
+                out var handled,
+                out var started), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(handled, Is.True);
+                Assert.That(started, Is.True);
+            });
+        });
+
+        await server.WaitRunTicks(120);
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(entMan.HasComponent<BodyPartWoundComponent>(leftArm), Is.False);
+                Assert.That(entMan.HasComponent<InternalBleedingComponent>(leftArm), Is.False);
+                Assert.That(entMan.HasComponent<CMUTourniquetComponent>(leftArm), Is.False);
+                Assert.That(entMan.HasComponent<CMUEscharComponent>(leftArm), Is.False);
+                Assert.That(entMan.HasComponent<CMUNecroticComponent>(leftArm), Is.False);
+            });
+
+            entMan.DeleteEntity(patient);
+            entMan.DeleteEntity(surgeon);
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuSynthPhysiologyRejectsMetabolismBleedingAndTourniquets()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            var medic = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            var tourniquet = entMan.SpawnEntity("AU14Tourniquet", MapCoordinates.Nullspace);
+
+            try
+            {
+                entMan.EnsureComponent<SynthComponent>(patient);
+                var rightArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Right);
+                AddBodyPartWound(entMan, rightArm, WoundType.Brute);
+
+                var metabolism = new CMMetabolizeAttemptEvent();
+                entMan.EventBus.RaiseLocalEvent(patient, ref metabolism);
+
+                var bleedAttempt = new CMBleedAttemptEvent();
+                entMan.EventBus.RaiseLocalEvent(patient, ref bleedAttempt);
+
+                var damageable = entMan.GetComponent<DamageableComponent>(patient);
+                var bleed = new CMBleedEvent(new DamageChangedEvent(
+                    damageable,
+                    new DamageSpecifier { DamageDict = { ["Piercing"] = FixedPoint2.New(10) } },
+                    true,
+                    null,
+                    null));
+                entMan.EventBus.RaiseLocalEvent(patient, ref bleed);
+
+                var interact = new AfterInteractEvent(medic, tourniquet, patient, default, true);
+                entMan.EventBus.RaiseLocalEvent(tourniquet, interact);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(metabolism.Cancelled, Is.True);
+                    Assert.That(bleedAttempt.Cancelled, Is.True);
+                    Assert.That(bleed.Handled, Is.True);
+                    Assert.That(interact.Handled, Is.False);
+                    Assert.That(entMan.HasComponent<CMUTourniquetComponent>(rightArm), Is.False);
+                });
+            }
+            finally
+            {
+                entMan.DeleteEntity(tourniquet);
+                entMan.DeleteEntity(medic);
+                entMan.DeleteEntity(patient);
+            }
         });
 
         await pair.CleanReturnAsync();
@@ -603,18 +1619,18 @@ public sealed class RMCHumanPrototypeRegressionTest
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
-        var mapManager = server.ResolveDependency<IMapManager>();
 
         await server.WaitAssertion(() =>
         {
             var entMan = server.EntMan;
             var body = entMan.System<SharedBodySystem>();
             var map = entMan.System<SharedMapSystem>();
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
             var solutions = entMan.System<SharedSolutionContainerSystem>();
             var wounds = entMan.System<CMUWoundsSystem>();
 
             map.CreateMap(out var mapId);
-            var grid = mapManager.CreateGridEntity(mapId);
+            var grid = map.CreateGridEntity(mapId);
             var tile = Vector2i.Zero;
             map.SetTile(grid, tile, new Tile(1));
 
@@ -674,7 +1690,69 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task CmuSurgeryToolUseOnOtherSurgeonInFlightOpensUiInsteadOfAutoResuming()
+    public async Task CmuExternalBleedSpawnsBloodPuddle()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        var tileDefinitionManager = server.ResolveDependency<ITileDefinitionManager>();
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var map = entMan.System<SharedMapSystem>();
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
+            var solutions = entMan.System<SharedSolutionContainerSystem>();
+            var woundsSystem = entMan.System<CMUWoundsSystem>();
+
+            map.CreateMap(out var mapId);
+            var grid = map.CreateGridEntity(mapId);
+            var tile = Vector2i.Zero;
+            map.SetTile(grid, tile, new Tile(tileDefinitionManager["FloorSteel"].TileId));
+
+            var patient = entMan.SpawnEntity("CMMobHuman", map.GridTileToLocal(grid, grid.Comp, tile));
+
+            try
+            {
+                var rightArm = GetBodyPart(entMan, patient, BodyPartType.Arm, BodyPartSymmetry.Right);
+                AddBodyPartWound(entMan, rightArm, WoundType.Brute);
+
+                var wounds = entMan.GetComponent<BodyPartWoundComponent>(rightArm);
+                Assert.That(ledger.TryUpdateExternalBleeding(rightArm, ExternalBleedTier.Arterial, wounds), Is.True);
+
+                var bloodstream = entMan.GetComponent<BloodstreamComponent>(patient);
+                typeof(BloodstreamComponent)
+                    .GetField(nameof(BloodstreamComponent.BleedPuddleThreshold), BindingFlags.Instance | BindingFlags.Public)!
+                    .SetValue(bloodstream, FixedPoint2.New(0.1f));
+                Assert.That(
+                    solutions.ResolveSolution(patient, bloodstream.BloodSolutionName, ref bloodstream.BloodSolution, out var bloodSolution),
+                    Is.True);
+
+                var bloodBefore = bloodSolution.Volume;
+                var puddlesBefore = CountPuddles(entMan);
+
+                woundsSystem.Update(1f);
+
+                Assert.That(
+                    solutions.ResolveSolution(patient, bloodstream.BloodSolutionName, ref bloodstream.BloodSolution, out bloodSolution),
+                    Is.True);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(bloodSolution.Volume.Float(), Is.LessThan(bloodBefore.Float()));
+                    Assert.That(CountPuddles(entMan), Is.GreaterThan(puddlesBefore));
+                });
+            }
+            finally
+            {
+                entMan.DeleteEntity(patient);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuSurgeryToolUseOnInFlightProcedureContinuesWithDifferentSurgeon()
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
@@ -685,6 +1763,7 @@ public sealed class RMCHumanPrototypeRegressionTest
             var body = entMan.System<SharedBodySystem>();
             var dispatch = entMan.System<CMUSurgeryDispatchSystem>();
             var flow = entMan.System<CMUSurgeryFlowSystem>();
+            var sessions = entMan.System<CMUSurgerySessionSystem>();
             var standing = entMan.System<StandingStateSystem>();
             var skills = entMan.System<SkillsSystem>();
 
@@ -721,32 +1800,37 @@ public sealed class RMCHumanPrototypeRegressionTest
 
                 Assert.That(dispatch.TryDispatch(newSurgeon, patient, scalpel), Is.True);
 
+                var currentArmed = entMan.GetComponent<CMUSurgeryArmedStepComponent>(patient);
+                Assert.That(sessions.TryGetSession(patient, out var session), Is.True);
+
                 Assert.Multiple(() =>
                 {
-                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(newSurgeon), Is.True);
-                    Assert.That(entMan.HasComponent<CMUSurgeryArmedStepComponent>(patient), Is.False);
+                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(newSurgeon), Is.False);
+                    Assert.That(currentArmed.LastOperator, Is.EqualTo(newSurgeon));
                     Assert.That(entMan.GetComponent<CMUSurgeryInFlightComponent>(leftArm).Surgeon, Is.EqualTo(originalSurgeon));
+                    Assert.That(session.Site, Is.EqualTo(new CMUMedicalBodyPartKey(BodyPartType.Arm, BodyPartSymmetry.Left)));
+                    Assert.That(session.Phase, Is.EqualTo(CMUSurgerySessionPhase.Performing));
+                    Assert.That(session.ActiveSurgeon, Is.EqualTo(newSurgeon));
+                    Assert.That(session.ActiveAttempt, Is.Not.Null);
                 });
 
                 var originalState = flow.BuildBuiState(
                     patient,
                     "Patient",
                     dispatch.BuildPartEntries(patient, originalSurgeon),
-                    null,
-                    originalSurgeon);
+                    currentArmed);
                 var newState = flow.BuildBuiState(
                     patient,
                     "Patient",
                     dispatch.BuildPartEntries(patient, newSurgeon),
-                    null,
-                    newSurgeon);
+                    currentArmed);
 
                 Assert.Multiple(() =>
                 {
                     Assert.That(originalState.InFlight, Is.Not.Null);
-                    Assert.That(originalState.InFlight!.OwnedByViewer, Is.True);
                     Assert.That(newState.InFlight, Is.Not.Null);
-                    Assert.That(newState.InFlight!.OwnedByViewer, Is.False);
+                    Assert.That(originalState.CurrentArmedStep, Is.Not.Null);
+                    Assert.That(newState.CurrentArmedStep, Is.Not.Null);
                 });
             }
             finally
@@ -762,7 +1846,7 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task CmuSurgeryToolUseByOtherSurgeonExposesArmedStepForTakeover()
+    public async Task CmuArmedSurgeryStepContinuesWithDifferentSurgeon()
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
@@ -773,6 +1857,7 @@ public sealed class RMCHumanPrototypeRegressionTest
             var body = entMan.System<SharedBodySystem>();
             var dispatch = entMan.System<CMUSurgeryDispatchSystem>();
             var flow = entMan.System<CMUSurgeryFlowSystem>();
+            var sessions = entMan.System<CMUSurgerySessionSystem>();
             var standing = entMan.System<StandingStateSystem>();
             var skills = entMan.System<SkillsSystem>();
 
@@ -812,23 +1897,24 @@ public sealed class RMCHumanPrototypeRegressionTest
                 Assert.That(dispatch.TryDispatch(newSurgeon, patient, scalpel), Is.True);
 
                 var currentArmed = entMan.GetComponent<CMUSurgeryArmedStepComponent>(patient);
+                Assert.That(sessions.TryGetSession(patient, out var session), Is.True);
                 var originalState = flow.BuildBuiState(
                     patient,
                     "Patient",
                     dispatch.BuildPartEntries(patient, originalSurgeon),
-                    currentArmed,
-                    originalSurgeon);
+                    currentArmed);
                 var newState = flow.BuildBuiState(
                     patient,
                     "Patient",
                     dispatch.BuildPartEntries(patient, newSurgeon),
-                    currentArmed,
-                    newSurgeon);
+                    currentArmed);
 
                 Assert.Multiple(() =>
                 {
-                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(newSurgeon), Is.True);
-                    Assert.That(currentArmed.Surgeon, Is.EqualTo(originalSurgeon));
+                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(newSurgeon), Is.False);
+                    Assert.That(currentArmed.LastOperator, Is.EqualTo(newSurgeon));
+                    Assert.That(session.Phase, Is.EqualTo(CMUSurgerySessionPhase.Performing));
+                    Assert.That(session.ActiveSurgeon, Is.EqualTo(newSurgeon));
                     Assert.That(originalState.CurrentArmedStep, Is.Not.Null);
                     Assert.That(newState.CurrentArmedStep, Is.Not.Null);
                 });
@@ -846,146 +1932,6 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task CmuOwningSurgeonCanReopenMenuWithScalpelWhenAnotherToolIsArmed()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-
-        await server.WaitAssertion(() =>
-        {
-            var entMan = server.EntMan;
-            var body = entMan.System<SharedBodySystem>();
-            var dispatch = entMan.System<CMUSurgeryDispatchSystem>();
-            var flow = entMan.System<CMUSurgeryFlowSystem>();
-            var standing = entMan.System<StandingStateSystem>();
-            var skills = entMan.System<SkillsSystem>();
-
-            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var scalpel = entMan.SpawnEntity("CMScalpel", MapCoordinates.Nullspace);
-
-            try
-            {
-                skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
-                standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
-
-                EntityUid leftArm = default;
-                foreach (var (partUid, part) in body.GetBodyChildren(patient))
-                {
-                    if (part.PartType != BodyPartType.Arm || part.Symmetry != BodyPartSymmetry.Left)
-                        continue;
-                    leftArm = partUid;
-                    break;
-                }
-
-                Assert.That(leftArm, Is.Not.EqualTo(default(EntityUid)));
-                entMan.EnsureComponent<CMIncisionOpenComponent>(leftArm);
-                entMan.EnsureComponent<CMBleedersClampedComponent>(leftArm);
-                entMan.EnsureComponent<CMSkinRetractedComponent>(leftArm);
-                entMan.EnsureComponent<InternalBleedingComponent>(leftArm);
-
-                var armed = flow.TryArmStep(
-                    surgeon,
-                    patient,
-                    leftArm,
-                    "CMUSurgeryCauterizeInternalBleeding",
-                    0,
-                    BodyPartType.Arm,
-                    BodyPartSymmetry.Left);
-
-                Assert.That(armed, Is.Not.Null);
-                Assert.That(armed!.RequiredToolCategory, Is.EqualTo("hemostat"));
-                Assert.That(
-                    flow.TryHandleArmedToolUse(
-                        patient,
-                        armed,
-                        surgeon,
-                        scalpel,
-                        leftArm,
-                        out var handled,
-                        out var started),
-                    Is.False);
-                Assert.Multiple(() =>
-                {
-                    Assert.That(handled, Is.False);
-                    Assert.That(started, Is.False);
-                    Assert.That(entMan.GetComponent<CMUSurgeryArmedStepComponent>(patient).Surgeon, Is.EqualTo(surgeon));
-                });
-
-                Assert.That(dispatch.TryDispatch(surgeon, patient, scalpel), Is.True);
-
-                var currentArmed = entMan.GetComponent<CMUSurgeryArmedStepComponent>(patient);
-                var state = flow.BuildBuiState(
-                    patient,
-                    "Patient",
-                    dispatch.BuildPartEntries(patient, surgeon),
-                    currentArmed,
-                    surgeon);
-
-                Assert.Multiple(() =>
-                {
-                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(surgeon), Is.True);
-                    Assert.That(currentArmed.Surgeon, Is.EqualTo(surgeon));
-                    Assert.That(state.CurrentArmedStep, Is.Not.Null);
-                    Assert.That(state.CurrentArmedStep!.ToolCategory, Is.EqualTo("hemostat"));
-                });
-            }
-            finally
-            {
-                entMan.DeleteEntity(scalpel);
-                entMan.DeleteEntity(patient);
-                entMan.DeleteEntity(surgeon);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
-    public async Task CmuFreshSurgeryToolUseWithSelectedPartOpensUiInsteadOfAutoStarting()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-
-        await server.WaitAssertion(() =>
-        {
-            var entMan = server.EntMan;
-            var dispatch = entMan.System<CMUSurgeryDispatchSystem>();
-            var standing = entMan.System<StandingStateSystem>();
-            var skills = entMan.System<SkillsSystem>();
-            var targeting = entMan.System<SharedBodyZoneTargetingSystem>();
-
-            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var scalpel = entMan.SpawnEntity("CMScalpel", MapCoordinates.Nullspace);
-
-            try
-            {
-                skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
-                standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
-                targeting.SelectZone((surgeon, null), TargetBodyZone.LeftArm);
-
-                Assert.That(dispatch.TryDispatch(surgeon, patient, scalpel), Is.True);
-
-                Assert.Multiple(() =>
-                {
-                    Assert.That(entMan.HasComponent<CMUSurgeryWindowOpenComponent>(surgeon), Is.True);
-                    Assert.That(entMan.HasComponent<CMUSurgeryArmedStepComponent>(patient), Is.False);
-                    Assert.That(entMan.HasComponent<CMUSurgeryInProgressComponent>(patient), Is.False);
-                });
-            }
-            finally
-            {
-                entMan.DeleteEntity(scalpel);
-                entMan.DeleteEntity(patient);
-                entMan.DeleteEntity(surgeon);
-            }
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
     public async Task CmuLimbReattachOpenSocketProgressesPastScalpel()
     {
         await using var pair = await PoolManager.GetServerClient();
@@ -995,6 +1941,7 @@ public sealed class RMCHumanPrototypeRegressionTest
         EntityUid leftArm = default;
         EntityUid socketAnchor = default;
         EntityUid scalpel = default;
+        EntityUid detachedBody = default;
 
         await server.WaitAssertion(() =>
         {
@@ -1003,7 +1950,6 @@ public sealed class RMCHumanPrototypeRegressionTest
             var flow = entMan.System<CMUSurgeryFlowSystem>();
             var standing = entMan.System<StandingStateSystem>();
             var skills = entMan.System<SkillsSystem>();
-            var xform = entMan.System<SharedTransformSystem>();
 
             patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
             surgeon = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
@@ -1011,6 +1957,9 @@ public sealed class RMCHumanPrototypeRegressionTest
 
             skills.SetSkill(surgeon, "RMCSkillSurgery", 3);
             standing.Down(patient, playSound: false, dropHeldItems: false, force: true);
+            // The real tool-use entry point supplies a held tool. Completion now
+            // rejects a scalpel that is merely passed to this public flow method.
+            Assert.That(entMan.System<SharedHandsSystem>().TryPickupAnyHand(surgeon, scalpel), Is.True);
 
             var root = body.GetRootPartOrNull(patient);
             Assert.That(root, Is.Not.Null);
@@ -1027,7 +1976,7 @@ public sealed class RMCHumanPrototypeRegressionTest
 
             Assert.That(leftArm, Is.Not.EqualTo(default(EntityUid)));
 
-            xform.DetachEntity(leftArm, entMan.GetComponent<TransformComponent>(leftArm));
+            detachedBody = DetachBodyPart(entMan, leftArm);
 
             var armed = flow.TryArmStep(
                 surgeon,
@@ -1057,6 +2006,7 @@ public sealed class RMCHumanPrototypeRegressionTest
 
             Assert.Multiple(() =>
             {
+                Assert.That(entMan.System<SharedHandsSystem>().IsHolding(surgeon, scalpel), Is.True);
                 Assert.That(entMan.HasComponent<CMIncisionOpenComponent>(socketAnchor), Is.True);
                 Assert.That(entMan.HasComponent<CMIncisionOpenComponent>(patient), Is.False);
                 Assert.That(armed.LeafSurgeryId, Is.EqualTo("CMUSurgeryReattachLimb"));
@@ -1065,30 +2015,11 @@ public sealed class RMCHumanPrototypeRegressionTest
                 Assert.That(armed.RequiredToolCategory, Is.EqualTo("hemostat"));
             });
 
-            entMan.DeleteEntity(leftArm);
+            if (entMan.EntityExists(detachedBody))
+                entMan.DeleteEntity(detachedBody);
             entMan.DeleteEntity(scalpel);
             entMan.DeleteEntity(patient);
             entMan.DeleteEntity(surgeon);
-        });
-
-        await pair.CleanReturnAsync();
-    }
-
-    [Test]
-    public async Task RMCExplosionPrototypesKeepBaseDamage()
-    {
-        await using var pair = await PoolManager.GetServerClient();
-        var server = pair.Server;
-
-        await server.WaitIdleAsync();
-        var proto = server.ResolveDependency<IPrototypeManager>();
-
-        Assert.Multiple(() =>
-        {
-            AssertExplosionDamage(proto, "RMC", 5f, 5f);
-            AssertExplosionDamage(proto, "RMCMortar", 6.25f, 6.25f);
-            AssertExplosionDamage(proto, "RMCOB", 5f, 5f);
-            AssertExplosionDamage(proto, "RMCOBXenoTunnel", 5f, 5f);
         });
 
         await pair.CleanReturnAsync();
@@ -1104,6 +2035,7 @@ public sealed class RMCHumanPrototypeRegressionTest
         {
             var entMan = server.EntMan;
             var body = entMan.System<SharedBodySystem>();
+            var ledger = entMan.System<CMUWoundLedgerSystem>();
             var human = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
 
             try
@@ -1124,7 +2056,7 @@ public sealed class RMCHumanPrototypeRegressionTest
                 foreach (var (partUid, _) in body.GetBodyChildren(human))
                 {
                     if (entMan.TryGetComponent<BodyPartWoundComponent>(partUid, out var wounds) &&
-                        wounds.Wounds.Count > 0)
+                        ledger.GetEntries(wounds).Count > 0)
                     {
                         woundedParts++;
                     }
@@ -1142,49 +2074,160 @@ public sealed class RMCHumanPrototypeRegressionTest
     }
 
     [Test]
-    public async Task HumanAndSynthExplosionResistanceAppliesVulnerability()
+    public async Task CmuExplosionBlastWoundsUsePatientOrientation()
     {
         await using var pair = await PoolManager.GetServerClient();
         var server = pair.Server;
+        var map = await pair.CreateTestMap();
 
         await server.WaitAssertion(() =>
         {
             var entMan = server.EntMan;
-            var human = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var synth = entMan.SpawnEntity(null, MapCoordinates.Nullspace);
-            var humanSynth = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
-            var other = entMan.SpawnEntity(null, MapCoordinates.Nullspace);
+            var transform = entMan.System<SharedTransformSystem>();
+            var frontHit = entMan.SpawnEntity("CMMobHuman", map.GridCoords);
+            var rearHit = entMan.SpawnEntity("CMMobHuman", map.GridCoords);
 
             try
             {
-                entMan.EnsureComponent<SynthComponent>(synth);
-                entMan.EnsureComponent<SynthComponent>(humanSynth);
+                transform.SetWorldRotation(frontHit, Angle.Zero);
+                transform.SetWorldRotation(rearHit, Angle.Zero);
 
-                Assert.Multiple(() =>
+                var frontHead = GetBodyPart(entMan, frontHit, BodyPartType.Head, BodyPartSymmetry.None);
+                var rearHead = GetBodyPart(entMan, rearHit, BodyPartType.Head, BodyPartSymmetry.None);
+                var frontBefore = entMan.GetComponent<BodyPartHealthComponent>(frontHead).Current;
+                var rearBefore = entMan.GetComponent<BodyPartHealthComponent>(rearHead).Current;
+                var forward = transform.GetWorldRotation(frontHit).ToWorldVec();
+                var frontCoords = transform.GetMapCoordinates(frontHit);
+                var rearCoords = transform.GetMapCoordinates(rearHit);
+                // Keep exposure near the neutral normal-damage correction point so this isolates blast propagation weighting.
+                const float neutralCorrectionDistance = 6.45f;
+                var damage = new DamageSpecifier
                 {
-                    AssertExplosionCoefficient(entMan, human, 2.25f, "CMU human");
-                    AssertExplosionCoefficient(entMan, synth, 2.25f, "Synth");
-                    AssertExplosionCoefficient(entMan, humanSynth, 2.25f, "CMU synth");
-                    AssertExplosionCoefficient(entMan, other, 1f, "Unmarked entity");
-                });
+                    DamageDict =
+                    {
+                        ["Blunt"] = FixedPoint2.New(45),
+                        ["Heat"] = FixedPoint2.New(45),
+                    },
+                };
+
+                var frontExplosion = new ExplosionReceivedEvent("RMC", new MapCoordinates(frontCoords.Position + forward * neutralCorrectionDistance, frontCoords.MapId), damage);
+                entMan.EventBus.RaiseLocalEvent(frontHit, ref frontExplosion);
+
+                var rearExplosion = new ExplosionReceivedEvent("RMC", new MapCoordinates(rearCoords.Position - forward * neutralCorrectionDistance, rearCoords.MapId), damage);
+                entMan.EventBus.RaiseLocalEvent(rearHit, ref rearExplosion);
+
+                var frontAfter = entMan.GetComponent<BodyPartHealthComponent>(frontHead).Current;
+                var rearAfter = entMan.GetComponent<BodyPartHealthComponent>(rearHead).Current;
+                var frontLoss = frontBefore - frontAfter;
+                var rearLoss = rearBefore - rearAfter;
+
+                Assert.That(frontLoss, Is.GreaterThan(rearLoss));
             }
             finally
             {
-                entMan.DeleteEntity(human);
-                entMan.DeleteEntity(synth);
-                entMan.DeleteEntity(humanSynth);
-                entMan.DeleteEntity(other);
+                entMan.DeleteEntity(frontHit);
+                entMan.DeleteEntity(rearHit);
             }
         });
 
         await pair.CleanReturnAsync();
     }
 
-    private static void AssertExplosionDamage(IPrototypeManager proto, string id, float blunt, float heat)
+    [Test]
+    public async Task CmuExplosionRebalancesNormalDamageByExposure()
     {
-        var explosion = proto.Index<ExplosionPrototype>(id);
-        Assert.That(explosion.DamagePerIntensity.DamageDict["Blunt"], Is.EqualTo((FixedPoint2) blunt), $"{id} Blunt damage");
-        Assert.That(explosion.DamagePerIntensity.DamageDict["Heat"], Is.EqualTo((FixedPoint2) heat), $"{id} Heat damage");
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        var map = await pair.CreateTestMap();
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var damageable = entMan.System<DamageableSystem>();
+            var closeHuman = entMan.SpawnEntity("CMMobHuman", new MapCoordinates(Vector2.Zero, map.MapId));
+            var farHuman = entMan.SpawnEntity("CMMobHuman", new MapCoordinates(Vector2.Zero, map.MapId));
+
+            try
+            {
+                var damage = new DamageSpecifier
+                {
+                    DamageDict =
+                    {
+                        ["Blunt"] = FixedPoint2.New(40),
+                        ["Heat"] = FixedPoint2.New(40),
+                    },
+                };
+
+                var closePreparing = new ExplosionDamagePreparingEvent(new MapCoordinates(new Vector2(1, 0), map.MapId), damage);
+                entMan.EventBus.RaiseLocalEvent(closeHuman, ref closePreparing);
+                var closeApplied = damageable.TryChangeDamage(closeHuman, closePreparing.Damage, ignoreResistances: true, impact: DamageImpact.Explosion);
+                var closeExplosion = new ExplosionReceivedEvent("RMC", closePreparing.Epicenter, closeApplied!);
+                entMan.EventBus.RaiseLocalEvent(closeHuman, ref closeExplosion);
+
+                var farPreparing = new ExplosionDamagePreparingEvent(new MapCoordinates(new Vector2(7, 0), map.MapId), damage);
+                entMan.EventBus.RaiseLocalEvent(farHuman, ref farPreparing);
+                var farApplied = damageable.TryChangeDamage(farHuman, farPreparing.Damage, ignoreResistances: true, impact: DamageImpact.Explosion);
+                var farExplosion = new ExplosionReceivedEvent("RMC", farPreparing.Epicenter, farApplied!);
+                entMan.EventBus.RaiseLocalEvent(farHuman, ref farExplosion);
+
+                var closeTotal = entMan.GetComponent<DamageableComponent>(closeHuman).TotalDamage;
+                var farTotal = entMan.GetComponent<DamageableComponent>(farHuman).TotalDamage;
+
+                Assert.That(closeTotal, Is.GreaterThan(farTotal));
+            }
+            finally
+            {
+                entMan.DeleteEntity(closeHuman);
+                entMan.DeleteEntity(farHuman);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task CmuExplosionCreatesShrapnelForHighExposureBlast()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+        var map = await pair.CreateTestMap();
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var body = entMan.System<SharedBodySystem>();
+            var human = entMan.SpawnEntity("CMMobHuman", new MapCoordinates(Vector2.Zero, map.MapId));
+
+            try
+            {
+                var damage = new DamageSpecifier
+                {
+                    DamageDict =
+                    {
+                        ["Blunt"] = FixedPoint2.New(60),
+                        ["Heat"] = FixedPoint2.New(60),
+                    },
+                };
+
+                var explosion = new ExplosionReceivedEvent("RMC", new MapCoordinates(new Vector2(1, 0), map.MapId), damage);
+                entMan.EventBus.RaiseLocalEvent(human, ref explosion);
+
+                var fragments = 0;
+                foreach (var (partUid, _) in body.GetBodyChildren(human))
+                {
+                    if (entMan.TryGetComponent<CMUShrapnelComponent>(partUid, out var shrapnel))
+                        fragments += shrapnel.Fragments;
+                }
+
+                Assert.That(fragments, Is.GreaterThan(0));
+            }
+            finally
+            {
+                entMan.DeleteEntity(human);
+            }
+        });
+
+        await pair.CleanReturnAsync();
     }
 
     private static int CountPuddles(IEntityManager entMan)
@@ -1227,22 +2270,71 @@ public sealed class RMCHumanPrototypeRegressionTest
         return EntityUid.Invalid;
     }
 
-    private static void AddBodyPartWound(IEntityManager entMan, EntityUid part, WoundType type)
+    private static EntityUid DetachBodyPart(IEntityManager entMan, EntityUid part)
     {
+        var detachedBody = entMan.System<DetachableOrganSystem>().Detach(part);
+        Assert.That(detachedBody, Is.Not.Null, $"Expected {part} to detach into a DetachedBody carrier.");
+        Assert.That(entMan.System<SharedBodySystem>().GetRootPartOrNull(detachedBody!.Value)?.Entity, Is.EqualTo(part));
+        return detachedBody!.Value;
+    }
+
+    private static void SeedAttributedMedicalDamage(IEntityManager entities, EntityUid patient,
+        EntityUid part, string type, FixedPoint2 amount)
+    {
+        entities.System<RegionalDamageProbeSystem>();
+        var probe = entities.EnsureComponent<RegionalDamageProbeComponent>(patient);
+        probe.Target = part;
+        var applied = entities.System<DamageableSystem>().TryChangeDamage(patient,
+            new DamageSpecifier { DamageDict = { [type] = amount } }, ignoreResistances: true);
+        Assert.That(applied!.GetTotal(), Is.EqualTo(amount));
+        // Retain the real regional debt while replacing the generated wound rows
+        // with the deliberate wound-cap fixture used by these treatment tests.
+        entities.System<SharedCMUWoundsSystem>().ClearAllWounds(part);
+        entities.RemoveComponent<RegionalDamageProbeComponent>(patient);
+    }
+
+    private static void AddBodyPartWound(
+        IEntityManager entMan,
+        EntityUid part,
+        WoundType type,
+        FixedPoint2? damage = null,
+        WoundCleanupFlags cleanup = WoundCleanupFlags.None,
+        WoundSize size = WoundSize.CutDeep,
+        WoundMechanism? mechanism = null)
+    {
+        var ledger = entMan.System<CMUWoundLedgerSystem>();
         var wounds = entMan.EnsureComponent<BodyPartWoundComponent>(part);
-        GetField<List<Wound>>(wounds, nameof(BodyPartWoundComponent.Wounds)).Add(new Wound(10, FixedPoint2.Zero, 0f, null, type, false));
-        GetField<List<WoundSize>>(wounds, nameof(BodyPartWoundComponent.Sizes)).Add(WoundSize.Deep);
-        GetField<List<int>>(wounds, nameof(BodyPartWoundComponent.Bandages)).Add(0);
+        Assert.That(ledger.AddEntry(wounds, new CMUWoundEntry(
+            new Wound(damage ?? FixedPoint2.New(10), FixedPoint2.Zero, 0f, null, type, false),
+            size,
+            0,
+            mechanism ?? (type == WoundType.Burn ? WoundMechanism.Burn : WoundMechanism.Generic),
+            WoundMechanismFlags.None,
+            WoundTreatmentQuality.Untreated,
+            cleanup)), Is.GreaterThanOrEqualTo(0));
     }
 
-    private static T GetField<T>(BodyPartWoundComponent comp, string name)
-        => (T) typeof(BodyPartWoundComponent).GetField(name, BindingFlags.Instance | BindingFlags.Public)!.GetValue(comp)!;
-
-    private static void AssertExplosionCoefficient(IEntityManager entMan, EntityUid entity, float expected, string message)
+    private static int CountTreatedWounds(
+        CMUWoundLedgerSystem ledger,
+        BodyPartWoundComponent comp,
+        WoundType type)
     {
-        var ev = new GetExplosionResistanceEvent("RMC");
-        entMan.EventBus.RaiseLocalEvent(entity, ref ev);
+        var count = 0;
+        foreach (var entry in ledger.GetEntries(comp))
+        {
+            if (entry.Wound.Type == type && entry.Wound.Treated)
+                count++;
+        }
 
-        Assert.That(ev.DamageCoefficient, Is.EqualTo(expected).Within(0.001f), message);
+        return count;
     }
+
+    private static FixedPoint2 DamageInGroup(IPrototypeManager prototypes, DamageSpecifier damage, string groupId)
+    {
+        var group = prototypes.Index<DamageGroupPrototype>(groupId);
+        return damage.TryGetDamageInGroup(group, out var total) ? total : FixedPoint2.Zero;
+    }
+
 }
+
+#pragma warning restore RA0002

@@ -1,0 +1,166 @@
+using System.Linq;
+using Content.Shared.CMU14.Medical.Anatomy.Organs.Heart;
+using Content.Shared.CMU14.Medical.Core;
+using Content.Shared.Body;
+using Content.Shared.Body.Part;
+using Content.Shared.Body.Systems;
+using Robust.Shared.GameObjects;
+using Robust.Shared.Map;
+
+namespace Content.IntegrationTests.CMU14.Medical.Core;
+
+[TestFixture]
+public sealed class CMUMedicalBodyIndexTest
+{
+    [TestPrototypes]
+    private const string Prototypes = """
+- type: entity
+  parent: AppearanceCMUHuman
+  id: CMUMedicalBodyIndexFallbackDummy
+  components:
+  - type: StandingState
+""";
+
+    [Test]
+    public async Task PartReplacementAdvancesRevisionAndInvalidatesSnapshot()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var body = entMan.System<SharedBodySystem>();
+            var detachable = entMan.System<DetachableOrganSystem>();
+            var medical = entMan.System<CMUMedicalBodyIndexSystem>();
+            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            EntityUid? detachedArm = null;
+            EntityUid? detachedCarrier = null;
+            EntityUid? replacementArm = null;
+
+            try
+            {
+                var leftArmKey = new CMUMedicalBodyPartKey(BodyPartType.Arm, BodyPartSymmetry.Left);
+                Assert.That(medical.TryGetBodyPart(patient, leftArmKey, out var leftArm), Is.True);
+                Assert.That(medical.TryGetSnapshot(patient, out var initialSnapshot), Is.True);
+
+                var parentSlot = body.GetParentPartAndSlotOrNull(leftArm);
+                Assert.That(parentSlot, Is.Not.Null);
+                detachedArm = leftArm;
+                detachedCarrier = detachable.Detach(leftArm);
+                Assert.That(detachedCarrier, Is.Not.Null);
+
+                var foundRemovedPart = medical.TryGetBodyPart(patient, leftArmKey, out _);
+                var foundRemovedSnapshot = medical.TryGetSnapshot(patient, out var removedSnapshot);
+                var foundCachedRemovedSnapshot = medical.TryGetSnapshot(patient, out var cachedRemovedSnapshot);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(foundRemovedPart, Is.False);
+                    Assert.That(
+                        medical.GetBodyPartSlots(parentSlot!.Value.Parent)
+                            .Single(slot => slot.SlotId == parentSlot.Value.Slot)
+                            .Part,
+                        Is.Null);
+                    Assert.That(foundRemovedSnapshot, Is.True);
+                    Assert.That(foundCachedRemovedSnapshot, Is.True);
+                    Assert.That(removedSnapshot, Is.Not.SameAs(initialSnapshot));
+                    Assert.That(removedSnapshot!.Revision, Is.GreaterThan(initialSnapshot!.Revision));
+                    Assert.That(cachedRemovedSnapshot, Is.SameAs(removedSnapshot));
+                    Assert.That(removedSnapshot.BodyParts.ContainsKey(leftArmKey), Is.False);
+                });
+
+                replacementArm = entMan.SpawnEntity("CMUPartHumanLeftArm", MapCoordinates.Nullspace);
+                Assert.That(body.AttachPart(parentSlot!.Value.Parent, parentSlot.Value.Slot, replacementArm.Value), Is.True);
+
+                var foundReplacement = medical.TryGetBodyPart(patient, leftArmKey, out var indexedReplacement);
+                var foundReplacementSnapshot = medical.TryGetSnapshot(patient, out var replacementSnapshot);
+                var foundCachedReplacementSnapshot = medical.TryGetSnapshot(patient, out var cachedReplacementSnapshot);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(foundReplacement, Is.True);
+                    Assert.That(indexedReplacement, Is.EqualTo(replacementArm));
+                    Assert.That(
+                        medical.GetBodyPartSlots(parentSlot.Value.Parent)
+                            .Single(slot => slot.SlotId == parentSlot.Value.Slot)
+                            .Part,
+                        Is.EqualTo(replacementArm));
+                    Assert.That(foundReplacementSnapshot, Is.True);
+                    Assert.That(foundCachedReplacementSnapshot, Is.True);
+                    Assert.That(replacementSnapshot, Is.Not.SameAs(removedSnapshot));
+                    Assert.That(replacementSnapshot!.Revision, Is.GreaterThan(removedSnapshot.Revision));
+                    Assert.That(replacementSnapshot.BodyParts[leftArmKey], Is.EqualTo(replacementArm));
+                    Assert.That(cachedReplacementSnapshot, Is.SameAs(replacementSnapshot));
+                });
+            }
+            finally
+            {
+                if (detachedCarrier is { } carrier && entMan.EntityExists(carrier))
+                    entMan.DeleteEntity(carrier);
+                else if (detachedArm is { } detached && entMan.EntityExists(detached))
+                    entMan.DeleteEntity(detached);
+                if (entMan.EntityExists(patient))
+                    entMan.DeleteEntity(patient);
+                if (replacementArm is { } replacement && entMan.EntityExists(replacement))
+                    entMan.DeleteEntity(replacement);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+
+    [Test]
+    public async Task OrganRemovalInvalidatesBothRelationshipDirectionsAndSnapshot()
+    {
+        await using var pair = await PoolManager.GetServerClient();
+        var server = pair.Server;
+
+        await server.WaitAssertion(() =>
+        {
+            var entMan = server.EntMan;
+            var body = entMan.System<SharedBodySystem>();
+            var medical = entMan.System<CMUMedicalBodyIndexSystem>();
+            var patient = entMan.SpawnEntity("CMMobHuman", MapCoordinates.Nullspace);
+            EntityUid? removedHeart = null;
+
+            try
+            {
+                Assert.That(medical.TryGetOrgan<HeartComponent>(patient, out var heart), Is.True);
+                removedHeart = heart;
+                Assert.That(medical.TryGetOrganOwner(heart, out var owner, out var part), Is.True);
+                Assert.That(medical.TryGetSnapshot(patient, out var initialSnapshot), Is.True);
+                var heartSlot = medical.GetOrganSlots(part).Single(slot => slot.Organ == heart).SlotId;
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(owner, Is.EqualTo(patient));
+                    Assert.That(medical.GetPartOrgans(part).Select(organ => organ.Owner), Does.Contain(heart));
+                });
+
+                Assert.That(body.RemoveOrgan(heart), Is.True);
+                Assert.That(medical.TryGetSnapshot(patient, out var removedSnapshot), Is.True);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(medical.TryGetOrganOwner(heart, out _, out _), Is.False);
+                    Assert.That(medical.GetPartOrgans(part).Select(organ => organ.Owner), Does.Not.Contain(heart));
+                    Assert.That(medical.GetOrganSlots(part).Single(slot => slot.SlotId == heartSlot).Organ, Is.Null);
+                    Assert.That(medical.GetOrgans(patient).Select(organ => organ.Owner), Does.Not.Contain(heart));
+                    Assert.That(removedSnapshot, Is.Not.SameAs(initialSnapshot));
+                    Assert.That(removedSnapshot!.Revision, Is.GreaterThan(initialSnapshot!.Revision));
+                    Assert.That(removedSnapshot.Organs, Does.Not.Contain(heart));
+                });
+            }
+            finally
+            {
+                if (removedHeart is { } heart && entMan.EntityExists(heart))
+                    entMan.DeleteEntity(heart);
+                if (entMan.EntityExists(patient))
+                    entMan.DeleteEntity(patient);
+            }
+        });
+
+        await pair.CleanReturnAsync();
+    }
+}

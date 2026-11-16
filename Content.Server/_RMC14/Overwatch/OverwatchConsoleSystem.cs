@@ -1,6 +1,7 @@
 using Content.Server.Chat.Systems;
+using Content.Shared._RMC14.Communications;
 using Content.Shared._RMC14.Overwatch;
-using Content.Shared.Inventory;
+using Content.Shared._RMC14.Rules;
 using Robust.Server.GameObjects;
 using Robust.Shared.Player;
 using static Content.Server.Chat.Systems.ChatSystem;
@@ -9,81 +10,79 @@ namespace Content.Server._RMC14.Overwatch;
 
 public sealed partial class OverwatchConsoleSystem : SharedOverwatchConsoleSystem
 {
+    [Dependency] private CommunicationsTowerSystem _communicationsTower = default!;
     [Dependency] private SharedEyeSystem _eye = default!;
-    [Dependency] private InventorySystem _inventory = default!;
+    [Dependency] private ISharedPlayerManager _playerManager = default!;
     [Dependency] private TransformSystem _transform = default!;
     [Dependency] private ViewSubscriberSystem _viewSubscriber = default!;
-
-    private EntityQuery<ActorComponent> _actorQuery;
-    private EntityQuery<OverwatchCameraComponent> _cameraQuery;
-
-    private readonly Dictionary<ICommonSession, ICChatRecipientData> _recipients = new();
 
     public override void Initialize()
     {
         base.Initialize();
 
-        _actorQuery = GetEntityQuery<ActorComponent>();
-        _cameraQuery = GetEntityQuery<OverwatchCameraComponent>();
-
         SubscribeLocalEvent<OverwatchCameraComponent, ComponentRemove>(OnWatchedRemove);
         SubscribeLocalEvent<OverwatchCameraComponent, EntityTerminatingEvent>(OnWatchedRemove);
         SubscribeLocalEvent<OverwatchWatchingComponent, ComponentRemove>(OnWatchingRemove);
         SubscribeLocalEvent<OverwatchWatchingComponent, EntityTerminatingEvent>(OnWatchingRemove);
+        SubscribeLocalEvent<OverwatchWatchingComponent, PlayerDetachedEvent>(OnWatcherDetached);
 
         SubscribeLocalEvent<ExpandICChatRecipientsEvent>(OnExpandRecipients);
     }
 
     private void OnExpandRecipients(ExpandICChatRecipientsEvent ev)
     {
-        if (!_inventory.TryGetInventoryEntity<OverwatchCameraComponent>(ev.Source, out var camera))
-            return;
-
-        if (!_cameraQuery.TryComp(camera, out var cameraComp) || cameraComp.Watching.Count == 0)
-            return;
-
-        var sourceTransform = Transform(ev.Source);
-        var sourcePos = _transform.GetWorldPosition(sourceTransform);
-
-        _recipients.Clear();
-        foreach (var watcher in cameraComp.Watching)
+        var sourceCoordinates = Transform(ev.Source).Coordinates;
+        foreach (var session in _playerManager.Sessions)
         {
-            if (!_actorQuery.TryComp(watcher, out var actor))
+            if (session.AttachedEntity is not { Valid: true } watcher)
                 continue;
 
-            if (ev.Recipients.ContainsKey(actor.PlayerSession))
+            if (!TryComp(watcher, out OverwatchWatchingComponent? overwatch) ||
+                overwatch.Watching is not { } target)
                 continue;
 
-            var watcherTransform = Transform(watcher);
-            float range;
-            if (watcherTransform.MapID == sourceTransform.MapID)
-                range = (sourcePos - _transform.GetWorldPosition(watcherTransform)).Length();
-            else
-                range = -1;
+            var targetCoordinates = _transform.GetMoverCoordinates(target);
+            var targetMap = _transform.GetMap(targetCoordinates);
+            var watcherMap = _transform.GetMap(_transform.GetMoverCoordinates(watcher));
+            if (HasComp<RMCPlanetComponent>(targetMap) &&
+                targetMap != watcherMap &&
+                !_communicationsTower.CanTransmit())
+            {
+                continue;
+            }
 
-            _recipients.TryAdd(actor.PlayerSession, new ICChatRecipientData(range, false, false));
-        }
+            if (!targetCoordinates.TryDistance(EntityManager, sourceCoordinates, out var distance))
+                continue;
 
-        foreach (var recipient in _recipients)
-        {
-            ev.Recipients.TryAdd(recipient.Key, recipient.Value);
+            if (distance > ev.VoiceRange)
+                continue;
+
+            ev.Recipients.TryAdd(session, new ICChatRecipientData(distance, false));
         }
     }
 
     private void OnWatchedRemove<T>(Entity<OverwatchCameraComponent> ent, ref T args)
     {
-        foreach (var watching in ent.Comp.Watching)
+        foreach (var watching in new List<EntityUid>(ent.Comp.Watching))
         {
             if (TerminatingOrDeleted(watching))
                 continue;
 
-            RemCompDeferred<OverwatchWatchingComponent>(watching);
+            if (TryComp(watching, out ActorComponent? actor) && actor != null)
+                Unwatch(watching, actor.PlayerSession);
+            else
+                RemCompDeferred<OverwatchWatchingComponent>(watching);
         }
     }
 
     private void OnWatchingRemove<T>(Entity<OverwatchWatchingComponent> ent, ref T args)
     {
-        RemoveWatcher(ent);
+        RemoveWatcher(ent.Owner, ent.Comp);
+    }
+
+    private void OnWatcherDetached(Entity<OverwatchWatchingComponent> ent, ref PlayerDetachedEvent args)
+    {
+        Unwatch(ent.Owner, args.Player);
     }
 
     protected override void Watch(Entity<ActorComponent?, EyeComponent?> watcher, Entity<OverwatchCameraComponent?> toWatch)
@@ -105,9 +104,29 @@ public sealed partial class OverwatchConsoleSystem : SharedOverwatchConsoleSyste
         _eye.SetTarget(watcher, toWatch, watcher);
         _viewSubscriber.AddViewSubscriber(toWatch, watcher.Comp1.PlayerSession);
 
-        RemoveWatcher(watcher);
-        EnsureComp<OverwatchWatchingComponent>(watcher).Watching = toWatch;
+        OverwatchWatchingComponent watching;
+        if (TryComp(watcher.Owner, out OverwatchWatchingComponent? previous))
+        {
+            watching = previous;
+            if (previous.Watching is { } previousTarget && previousTarget != toWatch.Owner)
+            {
+                _viewSubscriber.RemoveViewSubscriber(previousTarget, watcher.Comp1.PlayerSession);
+                if (TryComp(previousTarget, out OverwatchCameraComponent? previousCamera))
+                {
+                    previousCamera.Watching.Remove(watcher);
+                    Dirty(previousTarget, previousCamera);
+                }
+            }
+        }
+        else
+        {
+            watching = EnsureComp<OverwatchWatchingComponent>(watcher);
+        }
+
+        watching.Watching = toWatch;
+        Dirty(watcher.Owner, watching);
         toWatch.Comp.Watching.Add(watcher);
+        Dirty(toWatch.Owner, toWatch.Comp);
     }
 
     protected override void Unwatch(Entity<EyeComponent?> watcher, ICommonSession player)
@@ -125,13 +144,25 @@ public sealed partial class OverwatchConsoleSystem : SharedOverwatchConsoleSyste
         RemoveWatcher(watcher);
     }
 
-    private void RemoveWatcher(EntityUid toRemove)
+    private void RemoveWatcher(EntityUid toRemove, OverwatchWatchingComponent? watching = null)
     {
-        if (!TryComp(toRemove, out OverwatchWatchingComponent? watching))
+        // ComponentRemove runs after the component is marked deleted; retain the event's instance.
+        if (watching == null && !TryComp(toRemove, out watching))
             return;
 
-        if (TryComp(watching.Watching, out OverwatchCameraComponent? watched))
+        if (watching.Watching is { } oldView && TryComp<ActorComponent>(toRemove, out var actor))
+            _viewSubscriber.RemoveViewSubscriber(oldView, actor.PlayerSession);
+
+        if (TryComp<EyeComponent>(toRemove, out var eye) && eye.Target == watching.Watching &&
+            !TerminatingOrDeleted(toRemove))
+            _eye.SetTarget(toRemove, null, eye);
+
+        if (watching.Watching is { } watchedEntity &&
+            TryComp(watchedEntity, out OverwatchCameraComponent? watched))
+        {
             watched.Watching.Remove(toRemove);
+            Dirty(watchedEntity, watched);
+        }
 
         watching.Watching = null;
         RemCompDeferred<OverwatchWatchingComponent>(toRemove);

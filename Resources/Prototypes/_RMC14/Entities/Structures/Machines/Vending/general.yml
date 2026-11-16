@@ -17,26 +17,66 @@
       entries:
       - id: RMCCassettePlayer
         amount: 50
+      # cmu edit start: coloured cassette players
+      - id: AU14CassettePlayerBlue
+        amount: 10
+      - id: AU14CassettePlayerGreen
+        amount: 10
+      - id: AU14CassettePlayerPink
+        amount: 10
+      - id: AU14CassettePlayerOrange
+        amount: 10
+      - id: AU14CassettePlayerRainbow
+        amount: 10
+      - id: AU14CassettePlayerGray
+        amount: 10
+      - id: AU14CassettePlayerNeon
+        amount: 10
+      # cmu edit end
       - id: RMCPouchCassette
         amount: 10
-      - id: RMCCassetteTapeWigWoo1
+      - id: AU14CassetteTapeUnitedAmericasVol1
+        amount: 25
+      - id: AU14CassetteTapeUnitedAmericasVol2
+        amount: 25
+      # cmu edit start: the old AU-14 cassettes
+      - id: AU14CassetteTapeRisingSun
         amount: 10
-      - id: RMCCassetteTapeMendax
+      - id: AU14CassetteTapeBlueStripe
         amount: 10
-      - id: RMCCassetteTapeNighty
+      - id: AU14CassetteTapeNeon
         amount: 10
-      - id: RMCCassetteTapeGoodShowOldChap
+      - id: AU14CassetteTapePurple
         amount: 10
-      - id: RMCCassetteTapeRedQwesta
+      - id: AU14CassetteTapePartyApproved
         amount: 10
-      - id: RMCCassetteTapeBolgarich
+      - id: AU14CassetteTapeTan
         amount: 10
-      - id: RMCCassetteTapeQwertyquerty
+      - id: AU14CassetteTapeTWE
         amount: 10
-      - id: RMCCassetteTapePigeonBeans
+      - id: AU14CassetteTapeWY
         amount: 10
+      - id: AU14CassetteTapeGreen
+        amount: 10
+      - id: AU14CassetteTapePink
+        amount: 10
+      - id: AU14CassetteTapeRainbow
+        amount: 10
+      - id: AU14CassetteTapeRedStripe
+        amount: 10
+      - id: AU14CassetteTapeRedBlack
+        amount: 10
+      - id: AU14CassetteTapeOcean
+        amount: 10
+      - id: AU14CassetteTapeWhite
+        amount: 10
+      - id: AU14CassetteTapeRedDirt
+        amount: 10
+      - id: AU14CassetteTapeCLF
+        amount: 10
+      # cmu edit end
       - id: RMCCassetteTapeCustom
-        amount: 20
+        amount: 30
     - name: Cards
       entries:
       - id: RMCPlayingCardDeck
@@ -117,6 +157,8 @@
         amount: 15
     - name: Other
       entries:
+      - id: RMCSpaceGrunts
+        amount: 15
       - id: CMPaper
         amount: 15
       - id: CMPen

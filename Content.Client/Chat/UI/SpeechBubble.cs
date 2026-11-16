@@ -1,6 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
-using Content.Client._CMU14.ZLevels.Core;
+using Content.Client.CMU14.ZLevels.Core;
+using Content.Client.CMU14.ThreeD.Scene; // CMU14
+// CMU14
+using Content.Client._RMC14.Language;
+// RMC14
 using Content.Client.Chat.Managers;
+using Content.Shared._RMC14.Language.Prototypes;
 using Content.Shared._RMC14.Marines.Squads;
 using Content.Shared._RMC14.Stealth;
 using Content.Shared._RMC14.Xenonids.HiveLeader;
@@ -10,10 +16,10 @@ using Content.Shared.Chat;
 using Content.Shared.Speech;
 using Robust.Client.GameObjects;
 using Robust.Client.Graphics;
-using Robust.Client.Player;
 using Robust.Client.UserInterface;
 using Robust.Client.UserInterface.Controls;
 using Robust.Shared.Configuration;
+using Robust.Shared.IoC;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
@@ -25,7 +31,6 @@ namespace Content.Client.Chat.UI
         [Dependency] private IGameTiming _timing = default!;
         [Dependency] private IEyeManager _eyeManager = default!;
         [Dependency] private IEntityManager _entityManager = default!;
-        [Dependency] private IPlayerManager _player = default!;
         [Dependency] protected IConfigurationManager ConfigManager = default!;
         private readonly SharedTransformSystem _transformSystem;
         private readonly CMUClientZLevelsSystem _zLevels;
@@ -35,6 +40,7 @@ namespace Content.Client.Chat.UI
             Emote,
             Say,
             Whisper,
+            Radio,
             Looc
         }
 
@@ -79,6 +85,9 @@ namespace Content.Client.Chat.UI
 
         public static SpeechBubble CreateSpeechBubble(SpeechType type, ChatMessage message, EntityUid senderEntity)
         {
+            if (IoCManager.Resolve<IConfigurationManager>().GetCVar(CCVars.ChatEnableRunechatBubbles))
+                return new RunechatSpeechBubble(type, message, senderEntity);
+
             switch (type)
             {
                 case SpeechType.Emote:
@@ -90,6 +99,9 @@ namespace Content.Client.Chat.UI
                 case SpeechType.Whisper:
                     return new FancyTextSpeechBubble(message, senderEntity, "whisperBox");
 
+                case SpeechType.Radio:
+                    return new TextSpeechBubble(message, senderEntity, "sayBox", message.Display?.AccentColor ?? Color.FromHex("#73d48f"));
+
                 case SpeechType.Looc:
                     return new TextSpeechBubble(message, senderEntity, "emoteBox", Color.FromHex("#48d1cc"));
 
@@ -98,17 +110,22 @@ namespace Content.Client.Chat.UI
             }
         }
 
-        public SpeechBubble(ChatMessage message, EntityUid senderEntity, string speechStyleClass, Color? fontColor = null)
+        public SpeechBubble(ChatMessage message, EntityUid senderEntity, string speechStyleClass, Color? fontColor = null,
+            TimeSpan? totalTime = null, Control? cmuPreparedBubble = null) // CMU14: reuse prepared Runechat content.
         {
             IoCManager.InjectDependencies(this);
             _senderEntity = senderEntity;
             _transformSystem = _entityManager.System<SharedTransformSystem>();
             _zLevels = _entityManager.System<CMUClientZLevelsSystem>();
+            MouseFilter = MouseFilterMode.Ignore;
+
+            // CMU14: bubbles can render before FrameUpdate first positions them above the sender.
+            Modulate = Color.White.WithAlpha(0);
 
             // Use text clipping so new messages don't overlap old ones being pushed up.
             RectClipContent = true;
 
-            var bubble = BuildBubble(message, speechStyleClass, fontColor);
+            var bubble = cmuPreparedBubble ?? BuildBubble(message, speechStyleClass, fontColor); // CMU14
 
             AddChild(bubble);
 
@@ -117,10 +134,20 @@ namespace Content.Client.Chat.UI
             bubble.Measure(Vector2Helpers.Infinity);
             ContentSize = bubble.DesiredSize;
             _verticalOffsetAchieved = -ContentSize.Y;
-            _deathTime = _timing.RealTime + TotalTime;
+            _deathTime = _timing.RealTime + (totalTime ?? TotalTime);
         }
 
         protected abstract Control BuildBubble(ChatMessage message, string speechStyleClass, Color? fontColor = null);
+
+        protected virtual Vector2 GetWorldPositionOffset(EntityUid senderEntity, TransformComponent xform)
+        {
+            return Vector2.Zero;
+        }
+
+        protected virtual Vector2 GetScreenPositionOffset(EntityUid senderEntity, TransformComponent xform)
+        {
+            return Vector2.Zero;
+        }
 
         protected override void FrameUpdate(FrameEventArgs args)
         {
@@ -156,7 +183,8 @@ namespace Content.Client.Chat.UI
             }
 
             var zPassOffset = Vector2.Zero;
-            if (xform.MapID != _eyeManager.CurrentEye.Position.MapId &&
+            var firstPerson = _eyeManager.MainViewport as CMU3DSceneControl; // CMU14
+            if (firstPerson is not { FirstPerson: true } && xform.MapID != _eyeManager.CurrentEye.Position.MapId && // CMU14
                 !_zLevels.TryGetSpeechBubbleZOffset(_senderEntity, out zPassOffset, xform))
             {
                 Modulate = Color.White.WithAlpha(0);
@@ -182,16 +210,35 @@ namespace Content.Client.Chat.UI
                 baseOffset = speech.SpeechBubbleOffset;
 
             var offset = (-_eyeManager.CurrentEye.Rotation).ToWorldVec() * -(EntityVerticalOffset + baseOffset);
-            var worldPos = _transformSystem.GetWorldPosition(xform) + offset - zPassOffset;
+            var worldPos = _transformSystem.GetWorldPosition(xform) +
+                           offset +
+                           GetWorldPositionOffset(_senderEntity, xform) -
+                           zPassOffset;
 
-            var lowerCenter = _eyeManager.WorldToScreen(worldPos) / UIScale;
+            var lowerCenter = _eyeManager.WorldToScreen(worldPos) / UIScale +
+                              GetScreenPositionOffset(_senderEntity, xform);
+            // CMU14: the affine map projection has no entity height or floor information.
+            if (firstPerson is { FirstPerson: true })
+            {
+                if (!firstPerson.TryProjectHead(_senderEntity, baseOffset, out var head))
+                {
+                    Modulate = Color.White.WithAlpha(0);
+                    return;
+                }
+                lowerCenter = head / UIScale + GetScreenPositionOffset(_senderEntity, xform) - (Parent?.GlobalPosition ?? Vector2.Zero);
+            }
+            // CMU14
             var screenPos = lowerCenter - new Vector2(ContentSize.X / 2, ContentSize.Y + _verticalOffsetAchieved);
             // Round to nearest 0.5
             screenPos = (screenPos * 2).Rounded() / 2;
-            LayoutContainer.SetPosition(this, screenPos);
+            // CMU14: unchanged positions still box margins and invalidate layout in SetPosition.
+            if (Position != screenPos)
+                LayoutContainer.SetPosition(this, screenPos);
 
             var height = MathF.Ceiling(MathHelper.Clamp(lowerCenter.Y - screenPos.Y, 0, ContentSize.Y));
-            SetHeight = height;
+            // CMU14: SetHeight invalidates measurement even when the value is unchanged.
+            if (SetHeight != height)
+                SetHeight = height;
         }
 
         private float GetSenderVisibilityAlpha()
@@ -199,7 +246,7 @@ namespace Content.Client.Chat.UI
             if (!_entityManager.TryGetComponent<SpriteComponent>(_senderEntity, out var sprite))
                 return 1f;
 
-            if (!sprite.Visible && _senderEntity != _player.LocalEntity)
+            if (!sprite.Visible && _entityManager.IsClientSide(_senderEntity))
                 return 0f;
 
             if (_entityManager.TryGetComponent<EntityActiveInvisibleComponent>(_senderEntity, out var invisible))
@@ -259,6 +306,7 @@ namespace Content.Client.Chat.UI
             var label = new RichTextLabel
             {
                 MaxWidth = SpeechMaxWidth,
+                OutlineColorOverride = TextOutline.Default.Color,
             };
 
             label.SetMessage(FormatSpeech(message.WrappedMessage, fontColor));
@@ -287,7 +335,7 @@ namespace Content.Client.Chat.UI
             var entityManager = IoCManager.Resolve<IEntityManager>();
             var senderUid = entityManager.GetEntity(message.SenderEntity);
 
-            if (speechStyleClass == "sayBox") //RMC14 we try to use a specific style
+            if (speechStyleClass == "sayBox") // RMC14 we try to use a specific style
             {
                 if (message.SpeechStyleClass != null)
                     speechStyleClass = message.SpeechStyleClass;
@@ -297,18 +345,38 @@ namespace Content.Client.Chat.UI
 
             if (!ConfigManager.GetCVar(CCVars.ChatEnableFancyBubbles))
             {
+                // RMC14
+                var container = new BoxContainer { Orientation = BoxContainer.LayoutOrientation.Horizontal };
+                if (TryGetLanguageIcon(message, out var iconTexture))
+                {
+                    var textureRect = new TextureRect
+                    {
+                        Texture = iconTexture,
+                        TextureScale = Vector2.One * 0.5f,
+                        VerticalAlignment = VAlignment.Center,
+                        Margin = new Thickness(0, 0, 4, 0)
+                    };
+                    container.AddChild(textureRect);
+                }
+
                 var label = new RichTextLabel
                 {
                     MaxWidth = SpeechMaxWidth,
-                    StyleClasses = { "bubbleContent" }, //RMC14 The simplified bubble does not have any styles of its own and in order to apply styles to it we mark it in the same way as a regular bubble but it's a dummy, just a marker. damned.
+                    StyleClasses = { "bubbleContent" }, // RMC14 The simplified bubble does not have any styles of its own and in order to apply styles to it we mark it in the same way as a regular bubble but it's a dummy, just a marker. damned.
+                    OutlineColorOverride = TextOutline.Default.Color,
                 };
 
                 label.SetMessage(ExtractAndFormatSpeechSubstring(message, "BubbleContent", fontColor));
+                // RMC14
+                container.AddChild(label);
+                // RMC14
 
                 var unfanciedPanel = new PanelContainer
                 {
                     StyleClasses = { "speechBox", speechStyleClass },
-                    Children = { label },
+                    // RMC14
+                    Children = { container },
+                    // RMC14
                     ModulateSelfOverride = Color.White.WithAlpha(ConfigManager.GetCVar(CCVars.SpeechBubbleBackgroundOpacity)),
                 };
                 return unfanciedPanel;
@@ -317,19 +385,38 @@ namespace Content.Client.Chat.UI
             var bubbleHeader = new RichTextLabel
             {
                 ModulateSelfOverride = Color.White.WithAlpha(ConfigManager.GetCVar(CCVars.SpeechBubbleSpeakerOpacity)),
-                Margin = new Thickness(1, 1, 1, 1),
+                Margin = new Thickness(2, 0, 2, 0),
+                OutlineColorOverride = TextOutline.Default.Color,
             };
 
             var bubbleContent = new RichTextLabel
             {
                 ModulateSelfOverride = Color.White.WithAlpha(ConfigManager.GetCVar(CCVars.SpeechBubbleTextOpacity)),
                 MaxWidth = SpeechMaxWidth,
-                Margin = new Thickness(2, 6, 2, 2),
+                Margin = new Thickness(2, 0, 2, 0),
                 StyleClasses = { "bubbleContent" },
+                OutlineColorOverride = TextOutline.Default.Color,
             };
 
             //We'll be honest. *Yes* this is hacky. Doing this in a cleaner way would require a bottom-up refactor of how saycode handles sending chat messages. -Myr
+            // RMC14
+            var headerContainer = new BoxContainer { Orientation = BoxContainer.LayoutOrientation.Horizontal };
+            if (TryGetLanguageIcon(message, out var headerIcon))
+            {
+                var iconTexture = new TextureRect
+                {
+                    Texture = headerIcon,
+                    TextureScale = Vector2.One * 0.5f,
+                    VerticalAlignment = VAlignment.Center,
+                    Margin = new Thickness(0, 0, 4, 0)
+                };
+                headerContainer.AddChild(iconTexture);
+            }
+
             bubbleHeader.SetMessage(ExtractAndFormatSpeechSubstring(message, "BubbleHeader", fontColor));
+            // RMC14
+            headerContainer.AddChild(bubbleHeader);
+            // RMC14
             bubbleContent.SetMessage(ExtractAndFormatSpeechSubstring(message, "BubbleContent", fontColor));
 
             //As for below: Some day this could probably be converted to xaml. But that is not today. -Myr
@@ -340,13 +427,15 @@ namespace Content.Client.Chat.UI
                 ModulateSelfOverride = Color.White.WithAlpha(ConfigManager.GetCVar(CCVars.SpeechBubbleBackgroundOpacity)),
                 HorizontalAlignment = HAlignment.Center,
                 VerticalAlignment = VAlignment.Bottom,
-                Margin = new Thickness(4, 14, 4, 2)
+                Margin = new Thickness(4, 20, 4, 2)
             };
 
             var headerPanel = new PanelContainer
             {
                 StyleClasses = { "speechBox", speechStyleClass },
-                Children = { bubbleHeader },
+                // RMC14
+                Children = { headerContainer },
+                // RMC14
                 ModulateSelfOverride = Color.White.WithAlpha(ConfigManager.GetCVar(CCVars.ChatFancyNameBackground) ? ConfigManager.GetCVar(CCVars.SpeechBubbleBackgroundOpacity) : 0f),
                 HorizontalAlignment = HAlignment.Center,
                 VerticalAlignment = VAlignment.Top
@@ -358,6 +447,25 @@ namespace Content.Client.Chat.UI
             };
 
             return panel;
+        }
+
+        private static bool TryGetLanguageIcon(ChatMessage message, [NotNullWhen(true)] out Texture? texture)
+        {
+            texture = null;
+
+            if (string.IsNullOrEmpty(message.LanguageIcon))
+                return false;
+
+            var prototypeManager = IoCManager.Resolve<IPrototypeManager>();
+            if (!prototypeManager.TryIndex<LanguagePrototype>(message.LanguageIcon, out var prototype) ||
+                prototype.LanguageIcon is not { } icon)
+            {
+                return false;
+            }
+
+            var spriteSystem = IoCManager.Resolve<IEntitySystemManager>().GetEntitySystem<SpriteSystem>();
+            texture = spriteSystem.Frame0(icon);
+            return true;
         }
     }
 }

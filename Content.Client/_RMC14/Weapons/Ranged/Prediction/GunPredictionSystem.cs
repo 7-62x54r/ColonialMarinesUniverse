@@ -1,5 +1,6 @@
 using System.Linq;
 using Content.Client.Projectiles;
+using Content.Shared.CMU14.Threats.Mobs.Xeno.Caste.Warlock;
 using Content.Shared._RMC14.Weapons.Ranged.Prediction;
 using Content.Shared.Projectiles;
 using Content.Shared.Weapons.Ranged.Events;
@@ -25,6 +26,7 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
 
     private EntityQuery<IgnorePredictionHideComponent> _ignorePredictionHideQuery;
     private EntityQuery<IgnorePredictionHitComponent> _ignorePredictionHitQuery;
+    private EntityQuery<CMUXenoFrozenProjectileComponent> _warlockFrozenProjectileQuery;
     private EntityQuery<SpriteComponent> _spriteQuery;
 
     public override void Initialize()
@@ -33,6 +35,7 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
 
         _ignorePredictionHideQuery = GetEntityQuery<IgnorePredictionHideComponent>();
         _ignorePredictionHitQuery = GetEntityQuery<IgnorePredictionHitComponent>();
+        _warlockFrozenProjectileQuery = GetEntityQuery<CMUXenoFrozenProjectileComponent>();
         _spriteQuery = GetEntityQuery<SpriteComponent>();
 
         SubscribeLocalEvent<PhysicsUpdateBeforeSolveEvent>(OnBeforeSolve);
@@ -43,6 +46,9 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
         SubscribeLocalEvent<PredictedProjectileClientComponent, StartCollideEvent>(OnClientProjectileStartCollide);
 
         SubscribeLocalEvent<PredictedProjectileServerComponent, ComponentStartup>(OnServerProjectileStartup);
+        // CMU14
+        SubscribeLocalEvent<PredictedProjectileServerComponent, ComponentRemove>(OnServerProjectileRemove);
+        // CMU14
 
         UpdatesBefore.Add(typeof(TransformSystem));
     }
@@ -63,6 +69,12 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
         var query = EntityQueryEnumerator<PredictedProjectileClientComponent>();
         while (query.MoveNext(out var uid, out var predicted))
         {
+            if (!ShouldRestorePredictedProjectileCoordinates(_warlockFrozenProjectileQuery.HasComp(uid)))
+            {
+                predicted.Coordinates = null;
+                continue;
+            }
+
             if (predicted.Coordinates is { } coordinates)
                 _transform.SetCoordinates(uid, coordinates);
 
@@ -75,7 +87,24 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
         if (_timing.IsFirstTimePredicted)
             return;
 
-        ShootRequested(ev.Gun, ev.Coordinates, ev.Target, ev.Shot, args.SenderSession);
+        ShootRequested(ev.Gun, ev.Coordinates, ev.Target, ev.Shot, args.SenderSession, ev.RearmSemiAuto);
+    }
+
+    public static bool ShouldRestorePredictedProjectileCoordinates(bool frozenByWarlockShield)
+    {
+        return !frozenByWarlockShield;
+    }
+
+    public static bool ShouldRetirePredictedProjectileCopy(
+        bool serverProjectileBelongsToLocalPlayer,
+        bool clientCopyExists,
+        bool clientCopyIsClientSide,
+        bool clientCopyIsPredicted)
+    {
+        return serverProjectileBelongsToLocalPlayer &&
+               clientCopyExists &&
+               clientCopyIsClientSide &&
+               clientCopyIsPredicted;
     }
 
     private void OnClientProjectileUpdateIsPredicted(Entity<PredictedProjectileClientComponent> ent, ref UpdateIsPredictedEvent args)
@@ -86,6 +115,11 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
     private void OnClientProjectileStartCollide(Entity<PredictedProjectileClientComponent> ent, ref StartCollideEvent args)
     {
         if (_timing.ApplyingState || ent.Comp.Hit)
+            return;
+
+        // CMU14: same rule the server uses in SharedProjectileSystem.OnStartCollide. the fly-by sound sensor
+        // isn't the projectile, so brushing a floodlight or a wall with it blew plasma bolts up client-side only
+        if (args.OurFixtureId != SharedProjectileSystem.ProjectileFixture || !args.OtherFixture.Hard)
             return;
 
         if (!TryComp(ent, out ProjectileComponent? projectile) ||
@@ -117,6 +151,38 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
             _sprite.SetVisible((ent, sprite), false);
     }
 
+    // CMU14
+    private void OnServerProjectileRemove(Entity<PredictedProjectileServerComponent> ent, ref ComponentRemove args)
+    {
+        if (!GunPrediction)
+            return;
+
+        var localProjectile = ent.Comp.ClientEnt == _player.LocalEntity;
+        if (!localProjectile)
+            return;
+
+        RetirePredictedProjectileCopy(ent.Comp.ClientId, localProjectile);
+
+        if (_ignorePredictionHideQuery.HasComp(ent))
+            return;
+
+        if (_spriteQuery.TryComp(ent, out var sprite))
+            _sprite.SetVisible((ent, sprite), true);
+    }
+
+    private void RetirePredictedProjectileCopy(int clientId, bool localProjectile)
+    {
+        var predicted = new EntityUid(clientId);
+        var exists = Exists(predicted);
+        var isClientSide = exists && IsClientSide(predicted);
+        var isPredicted = exists && HasComp<PredictedProjectileClientComponent>(predicted);
+        if (!ShouldRetirePredictedProjectileCopy(localProjectile, exists, isClientSide, isPredicted))
+            return;
+
+        QueueDel(predicted);
+    }
+    // CMU14
+
     public override void Update(float frameTime)
     {
         base.Update(frameTime);
@@ -131,7 +197,8 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
             if (predicted.Hit)
                 continue;
 
-            var contacts = _physics.GetContactingEntities(uid, physics, true);
+            // var contacts = _physics.GetContactingEntities(uid, physics, true); // CMU14
+            var contacts = GetProjectileHardContacts(uid); // CMU14
             if (contacts.Count == 0)
                 continue;
 
@@ -168,6 +235,29 @@ public sealed partial class GunPredictionSystem : SharedGunPredictionSystem
                 _sprite.SetVisible((uid, sprite), false);
             }
         }
+    }
+
+    // CMU14: only what the projectile fixture itself touches on a hard fixture counts, like the server.
+    // the fly-by sensor overlapping walls/lights was being reported as a hit
+    private HashSet<EntityUid> GetProjectileHardContacts(EntityUid uid)
+    {
+        // CMU14 Begin: this scratch result is only consumed by the current projectile's update.
+        var result = _cmuProjectileContacts;
+        result.Clear();
+        // CMU14 End
+        var contacts = _physics.GetContacts(uid);
+        while (contacts.MoveNext(out var contact))
+        {
+            var ourA = contact.EntityA == uid;
+            var ourId = ourA ? contact.FixtureAId : contact.FixtureBId;
+            var other = ourA ? contact.FixtureB : contact.FixtureA;
+            if (ourId != SharedProjectileSystem.ProjectileFixture || other is not { Hard: true })
+                continue;
+
+            result.Add(ourA ? contact.EntityB : contact.EntityA);
+        }
+
+        return result;
     }
 
     public override void FrameUpdate(float frameTime)

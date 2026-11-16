@@ -1,25 +1,35 @@
+using System.Linq;
 using Content.Shared._RMC14.Areas;
 using Content.Shared._RMC14.CCVar;
 using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Marines.Announce;
 using Content.Shared._RMC14.Rules;
 using Content.Shared._RMC14.Thunderdome;
+using Content.Shared._RMC14.Vehicle;
 using Content.Shared._RMC14.Xenonids;
 using Content.Shared._RMC14.Xenonids.Announce;
 using Content.Shared.Mobs.Components;
 using Content.Shared.Mobs.Systems;
+using Content.Shared.CMU14.Marines; // CMU14
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems; // CMU14
+using Content.Shared.CMU14.Yautja;
+using Content.Shared.CMU14.Threats;
 using Robust.Shared.Configuration;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
 using Robust.Shared.Player;
 using Robust.Shared.Random;
 using Robust.Shared.Timing;
+using BiomorphComponent = Content.Shared.CMU14.Threats.Mobs.Biomorph.BiomorphComponent; // CMU14
+using BiomorphMimicTransformedComponent = Content.Shared.CMU14.Threats.Mobs.Biomorph.BiomorphMimicTransformedComponent; // CMU14
+using InsurgencyRuleComponent = Content.Shared.CMU14.Threats.InsurgencyRuleComponent;
 
 namespace Content.Shared._RMC14.Bioscan;
 
 public sealed partial class BioscanSystem : EntitySystem
 {
     [Dependency] private AreaSystem _area = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!; // CMU14
     [Dependency] private IConfigurationManager _config = default!;
     [Dependency] private SharedMarineAnnounceSystem _marineAnnounce = default!;
     [Dependency] private MobStateSystem _mobState = default!;
@@ -27,7 +37,6 @@ public sealed partial class BioscanSystem : EntitySystem
     [Dependency] private IRobustRandom _random = default!;
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private SharedXenoAnnounceSystem _xenoAnnounce = default!;
-
     private const string None = "none";
 
     private TimeSpan _bioscanInitialDelay;
@@ -52,14 +61,25 @@ public sealed partial class BioscanSystem : EntitySystem
         Subs.CVar(_config, RMCCVars.RMCBioscanVariance, v => _bioscanVariance = v, true);
     }
 
-    private void OnMapInit(Entity<BioscanComponent> ent, ref MapInitEvent args)
+    private void OnMapInit(Entity<BioscanComponent> ent, ref MapInitEvent _)
     {
         ent.Comp.LastMarine = _timing.CurTime + _bioscanInitialDelay;
         ent.Comp.LastXeno = _timing.CurTime + _bioscanInitialDelay;
         Dirty(ent);
     }
 
-    private bool TryBioscan<T>(
+    private bool TargetIsMarine(EntityUid uid) => HasComp<MarineComponent>(uid);
+    private bool TargetIsThreat(EntityUid uid)
+    {
+        return HasComp<XenoComponent>(uid)
+            || HasComp<BiomorphComponent>(uid) // CMU14
+            || HasComp<BiomorphMimicTransformedComponent>(uid) // CMU14
+            || HasComp<YautjaComponent>(uid)
+            || HasComp<YautjaAbominationComponent>(uid);
+    }
+
+    private bool TryBioscan(
+        Func<EntityUid, bool> targetIsThreat,
         TimeSpan last,
         bool force,
         ref int max,
@@ -67,11 +87,11 @@ public sealed partial class BioscanSystem : EntitySystem
         out int aliveShip,
         out int alivePlanet,
         out string warshipArea,
-        out string planetArea) where T : IComponent
+        out string planetArea)
     {
-        alive = default;
-        aliveShip = default;
-        alivePlanet = default;
+        alive = 0;
+        aliveShip = 0;
+        alivePlanet = 0;
         warshipArea = None;
         planetArea = None;
 
@@ -86,21 +106,16 @@ public sealed partial class BioscanSystem : EntitySystem
 
         var planetQuery = EntityQueryEnumerator<RMCPlanetComponent, TransformComponent>();
         while (planetQuery.MoveNext(out _, out var xform))
-        {
-            _planetMaps.Add(xform.MapID);
-        }
+            // CMU14: planets are z-networks, each deck is its own map
+            _planetMaps.AddRange(_zLevels.GetAllNetworkMapIds(xform.MapID));
 
-        var warshipQuery = EntityQueryEnumerator<AlmayerComponent, TransformComponent>();
+        var warshipQuery = EntityQueryEnumerator<WarshipComponent, TransformComponent>(); // CMU14
         while (warshipQuery.MoveNext(out _, out var xform))
-        {
-            _warshipMaps.Add(xform.MapID);
-        }
+            // CMU14: warship decks live on separate z-network maps, count them all
+            _warshipMaps.AddRange(_zLevels.GetAllNetworkMapIds(xform.MapID));
 
-        alive = 0;
-        aliveShip = 0;
-        alivePlanet = 0;
-        var playersQuery = EntityQueryEnumerator<T, ActorComponent, MobStateComponent, TransformComponent>();
-        while (playersQuery.MoveNext(out var uid, out _, out _, out var mobState, out var xform))
+        var playersQuery = EntityQueryEnumerator<ActorComponent, MobStateComponent, TransformComponent>();
+        while (playersQuery.MoveNext(out var uid, out _, out var mobState, out var xform))
         {
             if (!_mobState.IsAlive(uid, mobState))
                 continue;
@@ -108,12 +123,15 @@ public sealed partial class BioscanSystem : EntitySystem
             if (HasComp<ThunderdomeMapComponent>(xform.MapUid))
                 continue;
 
+            if (!targetIsThreat(uid))
+                continue;
+
             alive++;
             var bioscanBlocked = _area.BioscanBlocked(uid, out var name);
             var mapId = xform.MapID;
             if (_warshipMaps.Contains(mapId))
             {
-                if (!bioscanBlocked)
+                if (!bioscanBlocked && !HasComp<VehicleInteriorOccupantComponent>(uid))
                 {
                     aliveShip++;
 
@@ -139,14 +157,12 @@ public sealed partial class BioscanSystem : EntitySystem
             if (next < _bioscanMinimumCooldown)
                 next = _bioscanMinimumCooldown;
 
-            next = next + last;
+            next += last;
             if (!force && time < next)
                 return false;
         }
         else if (!force)
-        {
             return false;
-        }
 
         if (_warshipAreas.Count > 0)
             warshipArea = _random.Pick(_warshipAreas);
@@ -160,7 +176,8 @@ public sealed partial class BioscanSystem : EntitySystem
     public void TryBioscanARES(Entity<BioscanComponent> bioscan, bool force)
     {
         var time = _timing.CurTime;
-        if (!TryBioscan<XenoComponent>(
+        if (!TryBioscan(
+                TargetIsThreat,
                 bioscan.Comp.LastMarine,
                 force,
                 ref bioscan.Comp.MaxXenoAlive,
@@ -169,9 +186,7 @@ public sealed partial class BioscanSystem : EntitySystem
                 out var alivePlanet,
                 out var warshipArea,
                 out var planetArea))
-        {
             return;
-        }
 
         var variance = _bioscanVariance;
         alivePlanet = Math.Max(0, alivePlanet + _random.Next(-variance, variance + 1));
@@ -187,14 +202,15 @@ public sealed partial class BioscanSystem : EntitySystem
             ("onPlanet", alivePlanet)
         );
 
-        _marineAnnounce.AnnounceARESStaging(null, message, bioscan.Comp.MarineSound, "rmc-bioscan-ares-announcement");
+        _marineAnnounce.AnnounceARESStaging(null, message, bioscan.Comp.MarineSound, "rmc-bioscan-ares-announcement", "govfor");
         Dirty(bioscan);
     }
 
     public void TryBioscanQueenMother(Entity<BioscanComponent> bioscan, bool force)
     {
         var time = _timing.CurTime;
-        if (!TryBioscan<MarineComponent>(
+        if (!TryBioscan(
+                TargetIsMarine,
                 bioscan.Comp.LastXeno,
                 force,
                 ref bioscan.Comp.MaxMarinesAlive,
@@ -203,9 +219,7 @@ public sealed partial class BioscanSystem : EntitySystem
                 out var alivePlanet,
                 out var warshipArea,
                 out var planetArea))
-        {
             return;
-        }
 
         var variance = _bioscanVariance;
         aliveShip = Math.Max(0, aliveShip + _random.Next(-variance, variance + 1));
@@ -229,6 +243,9 @@ public sealed partial class BioscanSystem : EntitySystem
     public override void Update(float frameTime)
     {
         if (_net.IsClient)
+            return;
+
+        if (EntityQuery<InsurgencyRuleComponent>().Any())
             return;
 
         var time = _timing.CurTime;

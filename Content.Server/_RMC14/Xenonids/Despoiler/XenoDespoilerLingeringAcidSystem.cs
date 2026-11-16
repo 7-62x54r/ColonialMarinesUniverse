@@ -1,0 +1,67 @@
+using Content.Shared._RMC14.Xenonids;
+using Content.Shared._RMC14.Xenonids.Despoiler;
+using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
+using Content.Shared.FixedPoint;
+using Content.Shared.Mobs.Components;
+using Content.Shared.Movement.Pulling.Components;
+using Robust.Shared.Physics.Events;
+using Robust.Shared.Random;
+using Robust.Shared.Spawners;
+
+namespace Content.Server._RMC14.Xenonids.Despoiler;
+
+public sealed partial class XenoDespoilerLingeringAcidSystem : EntitySystem
+{
+    [Dependency] private IRobustRandom _random = default!;
+    [Dependency] private DamageableSystem _damageable = default!;
+
+    private EntityQuery<MobStateComponent> _mobStateQuery;
+    private EntityQuery<XenoComponent> _xenoQuery;
+    private EntityQuery<PullableComponent> _pullableQuery;
+
+    public override void Initialize()
+    {
+        _mobStateQuery = GetEntityQuery<MobStateComponent>();
+        _xenoQuery = GetEntityQuery<XenoComponent>();
+        _pullableQuery = GetEntityQuery<PullableComponent>();
+
+        SubscribeLocalEvent<XenoDespoilerLingeringAcidComponent, MapInitEvent>(OnMapInit);
+        SubscribeLocalEvent<XenoDespoilerLingeringAcidComponent, StartCollideEvent>(OnCollide);
+        SubscribeLocalEvent<XenoDespoilerLingeringAcidComponent, EndCollideEvent>(OnEndCollide);  // CMU14
+    }
+
+    private void OnMapInit(EntityUid uid, XenoDespoilerLingeringAcidComponent comp, MapInitEvent args)
+    {
+        var min = (float)comp.MinLifetime.TotalSeconds;
+        var max = (float)comp.MaxLifetime.TotalSeconds;
+        var despawn = EnsureComp<TimedDespawnComponent>(uid);
+        despawn.Lifetime = _random.NextFloat(min, max);
+    }
+
+    private void OnCollide(EntityUid uid, XenoDespoilerLingeringAcidComponent comp, ref StartCollideEvent args)
+    {
+        var target = args.OtherEntity;
+        if (!_mobStateQuery.HasComp(target) || _xenoQuery.HasComp(target))
+            return;
+
+        if (_pullableQuery.TryComp(target, out var pull) && pull.BeingPulled)
+            return;
+
+        if (!comp.Damaged.Add(target))
+            return; // CMU14
+
+        // CMU14: collision history is server-only.
+        // Dirty(uid, comp);
+
+        var dmg = new DamageSpecifier();
+        dmg.DamageDict["Heat"] = FixedPoint2.New(comp.CrossBurnDamage);
+        _damageable.TryChangeDamage(target, dmg, ignoreResistances: false, origin: comp.Caster);
+    }
+
+    private void OnEndCollide(EntityUid uid, XenoDespoilerLingeringAcidComponent comp, ref EndCollideEvent args) // CMU14
+    {
+        comp.Damaged.Remove(args.OtherEntity);
+    }
+    
+}

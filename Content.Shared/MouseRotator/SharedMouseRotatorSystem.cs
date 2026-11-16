@@ -47,10 +47,15 @@ public abstract partial class SharedMouseRotatorSystem : EntitySystem
 
     private void OnRequestRotation(RequestMouseRotatorRotationEvent msg, EntitySessionEventArgs args)
     {
+        // Ignore the request if the requested entity is not the user's attached entity.
+        // This can happen when a player switches controlled entities while rotating.
+        if (args.SenderSession.AttachedEntity != GetEntity(msg.User))
+            return;
+
         if (args.SenderSession.AttachedEntity is not { } ent
             || !TryComp<MouseRotatorComponent>(ent, out var rotator))
         {
-            Log.Error($"User {args.SenderSession.Name} ({args.SenderSession.UserId}) tried setting local rotation directly without a valid mouse rotator component attached!");
+            Log.Debug($"Ignoring mouse rotation request from {args.SenderSession.Name} ({args.SenderSession.UserId}) without a valid mouse rotator component attached.");
             return;
         }
 

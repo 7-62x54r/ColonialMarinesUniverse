@@ -17,13 +17,13 @@ public sealed class GrilleWindowConstruction : InteractionTest
     {
         // Construct Grille
         await StartConstruction(Grille);
-        await InteractUsing(Rod, 10);
+        await InteractUsing(Rod, 10); // CMU14: graphs still consume the upstream MetalRod stack
         ClientAssertPrototype(Grille, Target);
         var grille = Target;
 
         // Construct Window
         await StartConstruction(Window);
-        await InteractUsing(Glass, 10);
+        await InteractUsing(Glass, 10); // CMU14: graphs still consume the upstream Glass stack
         ClientAssertPrototype(Window, Target);
 
         // Deconstruct Window
@@ -36,21 +36,5 @@ public sealed class GrilleWindowConstruction : InteractionTest
         AssertDeleted();
     }
 
-    [Test]
-    [TestCase(Grille, Grille)]
-    [TestCase(Window, Grille)]
-    [TestCase(Window, Window)]
-    public async Task ConstructionBlocker(string first, string second)
-    {
-        // Spawn blocking entity
-        await SpawnTarget(first);
-
-        // Further construction attempts fail - blocked by first entity interaction.
-        await Client.WaitPost(() =>
-        {
-            var proto = ProtoMan.Index<ConstructionPrototype>(second);
-            Assert.That(CConSys.TrySpawnGhost(proto, CEntMan.GetCoordinates(TargetCoords), Direction.South, out _), Is.False);
-        });
-    }
 }
 

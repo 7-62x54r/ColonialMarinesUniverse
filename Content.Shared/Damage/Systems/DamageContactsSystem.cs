@@ -14,6 +14,8 @@ public sealed partial class DamageContactsSystem : EntitySystem
     [Dependency] private SharedPhysicsSystem _physics = default!;
     [Dependency] private EntityWhitelistSystem _whitelistSystem = default!;
 
+    [Dependency] private EntityQuery<DamageContactsComponent> _damageQuery = default!;
+
     public override void Initialize()
     {
         base.Initialize();
@@ -34,7 +36,7 @@ public sealed partial class DamageContactsSystem : EntitySystem
             damaged.NextSecond = _timing.CurTime + TimeSpan.FromSeconds(1);
 
             if (damaged.Damage != null)
-                _damageable.TryChangeDamage(ent, damaged.Damage, interruptsDoAfters: false);
+                _damageable.TryChangeDamage(ent, damaged.Damage, interruptsDoAfters: false, impact: damaged.Impact);
         }
     }
 
@@ -45,13 +47,12 @@ public sealed partial class DamageContactsSystem : EntitySystem
         if (!TryComp<PhysicsComponent>(otherUid, out var body))
             return;
 
-        var damageQuery = GetEntityQuery<DamageContactsComponent>();
         foreach (var ent in _physics.GetContactingEntities(otherUid, body))
         {
             if (ent == uid)
                 continue;
 
-            if (damageQuery.HasComponent(ent))
+            if (_damageQuery.HasComponent(ent))
                 return;
         }
 
@@ -70,5 +71,6 @@ public sealed partial class DamageContactsSystem : EntitySystem
 
         var damagedByContact = EnsureComp<DamagedByContactComponent>(otherUid);
         damagedByContact.Damage = component.Damage;
+        damagedByContact.Impact = DamageImpact.ForContact(component.Damage);
     }
 }

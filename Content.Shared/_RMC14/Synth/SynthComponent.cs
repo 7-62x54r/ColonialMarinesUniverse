@@ -1,6 +1,6 @@
-﻿using Content.Shared._RMC14.Medical.HUD.Components;
+using Content.Shared._RMC14.Medical.HUD.Components;
 using Content.Shared.Actions;
-using Content.Shared.Body.Organ;
+using Content.Shared.Body;
 using Content.Shared.Chemistry.Reagent;
 using Content.Shared.Damage;
 using Content.Shared.Damage.Prototypes;
@@ -99,7 +99,7 @@ public sealed partial class SynthComponent : Component
     /// The time it takes to repair the synth.
     /// </summary>
     [DataField, AutoNetworkedField]
-    public TimeSpan RepairTime = TimeSpan.FromSeconds(0);
+    public TimeSpan RepairTime = TimeSpan.FromSeconds(7); // CMU14
 
     /// <summary>
     /// The time it takes to repair the synth, if you are the synth.
@@ -162,12 +162,24 @@ public sealed partial class SynthComponent : Component
     public bool UseHumanHealthIcons = false;
 
     /// <summary>
+    /// If true, xeno HUDs do not draw the synth identifier over this entity.
+    /// </summary>
+    [DataField, AutoNetworkedField]
+    public bool HideXenoSynthIcon;
+
+    /// <summary>
     ///     True once <see cref="SharedSynthSystem.MakeSynth"/> has run, so the
     ///     same setup isn't re-applied if the entity hits both MapInit and a
     ///     later ComponentStartup (the AddComponentSpecial path).
     /// </summary>
     [DataField, AutoNetworkedField]
     public new bool Initialized;
+    // CMU14 SynthThrowSystem Begin: adding new Datafields for new throw system
+    [DataField] 
+    public float ThrowSpeedMultiplier = 1.1f; 
+    [DataField]
+    public float CarriedThrowRange = 4f;
+    // CMU14 SynthThrowSystem End
 }
 
 public sealed partial class RMCToggleSynthHudActionEvent : InstantActionEvent;

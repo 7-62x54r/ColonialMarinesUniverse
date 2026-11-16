@@ -14,7 +14,7 @@ namespace Content.Client.Changelog
             // So that measuring before opening returns a correct height,
             // and the window has the correct size when opened.
             Text = " ";
-                Visible = false;
+            Visible = true;
         }
 
         protected override void EnteredTree()
@@ -37,12 +37,12 @@ namespace Content.Client.Changelog
             if (_changelogManager.NewChangelogEntries)
             {
                 Text = Loc.GetString("changelog-button-new-entries");
-                StyleClasses.Add(StyleBase.ButtonCaution);
+                StyleClasses.Add(StyleClass.Positive);
             }
             else
             {
                 Text = Loc.GetString("changelog-button");
-                StyleClasses.Remove(StyleBase.ButtonCaution);
+                StyleClasses.Remove(StyleClass.Positive);
             }
         }
     }

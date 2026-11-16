@@ -43,6 +43,7 @@ public sealed partial class HiveTrackerSystem : EntitySystem
 
         SubscribeLocalEvent<RMCTrackableComponent, RequestTrackableNameEvent>(OnRequestTrackableName);
         SubscribeLocalEvent<RMCTrackableComponent, MobStateChangedEvent>(OnMobStateChanged);
+        SubscribeLocalEvent<RMCTrackableComponent, ComponentShutdown>(CMUOnTrackableShutdown); // CMU14
     }
 
     private void OnNewXenoEvolved(Entity<HiveTrackerComponent> newXeno, ref NewXenoEvolvedEvent args)
@@ -88,7 +89,7 @@ public sealed partial class HiveTrackerSystem : EntitySystem
         if (trackerMode == null)
             return;
 
-        _alerts.ClearAlert(ent, trackerMode.Alert);
+        _alerts.ClearAlert((ent.Owner, null), trackerMode.Alert);
     }
 
     private void OnClickedAlert(Entity<HiveTrackerComponent> ent, ref HiveTrackerClickedAlertEvent args)
@@ -177,7 +178,9 @@ public sealed partial class HiveTrackerSystem : EntitySystem
 
     private void SetTarget(Entity<HiveTrackerComponent> ent, EntityUid? target)
     {
-        ent.Comp.Target = target;
+        // CMU14: a selection dialog may outlive its target.
+        // ent.Comp.Target = target;
+        ent.Comp.Target = target is { } uid && !TerminatingOrDeleted(uid) ? uid : null;
         Dirty(ent);
     }
 
@@ -189,7 +192,7 @@ public sealed partial class HiveTrackerSystem : EntitySystem
 
     private void UpdateDirection(Entity<HiveTrackerComponent> ent, MapCoordinates? coordinates = null)
     {
-        _alerts.ClearAlertCategory(ent, HiveTrackerCategory);
+        _alerts.ClearAlertCategory((ent.Owner, null), HiveTrackerCategory);
         _prototypeManager.TryIndex(ent.Comp.Mode, out var trackerMode);
         if(trackerMode == null)
             return;
@@ -278,7 +281,7 @@ public sealed partial class HiveTrackerSystem : EntitySystem
                     continue;
 
                 var trackingComponent = _factory.GetComponent(trackerMode.Component).GetType();
-                if (EntityManager.TryGetComponent(trackableUid, trackingComponent, out _))
+                if (TryComp(trackableUid, trackingComponent, out _))
                 {
                     SetTarget((uid, tracker), trackableUid);
                     if(tracker.Target != null)

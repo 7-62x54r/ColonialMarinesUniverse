@@ -1,4 +1,4 @@
-﻿- type: job
+- type: job
   parent: CMJobBase
   id: CMExecutiveOfficer
   name: cm-job-name-executive-officer
@@ -38,20 +38,8 @@
         RMCSkillPolice: 2
         RMCSkillPowerLoader: 2
         RMCSkillSurgery: 1
-        RMCSkillVehicles: 1
+        RMCSkillVehicles: 2
     - type: MarineOrders
-      moveOrderSoundMale:
-        collection: AU14MaleMoveOrder
-      moveOrderSoundFemale:
-        collection: AU14FemaleMoveOrder
-      focusOrderSoundMale:
-        collection: AU14MaleFocusOrder
-      focusOrderSoundFemale:
-        collection: AU14FemaleFocusOrder
-      holdOrderSoundMale:
-        collection: AU14MaleHoldOrder
-      holdOrderSoundFemale:
-        collection: AU14FemaleHoldOrder
     - type: CMVendorUser
       points: 120
     - type: RMCPointing
@@ -59,6 +47,8 @@
       prefix: cm-job-prefix-executive-officer
     - type: ViewIntelObjectives
     - type: CommandAccent
+    - type: RMCSpeechBubbleSpecificStyle
+      speechStyleClass: commanderSpeech
     - type: TacticalMapIcon
       icon:
         sprite: /Textures/_RMC14/Interface/map_blips.rsi

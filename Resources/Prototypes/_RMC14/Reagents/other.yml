@@ -4,9 +4,10 @@
   name: reagent-name-rmcvirusfood
   desc: reagent-desc-rmcvirusfood
   physicalDesc: reagent-physical-desc-opaque
+  class: Rare
   color: "#899613"
   metabolisms:
-    Food:
+    Digestion:
       metabolismRate: 0.1
       effects:
       - !type:Nutritious

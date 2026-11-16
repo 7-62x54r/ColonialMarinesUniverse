@@ -1,3 +1,4 @@
+using Content.Shared.CMU14.ZLevels.Core.EntitySystems;
 using Content.Shared._RMC14.Areas;
 using Content.Shared._RMC14.CameraShake;
 using Content.Shared._RMC14.Dropship.Weapon;
@@ -13,6 +14,7 @@ using Content.Shared.Popups;
 using Content.Shared.Weapons.Ranged;
 using Content.Shared.Weapons.Ranged.Components;
 using Content.Shared.Weapons.Ranged.Events;
+using Content.Shared.Weapons.Ranged.Systems;
 using Robust.Shared.Audio.Systems;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
@@ -34,6 +36,8 @@ public sealed partial class RMCAirShotSystem : EntitySystem
     [Dependency] private RMCCameraShakeSystem _cameraShake = default!;
     [Dependency] private ISharedPlayerManager _player = default!;
     [Dependency] private SharedDropshipWeaponSystem _dropship = default!;
+    [Dependency] private CMUSharedZLevelsSystem _zLevels = default!;
+    [Dependency] private SharedGunSystem _gunSystem = default!;
 
     public override void Initialize()
     {
@@ -85,7 +89,7 @@ public sealed partial class RMCAirShotSystem : EntitySystem
                     {
                         var id = _dropship.ComputeNextId();
                         var flareIdentifier = _dropship.GetUserAbbreviation(args.User, id);
-                        _dropship.MakeDropshipTarget(spawned, flareIdentifier);
+                        _dropship.MakeDropshipTarget(spawned, flareIdentifier, _dropship.GetUserFaction(args.User));
 
                         ent.Comp.LastFlareId = flareIdentifier;
                         Dirty(ent);
@@ -95,7 +99,8 @@ public sealed partial class RMCAirShotSystem : EntitySystem
             }
         }
 
-        _audio.PlayPredicted(gun.SoundGunshotModified, ent, args.User);
+        if (!_zLevels.PlayPredictedDirectlyAcrossZ(gun.SoundGunshotModified, ent, args.User))
+            _audio.PlayPredicted(gun.SoundGunshotModified, ent, args.User);
 
         if (ent.Comp.ShakeAmount > 0)
         {
@@ -103,7 +108,7 @@ public sealed partial class RMCAirShotSystem : EntitySystem
             var toRemove = new List<ICommonSession>();
 
             var selfMessage = Loc.GetString("rmc-gun-shoot-air-self", ("weapon", ent));
-            _popup.PopupClient(selfMessage, args.User, args.User, PopupType.LargeCaution);
+            _popup.PopupEntity(selfMessage, args.User, args.User, PopupType.LargeCaution);
 
             foreach (var player in players.Recipients)
             {
@@ -127,8 +132,7 @@ public sealed partial class RMCAirShotSystem : EntitySystem
                 _cameraShake.ShakeCamera(players, ent.Comp.ShakeAmount, ent.Comp.ShakeStrength);
         }
 
-        var ammoEv = new UpdateClientAmmoEvent(-1);
-        RaiseLocalEvent(ent, ref ammoEv);
+        _gunSystem.UpdateAmmoCount(ent, artificialIncrease: -1);
     }
 
     private void OnAirShotExamined(Entity<RMCAirShotComponent> ent, ref ExaminedEvent args)
@@ -161,7 +165,7 @@ public sealed partial class RMCAirShotSystem : EntitySystem
         if (!ent.Comp.IgnoreRoof && !_area.CanCAS(shooterCoordinates))
         {
             var msg = Loc.GetString("rmc-gun-shoot-air-blocked");
-            _popup.PopupClient(msg, shooterCoordinates, shooter, PopupType.SmallCaution);
+            _popup.PopupCoordinates(msg, shooterCoordinates, shooter, PopupType.SmallCaution);
             return;
         }
 

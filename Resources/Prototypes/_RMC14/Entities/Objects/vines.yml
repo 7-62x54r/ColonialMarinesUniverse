@@ -30,6 +30,7 @@
   - type: InteractionOutline
   - type: Transform
     anchored: true
+    gridTraversal: false # CMU14: fixed vegetation must not transfer to passing dropship grids
   - type: Physics
   - type: Fixtures
     fixtures:
@@ -43,6 +44,7 @@
         - MidImpassable
   - type: Damageable
     damageModifierSet: Wood
+  - type: Injurable
   - type: Destructible
     thresholds:
     - trigger:
@@ -51,7 +53,7 @@
       behaviors:
       - !type:DoActsBehavior
         acts: [ "Destruction" ]
-  - type: Temperature
+  - type: TemperatureDamage
     heatDamage:
       types:
         Heat: 5
@@ -70,7 +72,7 @@
       methods: [Touch]
       effects:
       - !type:HealthChange
-        scaleByQuantity: true
+        scaling: true
         damage:
           types:
             Heat: 10

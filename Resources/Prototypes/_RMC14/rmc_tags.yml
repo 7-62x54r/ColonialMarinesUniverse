@@ -1,4 +1,7 @@
 - type: Tag
+  id: RMCSkillPamphlet
+
+- type: Tag
   id: CMCartridge10x20mm
 
 - type: Tag
@@ -71,16 +74,40 @@
   id: RMCSmartPistol
 
 - type: Tag
+  id: RMCTankFlamerSPP
+
+- type: Tag
+  id: RMCTankFlamerFL3B
+
+- type: Tag
+  id: RMCTankFlamerFL3X
+
+- type: Tag
+  id: RMCWeaponFlamerSpecUPP
+
+- type: Tag
   id: RMCMK80
 
 - type: Tag
   id: RMCRocketAmmo84mm
 
 - type: Tag
+  id: CMURocketAmmo70mm
+
+- type: Tag
   id: RMCDropshipWeaponPoint
 
 - type: Tag
+  id: RMCDropshipDirectFirePoint
+
+- type: Tag
   id: RMCDropshipUtilityPoint
+
+- type: Tag
+  id: CMUGunshipHardpointAttachmentPoint
+
+- type: Tag
+  id: CMUGunshipUtilityAttachmentPoint
 
 - type: Tag
   id: WeaponSMGM63
@@ -96,6 +123,9 @@
 
 - type: Tag
   id: RMCGlass
+
+- type: Tag
+  id: RMCFoldingBarricade
 
 - type: Tag
   id: RMCHelmet
@@ -140,6 +170,9 @@
   id: Bacon
 
 - type: Tag
+  id: Watch
+
+- type: Tag
   id: RMCPinpointer
 
 - type: Tag
@@ -180,3 +213,11 @@
 
 - type: Tag
   id: RMCSentryLaptop
+
+- type: Tag
+  id: RMCDataDisk
+- type: Tag
+  id: RMCStraightRazor
+
+- type: Tag
+  id: VialBox

@@ -2,8 +2,12 @@ using Content.Server.Database;
 using Content.Server.Ghost.Roles.Components;
 using Content.Server.Ghost;
 using Content.Server.Mind;
+using Content.Server._RMC14.Xenonids.JoinXeno;
+using Content.Shared._RMC14.Dialog;
 using Content.Shared._RMC14.Xenonids.Parasite;
+using Content.Shared.Ghost.Components;
 using Content.Shared.Mind;
+using Content.Shared.Mind.Components; // CMU14
 using Content.Shared.Popups;
 using Robust.Shared.Player;
 using Content.Server.NPC.HTN;
@@ -18,10 +22,20 @@ public sealed partial class XenoParasiteSystem : SharedXenoParasiteSystem
     [Dependency] private MindSystem _mind = default!;
     [Dependency] private SharedPopupSystem _popup = default!;
     [Dependency] private HTNSystem _htn = default!;
+    [Dependency] private LarvaQueueSystem _larvaQueue = default!;
+    [Dependency] private ISharedPlayerManager _player = default!;
+    [Dependency] private DialogSystem _dialog = default!;
 
     private static readonly ProtoId<HTNCompoundPrototype> ActiveTask = "RMCParasiteActiveCompound";
 
     private static readonly ProtoId<HTNCompoundPrototype> DyingTask = "RMCParasiteDyingCompound";
+
+    public override void Initialize()
+    {
+        base.Initialize();
+
+        SubscribeLocalEvent<XenoParasiteLarvaClaimChoiceEvent>(OnLarvaClaimChoice);
+    }
 
     protected override void ParasiteLeapHit(Entity<XenoParasiteComponent> parasite)
     {
@@ -44,9 +58,108 @@ public sealed partial class XenoParasiteSystem : SharedXenoParasiteSystem
         {
             EnsureComp<InfectionSuccessComponent>(ghost.Value);
             _popup.PopupEntity(Loc.GetString("rmc-xeno-egg-ghost-bypass-time"), ghost.Value, ghost.Value, PopupType.Medium);
+            OpenLarvaClaimPrompt(ghost.Value, parasite);
         }
 
         _db.IncreaseInfects(session.UserId);
+    }
+
+    private void OpenLarvaClaimPrompt(EntityUid ghost, Entity<XenoParasiteComponent> parasite)
+    {
+        if (parasite.Comp.InfectedVictim is not { } victim ||
+            !TryComp(ghost, out ActorComponent? actor) ||
+            !TrySetLarvaClaimPending(parasite, victim, actor.PlayerSession.UserId))
+        {
+            return;
+        }
+
+        var ghostNet = GetNetEntity(ghost);
+        var parasiteNet = GetNetEntity(parasite);
+        var victimNet = GetNetEntity(victim);
+        var options = new List<DialogOption>
+        {
+            new(
+                Loc.GetString("rmc-xeno-parasite-larva-claim-yes"),
+                new XenoParasiteLarvaClaimChoiceEvent(ghostNet, parasiteNet, victimNet, true)),
+            new(
+                Loc.GetString("rmc-xeno-parasite-larva-claim-no"),
+                new XenoParasiteLarvaClaimChoiceEvent(ghostNet, parasiteNet, victimNet, false)),
+        };
+
+        _dialog.OpenOptions(
+            ghost,
+            ghost,
+            Loc.GetString("rmc-xeno-parasite-larva-claim-title"),
+            options,
+            Loc.GetString("rmc-xeno-parasite-larva-claim-message"));
+    }
+
+    // CMU14 method: validate completed claims through the infection even if its parasite has been deleted.
+    private void OnLarvaClaimChoice(XenoParasiteLarvaClaimChoiceEvent ev)
+    {
+        if (!TryGetEntity(ev.Ghost, out var ghost) ||
+            !TryGetEntity(ev.Victim, out var victim) ||
+            !TryComp(ghost.Value, out ActorComponent? actor))
+        {
+            return;
+        }
+
+        if (actor.PlayerSession.AttachedEntity != ghost.Value)
+            return;
+
+        if (!TrySetLarvaClaimChoice(ev.Parasite, victim.Value, actor.PlayerSession.UserId, ev.Claim))
+            return;
+
+        if (!ev.Claim ||
+            !TryComp<VictimInfectedComponent>(victim.Value, out var infected) ||
+            infected.SpawnedLarva is not { } spawned)
+        {
+            if (!ev.Claim &&
+                TryComp<VictimInfectedComponent>(victim.Value, out var declinedInfected) &&
+                declinedInfected.SpawnedLarva is { } declinedSpawned)
+            {
+                _larvaQueue.TryClaimQueueable(declinedSpawned);
+            }
+
+            return;
+        }
+
+        TryClaimLarva((victim.Value, infected), spawned);
+    }
+
+    protected override void LarvaLinked(Entity<VictimInfectedComponent> victim, EntityUid spawned)
+    {
+        TryClaimLarva(victim, spawned);
+    }
+
+    private bool TryClaimLarva(Entity<VictimInfectedComponent> victim, EntityUid spawned)
+    {
+        if (!TryGetLarvaClaimUser(victim, out var userId))
+            return false;
+
+        // CMU14: the queue got there first. without this the per-tick retry kicked the queued player back out
+        // of the larva as soon as the infector ghosted
+        if (TryComp(spawned, out MindContainerComponent? larvaMind) && larvaMind.HasMind)
+        {
+            ClearInfectorUser(victim);
+            return false;
+        }
+
+        if (_larvaQueue.IsOfferedToQueue(spawned))
+            return false;
+
+        if (!_player.TryGetSessionById(userId, out var session))
+            return false;
+
+        if (session.AttachedEntity is not { } attached || !HasComp<GhostComponent>(attached))
+            return false;
+
+        if (!_mind.TryGetMind(session, out var mindId, out var mind))
+            return false;
+
+        _mind.TransferTo(mindId, spawned, mind: mind);
+        ClearInfectorUser(victim);
+        return true;
     }
 
     protected override void ChangeHTN(EntityUid parasite, ParasiteMode mode)

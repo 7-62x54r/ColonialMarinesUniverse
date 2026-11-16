@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using Content.Shared.CCVar;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.UserInterface;
 using Robust.Client.UserInterface.CustomControls;
+using Robust.Shared.Configuration;
 using Robust.Shared.Graphics;
 using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
+using Robust.Shared.Prototypes;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 using Robust.Shared.ViewVariables;
@@ -24,6 +27,8 @@ namespace Content.Client.Viewport
         [Dependency] private IClyde _clyde = default!;
         [Dependency] private IEntityManager _entityManager = default!;
         [Dependency] private IInputManager _inputManager = default!;
+        [Dependency] private IPrototypeManager _prototypeManager = default!;
+        [Dependency] private IConfigurationManager _cfg = default!;
 
         // Internal viewport creation is deferred.
         private IClydeViewport? _viewport;
@@ -34,10 +39,21 @@ namespace Content.Client.Viewport
         private ScalingViewportRenderScaleMode _renderScaleMode = ScalingViewportRenderScaleMode.Fixed;
         private ScalingViewportIgnoreDimension _ignoreDimension = ScalingViewportIgnoreDimension.None;
         private int _fixedRenderScale = 1;
+        private TimeSpan _nextRenderAt;
 
         private readonly List<CopyPixelsDelegate<Rgba32>> _queuedScreenshots = new();
 
+        private float _sharpnessStrength;
+        private ShaderInstance? _sharpnessShader;
+        private const string SharpnessShader = "Sharpness";
+
         public int CurrentRenderScale => _curRenderScale;
+
+        /// <summary>
+        /// Optional render throttle for secondary camera feeds. Zero preserves
+        /// the normal behavior of rendering every frame.
+        /// </summary>
+        public TimeSpan MinimumRenderInterval { get; set; }
 
         /// <summary>
         ///     Enables CMU multi-Z composition for this viewport.
@@ -128,6 +144,13 @@ namespace Content.Client.Viewport
         {
             IoCManager.InjectDependencies(this);
             RectClipContent = true;
+
+            _cfg.OnValueChanged(CCVars.ViewportSharpnessStrength, OnSharpnessStrengthChanged, true);
+        }
+
+        private void OnSharpnessStrengthChanged(int value)
+        {
+            _sharpnessStrength = value / 10f;
         }
 
         protected override void KeyBindDown(GUIBoundKeyEventArgs args)
@@ -156,12 +179,22 @@ namespace Content.Client.Viewport
 
             DebugTools.AssertNotNull(_viewport);
 
-            if (RenderZLevels)
-                RenderZLevelPasses(_viewport!);
-            else
+            var renderNow = MinimumRenderInterval <= TimeSpan.Zero ||
+                            _timing.CurTime >= _nextRenderAt ||
+                            _queuedScreenshots.Count != 0;
+            if (renderNow)
             {
-                ClearZLevelCompositeState();
-                _viewport!.Render();
+                _nextRenderAt = _timing.CurTime + MinimumRenderInterval;
+                if (RenderZLevels)
+                    RenderZLevelPasses(_viewport!);
+                else
+                {
+                    NoteZRenderBypassed("viewport RenderZLevels=false");
+                    ClearZLevelCompositeState();
+                    ResetLowerRenderGrace();
+                    _viewport!.ClearColor = Color.Black;
+                    RenderZSpritePass(_viewport);
+                }
             }
 
             if (_queuedScreenshots.Count != 0)
@@ -182,9 +215,31 @@ namespace Content.Client.Viewport
             var drawBox = GetDrawBox();
             var drawBoxGlobal = drawBox.Translated(GlobalPixelPosition);
             _viewport.RenderScreenOverlaysBelow(handle, this, drawBoxGlobal);
+
+            ApplySharpnessShader(handle);
+
             handle.DrawingHandleScreen.DrawTextureRect(_viewport.RenderTarget.Texture, drawBox);
+
+            if (_sharpnessStrength > 0)
+                handle.DrawingHandleScreen.UseShader(null);
+
             DrawZLevelComposites(handle, drawBox);
             _viewport.RenderScreenOverlaysAbove(handle, this, drawBoxGlobal);
+        }
+
+        private void ApplySharpnessShader(IRenderHandle handle)
+        {
+            if (_sharpnessStrength <= 0)
+                return;
+
+            _sharpnessShader ??= _prototypeManager.Index<ShaderPrototype>(SharpnessShader).InstanceUnique();
+
+            var texture = _viewport!.RenderTarget.Texture;
+            var size = texture.Size;
+            _sharpnessShader.SetParameter("PixelSize", new Vector2(1f / size.X, 1f / size.Y));
+            _sharpnessShader.SetParameter("Strength", _sharpnessStrength);
+
+            handle.DrawingHandleScreen.UseShader(_sharpnessShader);
         }
 
         public void Screenshot(CopyPixelsDelegate<Rgba32> callback)
@@ -266,6 +321,7 @@ namespace Content.Client.Viewport
                 });
 
             _viewport.RenderScale = new Vector2(renderScale, renderScale);
+            _viewport.ClearWhenMissingEye = true;
 
             _viewport.Eye = _eye;
         }
@@ -294,7 +350,7 @@ namespace Content.Client.Viewport
             Matrix3x2.Invert(GetLocalToScreenMatrix(), out var matrix);
             coords = Vector2.Transform(coords, matrix);
 
-            return _viewport!.LocalToWorld(coords);
+            return ProjectViewportLocalToMap(coords);
         }
 
         /// <inheritdoc/>
@@ -311,7 +367,39 @@ namespace Content.Client.Viewport
             var ev = new PixelToMapEvent(coords, this, _viewport!);
             _entityManager.EventBus.RaiseEvent(EventSource.Local, ref ev);
 
-            return _viewport!.LocalToWorld(ev.VisiblePosition);
+            return ProjectViewportLocalToMap(ev.VisiblePosition);
+        }
+
+        private MapCoordinates ProjectViewportLocalToMap(Vector2 coords)
+        {
+            DebugTools.AssertNotNull(_viewport);
+
+            var projectionEye = GetInputProjectionEye(_eye, _viewport!.Eye);
+            return projectionEye == null
+                ? default
+                : ProjectViewportLocalToMap(coords, _viewport.Size, _viewport.RenderScale, projectionEye);
+        }
+
+        internal static IEye? GetInputProjectionEye(IEye? controlEye, IEye? renderEye)
+        {
+            return renderEye is ZEye && controlEye != null
+                ? controlEye
+                : renderEye;
+        }
+
+        internal static MapCoordinates ProjectViewportLocalToMap(
+            Vector2 point,
+            Vector2i viewportSize,
+            Vector2 renderScale,
+            IEye eye)
+        {
+            point -= viewportSize / 2f;
+            point *= new Vector2(1, -1) / EyeManager.PixelsPerMeter;
+
+            eye.GetViewMatrixInv(out var viewMatrixInv, renderScale);
+            point = Vector2.Transform(point, viewMatrixInv);
+
+            return new MapCoordinates(point, eye.Position.MapId);
         }
 
         public Vector2 WorldToScreen(Vector2 map)

@@ -34,8 +34,10 @@ namespace Content.Client.Verbs
         [Dependency] private SharedContainerSystem _containers = default!;
         [Dependency] private IConfigurationManager _cfg = default!;
         [Dependency] private EntityLookupSystem _lookup = default!;
+        [Dependency] private EntityQuery<SpriteComponent> _spriteQuery = default!;
 
         private float _lookupSize;
+        private readonly HashSet<EntityUid> _containedLookup = new();
 
         private static readonly ProtoId<TagPrototype> HideContextMenuTag = "HideContextMenu";
 
@@ -127,7 +129,9 @@ namespace Content.Client.Verbs
                 // with a large sprite aabb, but small broadphase might appear in the menu, but have its children added
                 // by this.
                 var flags = LookupFlags.All & ~LookupFlags.Sensors;
-                foreach (var e in _lookup.GetEntitiesInRange(targetPos, _lookupSize, flags: flags))
+                _containedLookup.Clear();
+                _lookup.GetEntitiesInRange(targetPos.MapId, targetPos.Position, _lookupSize, _containedLookup, flags);
+                foreach (var e in _containedLookup)
                 {
                     if (!entities.Contains(e))
                         entities.Add(e);
@@ -150,7 +154,8 @@ namespace Content.Client.Verbs
 
             for (var i = entities.Count - 1; i >= 0; i--)
             {
-                if (_tagSystem.HasTag(entities[i], HideContextMenuTag))
+                if (_tagSystem.HasTag(entities[i], HideContextMenuTag) &&
+                    !CMUShowHiddenInMenu(player, entities[i])) // CMU14
                     entities.RemoveSwap(i);
             }
 
@@ -159,10 +164,9 @@ namespace Content.Client.Verbs
             if (container == null && (visibility & MenuVisibility.InContainer) == 0)
                 return entities.Count != 0;
 
-            var spriteQuery = GetEntityQuery<SpriteComponent>();
             for (var i = entities.Count - 1; i >= 0; i--)
             {
-                if (!spriteQuery.TryGetComponent(entities[i], out var spriteComponent) || !spriteComponent.Visible)
+                if (!_spriteQuery.TryGetComponent(entities[i], out var spriteComponent) || !spriteComponent.Visible)
                     entities.RemoveSwap(i);
             }
 

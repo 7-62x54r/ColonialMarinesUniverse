@@ -4,6 +4,9 @@
   id: RMCWeaponLMGQYJ72
   description: The QYJ-72 is the standard GPMG of the Union of Progressive Peoples, chambered in 7.62x54mmR, it fires a hard-hitting cartridge with a high rate of fire. With an extremely large box at 250 rounds, the QJY-72 is designed with suppressing fire and accuracy by volume of fire at its forefront.
   components:
+  # cmu edit start: built-in ammo counter
+  - type: CMUAmmoCounter
+  # cmu edit end
   - type: Sprite
     sprite: _RMC14/Objects/Weapons/Guns/LMGs/qyj_72/qyj_72_inhands.rsi
     layers:
@@ -48,7 +51,7 @@
     recoilUnwielded: 0
     scatterWielded: 1
     scatterUnwielded: 1
-    baseFireRate: 3
+    baseFireRate: 3.6
     burstScatterMult: 3
     modifiers:
       Burst:
@@ -84,6 +87,13 @@
   #         False: { state: cover-closed }
   - type: AttachableHolder
     slots:
+      rmc-aslot-rail:
+        startingAttachable: RMCAttachmentTwoPointSling
+        whitelist:
+          tags:
+          - RMCAttachmentS42xTelescopicMiniscope
+          - RMCAttachmentRailFlashlight
+          - RMCAttachmentMagneticHarness
       rmc-aslot-underbarrel:
         startingAttachable: RMCAttachmentBipod
         whitelist:
@@ -91,9 +101,14 @@
           - RMCAttachmentBipod
   - type: AttachableHolderVisuals
     offsets:
+      rmc-aslot-rail: -0.1875, 0.125
       rmc-aslot-underbarrel: 0.418, -0.283
   - type: Wieldable
   - type: GunRequiresWield
+  - type: Corrodible
+    isCorrodible: false
+  # CMU14: The QYJ is a conventional LMG without the smartgun's IFF or power system.
+  # - type: SmartGun
   - type: RMCMagneticItem
 
 - type: entity
@@ -142,7 +157,12 @@
   - type: Projectile
     damage:
       types:
-        Piercing: 35
+        Piercing: 40
+  - type: DamageImpactProfile
+    projectile:
+      contact: Generic
+      penetration: Medium
+      energy: Medium
   - type: RMCProjectileDamageFalloff
     thresholds:
     - range: 22

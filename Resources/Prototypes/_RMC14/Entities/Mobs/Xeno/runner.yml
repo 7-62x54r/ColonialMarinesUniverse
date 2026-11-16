@@ -15,7 +15,7 @@
   - type: GhostRole
     name: cm-job-name-xeno-runner
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Runner/runner.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Runner/runner.rsi # AU14-Edit
   - type: Eye
     pvsScale: 1.5
   - type: MobState
@@ -23,6 +23,12 @@
     - Alive
     - Critical
     - Dead
+  - type: FiremanCarriable
+    canThrow: true
+    carrierWhitelist:
+      components:
+      - Synth
+      - Yautja # CMU14: Yautja may carry this caste too - CM-SS13's grab gate reaches MOB_SIZE_XENO (mob_grab.dm:82-89).
   - type: Tag
     tags:
     - DoorBumpOpener
@@ -56,6 +62,24 @@
         density: 85
         layer:
         - BulletImpassable
+  - type: DrawableSolution
+    solution: blood
+  - type: Solution
+    id: blood
+    solution:
+      maxVol: 600
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 300
+      - ReagentId: CMUXenoPlasmaCatecholamine
+        Quantity: 300
+  - type: SolutionRegeneration
+    generated:
+      reagents:
+      - ReagentId: CMUXenoBlood
+        Quantity: 1
+      - ReagentId: CMUXenoPlasmaCatecholamine
+        Quantity: 1
   - type: XenoLight
   - type: XenoDevolve
     devolvesTo:
@@ -73,6 +97,9 @@
     canEvolveWithoutGranter: true
     max: 200
     evolvesTo:
+    # CMU14
+    - CMXenoBull
+    # CMU14
     - CMXenoLurker
     evolvesToWithoutPoints:
     - CMXenoQueen
@@ -80,12 +107,16 @@
   - type: MeleeWeapon
     attackRate: 1.4
     damage:
-      groups:
-        Brute: 22.5
+      types:
+        Blunt: 7.5
+        Slash: 7.5
+        Piercing: 7.5
   - type: XenoTailStab
     tailDamage:
-      groups:
-        Brute: 30
+      types:
+        Blunt: 10
+        Slash: 10
+        Piercing: 10
   - type: Tackle
     min: 4
     max: 5
@@ -122,22 +153,28 @@
   - type: MobCollision
     minimumSpeedModifier: 0.1
   - type: FixedIdentity
-    name: cm-job-name-xeno-runner
+    name: cmu-job-name-xeno-unknown
   - type: RMCSurgeryXenoHeart
     item: RMCOrganXenoHeartT1
+  - type: CMUXenoZJump
 
 - type: entity
   parent: CMXenoRunnerBase
   id: CMXenoRunner
   components:
+  - type: DamageEvasion # CMU14
+    damageThreshold: 120
+    damageWindow: 3
+    evasionBonus: 75
+    evasionDuration: 4
   - type: GuideHelp
     guides:
     - RMCGuideRoleRunner
   - type: MobThresholds
-    thresholds:
+    thresholds: # CMU14
       0: Alive
-      230: Critical
-      330: Dead
+      270: Critical
+      360: Dead
   - type: Xeno
     actionIds:
     - ActionXenoRest
@@ -171,7 +208,7 @@
   suffix: Acider
   components:
   - type: Sprite
-    sprite: _AU14/Mobs/Xenos/Runner/acider_runner.rsi # AU14-Edit
+    sprite: CMU14/Mobs/Xenos/Runner/acider_runner.rsi # AU14-Edit
     layers:
     - map: [ "enum.XenoVisualLayers.Base", "enum.ForTheHiveVisualLayers.Base" ]
       state: alive
@@ -199,6 +236,7 @@
     - ActionXenoDevolve
   - type: XenoStrain
     name: rmc-xeno-acider-name
+    baseCaste: CMXenoRunner # CMU14: allow returning to the unstrained caste.
     description: rmc-xeno-acider-description
     popup: rmc-xeno-acider-popup
   - type: CMArmor
@@ -233,8 +271,8 @@
           Heat: 1
       duration: 20
   - type: ForTheHive
-    baseSprite: _AU14/Mobs/Xenos/Runner/acider_runner.rsi # AU14-Edit
-    activeSprite: _AU14/Mobs/Xenos/Runner/acider_runner_primed.rsi # AU14-Edit
+    baseSprite: CMU14/Mobs/Xenos/Runner/acider_runner.rsi # AU14-Edit
+    activeSprite: CMU14/Mobs/Xenos/Runner/acider_runner_primed.rsi # AU14-Edit
     baseDamage:
       types:
         Heat: 1

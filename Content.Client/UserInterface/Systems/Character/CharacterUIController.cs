@@ -6,6 +6,7 @@ using Content.Client.UserInterface.Controls;
 using Content.Client.UserInterface.Systems.Character.Controls;
 using Content.Client.UserInterface.Systems.Character.Windows;
 using Content.Client.UserInterface.Systems.Objectives.Controls;
+using Content.Shared.Ghost.Components;
 using Content.Shared.Input;
 using Content.Shared.Mind;
 using Content.Shared.Mind.Components;
@@ -42,6 +43,8 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
     }
 
     private CharacterWindow? _window;
+    // CMU14: the auto open is a round join convenience, later body swaps must not repeat it
+    private bool _autoOpened;
     private MenuButton? CharacterButton => UIManager.GetActiveUIWidgetOrNull<MenuBar.Widgets.GameTopMenuBar>()?.CharacterButton;
 
     public void OnStateEntered(GameplayState state)
@@ -58,6 +61,12 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
             .Bind(ContentKeyFunctions.OpenCharacterMenu,
                 InputCmdHandler.FromDelegate(_ => ToggleWindow()))
             .Register<CharacterUIController>();
+
+        // On a normal round-start spawn, LocalPlayerAttached fires before this state (and _window)
+        // exists, so CharacterAttached bails out with nothing to open. Catch that case here by
+        // checking whether we're already attached to an entity once the window is ready.
+        if (_player.LocalEntity is { } attached)
+            CharacterAttached(attached);
     }
 
     public void OnStateExited(GameplayState state)
@@ -68,18 +77,22 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
             _window = null;
         }
 
+        // CMU14: a new round earns a fresh auto open
+        _autoOpened = false;
         CommandBinds.Unregister<CharacterUIController>();
     }
 
     public void OnSystemLoaded(CharacterInfoSystem system)
     {
         system.OnCharacterUpdate += CharacterUpdated;
+        _player.LocalPlayerAttached += CharacterAttached;
         _player.LocalPlayerDetached += CharacterDetached;
     }
 
     public void OnSystemUnloaded(CharacterInfoSystem system)
     {
         system.OnCharacterUpdate -= CharacterUpdated;
+        _player.LocalPlayerAttached -= CharacterAttached;
         _player.LocalPlayerDetached -= CharacterDetached;
     }
 
@@ -130,14 +143,13 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
             return;
         }
 
-        var (entity, job, objectives, briefing, entityName, lorePrimerLines) = data;
+        var (entity, objectives, briefing, jobId, jobTitle, entityName, lorePrimerLines) = data;
 
         _window.SpriteView.SetEntity(entity);
 
         UpdateRoleType();
-
         _window.NameLabel.Text = entityName;
-        _window.SubText.Text = job;
+        _window.SubText.Text = GetJobTitle(jobTitle, jobId);
         _window.LorePrimerContainer.RemoveAllChildren();
         _window.LorePrimerLabel.Visible = lorePrimerLines.Count > 0;
 
@@ -154,7 +166,6 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
             lineLabel.SetMessage(msg);
             _window.LorePrimerContainer.AddChild(lineLabel);
         }
-
         _window.Objectives.RemoveAllChildren();
         _window.ObjectivesLabel.Visible = objectives.Any();
 
@@ -172,7 +183,7 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
 
             var objectiveLabel = new RichTextLabel
             {
-                StyleClasses = { StyleNano.StyleClassTooltipActionTitle }
+                StyleClasses = { StyleClass.TooltipTitle }
             };
             objectiveLabel.SetMessage(objectiveText);
 
@@ -240,6 +251,26 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
         _window.RoleType.FontColorOverride = proto?.Color ?? Color.White;
     }
 
+    private void CharacterAttached(EntityUid uid)
+    {
+        if (_window == null || _window.IsOpen)
+            return;
+
+        // Don't auto-open for ghosts/aghosts - only for an actual body.
+        if (_ent.HasComponent<GhostComponent>(uid))
+            return;
+
+        // CMU14: only the first attach of a round opens it, drone piloting and ghost
+        // role takeovers must not force the primer on the player
+        if (_autoOpened)
+            return;
+
+        _autoOpened = true;
+        CharacterButton?.SetClickPressed(true);
+        _characterInfo.RequestCharacterInfo();
+        _window.Open();
+    }
+
     private void CharacterDetached(EntityUid uid)
     {
         CloseWindow();
@@ -271,5 +302,16 @@ public sealed partial class CharacterUIController : UIController, IOnStateEntere
             _characterInfo.RequestCharacterInfo();
             _window.Open();
         }
+    }
+
+    private string GetJobTitle(string jobTitle, ProtoId<JobPrototype>? jobId)
+    {
+        if (!string.IsNullOrWhiteSpace(jobTitle))
+            return jobTitle;
+
+        if (jobId is { } id && _prototypeManager.TryIndex(id, out var job))
+            return Loc.GetString(job.Name);
+
+        return Loc.GetString("character-info-no-profession");
     }
 }

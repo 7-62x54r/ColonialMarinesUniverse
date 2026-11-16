@@ -5,9 +5,10 @@ using Content.Shared._RMC14.Marines;
 using Content.Shared._RMC14.Shields;
 using Content.Shared._RMC14.Weapons.Melee;
 using Content.Shared._RMC14.Xenonids.ScissorCut;
-using Content.Shared._CMU14.Medical.BodyPart;
+using Content.Shared.CMU14.Medical.Anatomy.BodyParts;
 using Content.Shared.Coordinates;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Systems;
 using Content.Shared.Effects;
 using Content.Shared.FixedPoint;
 using Content.Shared.Interaction;
@@ -110,7 +111,18 @@ public sealed partial class XenoPierceSystem : EntitySystem
 
                 hits++;
 
-                var change = _damage.TryChangeDamage(ent, _xeno.TryApplyXenoSlashDamageMultiplier(ent, xeno.Comp.Damage), origin: xeno, armorPiercing: xeno.Comp.AP, tool: xeno);
+                var finalDamage = _xeno.TryApplyXenoSlashDamageMultiplier(ent, xeno.Comp.Damage);
+                var change = _damage.TryChangeDamage(
+                    ent,
+                    finalDamage,
+                    origin: xeno,
+                    armorPiercing: xeno.Comp.AP,
+                    tool: xeno,
+                    impact: DamageImpact.XenoRendingSlash(3) with
+                    {
+                        Contact = DamageImpactContact.Stab,
+                        Penetration = DamageImpactPenetration.High,
+                    });
 
                 if (change?.GetTotal() > FixedPoint2.Zero)
                 {

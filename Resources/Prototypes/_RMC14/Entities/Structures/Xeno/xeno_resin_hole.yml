@@ -7,6 +7,11 @@
     snap:
     - Wall
   components:
+  - type: FixedIdentity
+    name: cmu-job-name-xeno-unknown
+    whitelist:
+      components:
+      - Marine
   - type: Appearance
   - type: GuideHelp
     guides:
@@ -50,7 +55,6 @@
     sprite: _RMC14/Structures/Xenos/xeno_resin_trap.rsi
     drawdepth: FloorObjects
     layers:
-    - state: trapbackground
     - state: trap
       map: [ "enum.XenoResinHoleLayers.Base" ]
   - type: GenericVisualizer
@@ -71,6 +75,7 @@
     messageID: rmc-xeno-construction-resin-hole-destroyed
     structureName: empty
   - type: Damageable
+  - type: Injurable
     damageContainer: StructuralXeno
   - type: Destructible
     thresholds:
@@ -89,10 +94,14 @@
   - type: StepTrigger
     requiredTriggeredSpeed: 0
     intersectRatio: 0.1
+    ignoreWeightless: true
   - type: RMCNightVisionVisible
     priority: -1
   - type: Corrodible
     isCorrodible: false
   - type: XenoConstruct
+  - type: NpcFactionMember # CMU14: hostile structure, valid sentry/turret target
+    factions:
+    - RMCXeno
   - type: RequireProjectileTarget
   - type: DeletedByWeedKiller

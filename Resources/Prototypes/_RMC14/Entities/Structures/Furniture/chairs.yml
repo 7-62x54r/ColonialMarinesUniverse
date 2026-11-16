@@ -9,6 +9,10 @@
   name: abstract chair
   suffix: RMC
   components:
+  - type: ResinClearable # CMU14
+  - type: CMUReconFurniture
+    material: Chair
+  - type: CMUZPhysics 
   - type: Corrodible
     timeToApply: 4
     structure: true
@@ -20,8 +24,9 @@
     - RMCSeat
   - type: RMCMesonsNonviewable
   - type: Damageable
-    damageContainer: StructuralMarine
     damageModifierSet: StructuralMarine
+  - type: Injurable
+    damageContainer: StructuralMarine
   - type: MeleeReceivedMultiplier
     xenoDamage:
       types:
@@ -43,6 +48,10 @@
             max: 1
       - !type:DoActsBehavior
         acts: ["Destruction"]
+  - type: InteractedBlacklist
+    blacklist:
+      components:
+      - Xeno
 
 - type: entity
   parent: [ CMSeatBase, ChairFolding ]
@@ -50,12 +59,15 @@
   name: chair
   description: A rectangular metallic frame sitting on four legs with a back panel. Designed to fit the sitting position, more or less comfortably.
   components:
+  - type: CMUReconFurniture
+    material: FoldingChair
   - type: Transform
     anchored: true
   - type: Physics
     bodyType: Static
   - type: Foldable
     anchorOnUnfold: true
+  - type: RMCStrapNoDrawDepthChange
   - type: Sprite
     sprite: _RMC14/Structures/Furniture/folding_chair.rsi
     layers:
@@ -101,6 +113,7 @@
   components:
   - type: Transform
     anchored: false
+  - type: RMCStrapNoDrawDepthChange
   - type: Sprite
     sprite: _RMC14/Structures/Furniture/chairs.rsi
     state: chair
@@ -124,6 +137,8 @@
   name: stool
   description: Apply butt.
   components:
+  - type: CMUReconFurniture
+    material: Stool
   - type: Sprite
     state: stool
   - type: Construction
@@ -139,8 +154,11 @@
   placement:
     mode: SnapgridCenter
   components:
+  - type: CMUReconFurniture
+    material: Armchair
   - type: Sprite
     state: comfychair
+  - type: RMCStrapNoDrawDepthChange
   - type: Transform
     anchored: true
   - type: Physics
@@ -260,14 +278,53 @@
   - type: Sprite
     state: comfychair_alien
 
+# Sofa
+- type: entity
+  parent: CMSeatBase
+  id: RMCSofa
+  name: sofa
+  description: A very comfortable looking sofa for one. Watch out, lest you fall asleep in it's soft upholstery.
+  placement:
+    mode: SnapgridCenter
+  components:
+  - type: CMUReconFurniture
+    material: Sofa
+  - type: Sprite
+    sprite: _RMC14/Structures/Furniture/Couches/sofa.rsi
+    state: sofa
+  - type: RMCStrapNoDrawDepthChange
+  - type: Transform
+    anchored: true
+  - type: Physics
+    bodyType: Static
+
+- type: entity
+  parent: RMCSofa
+  id: RMCSofaRed
+  name: red sofa
+  components:
+  - type: Sprite
+    state: sofa_red
+
+- type: entity
+  parent: RMCSofa
+  id: RMCSofaBlack
+  name: black sofa
+  components:
+  - type: Sprite
+    state: sofa_black
+
 # Office chair
 - type: entity
   parent: CMSeatBase
   id: CMChairOfficeDark
   name: dark office chair
   components: # RMC14 Non-parity: Not rotatable
+  - type: CMUReconFurniture
+    material: OfficeChair
   - type: Sprite
     state: officechair_dark
+  - type: RMCStrapNoDrawDepthChange
   - type: Construction
     graph: CMSeat
     node: chairOfficeDark
@@ -294,8 +351,11 @@
   name: wooden chair
   description: Old is never too old to not be in fashion.
   components:
+  - type: CMUReconFurniture
+    material: WoodChair
   - type: Sprite
     state: wooden_chair
+  - type: RMCStrapNoDrawDepthChange
   - type: Damageable
     damageModifierSet: Wood
   - type: Tag
@@ -303,6 +363,12 @@
     - Wooden
   - type: StaticPrice
     price: 75
+  - type: Appearance
+  - type: Flamability
+    chance: 1.0
+    rate: 0.4
+    range: 0.7
+    spread: 1.0
   - type: MeleeReceivedMultiplier
     xenoDamage:
       types:
@@ -330,5 +396,7 @@
   id: CMChairWoodWings
   description: Old is never too old to not be in fashion.
   components:
+  - type: CMUReconFurniture
+    material: WoodWingChair
   - type: Sprite
     state: wooden_chair_wings

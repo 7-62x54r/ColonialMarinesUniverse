@@ -7,9 +7,24 @@
   startingGear: RMCGearParaSupportSynthetic
   icon: RMCJobIconParaSupportSynthetic
   spawnMenuRoleName: Royal Paramarine Support Synthetic (Survivor)
+  whitelisted: true
+  whitelistParent: CMUJobSyntheticWhitelist
+  isSynthetic: true
   special:
     - !type:AddComponentSpecial
       components:
+        - type: LanguageLearning
+          learnableLanguages:
+            - Xeno
+          firstContactLanguages:
+            - Xeno
+          languages:
+            Xeno:
+              initialBoostedWordCount: 18
+              initialBoostedWordComprehension: 0.4
+          comprehensionThreshold: 0.8
+          learningRange: 8.0
+          baseWordLearningRate: 0.05
         - type: NpcFactionMember
           factions:
             - RoyalMarines

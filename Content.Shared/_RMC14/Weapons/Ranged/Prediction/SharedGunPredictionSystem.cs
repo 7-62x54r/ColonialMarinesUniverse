@@ -23,23 +23,25 @@ public abstract partial class SharedGunPredictionSystem : EntitySystem
         Subs.CVar(_config, RMCCVars.RMCGunPrediction, v => GunPrediction = v, true);
     }
 
-    public List<EntityUid>? ShootRequested(NetEntity netGun, NetCoordinates coordinates, NetEntity? target, List<int>? projectiles, ICommonSession session)
+    public List<EntityUid>? ShootRequested(NetEntity netGun, NetCoordinates coordinates, NetEntity? target, List<int>? projectiles, ICommonSession session, bool rearmSemiAuto = false)
     {
         var user = session.AttachedEntity;
 
         if (user == null ||
             !_combatMode.IsInCombatMode(user) ||
-            !_gun.TryGetGun(user.Value, out var ent, out var gun))
+            !_gun.TryGetGun(user.Value, out var gun))
         {
             return null;
         }
 
-        if (ent != GetEntity(netGun))
+        if (gun.Owner != GetEntity(netGun))
             return null;
 
         var shootCoordinates = GetCoordinates(coordinates);
+        if (!shootCoordinates.IsValid(EntityManager)) // CMU14: stale client coordinates after their parent entity was deleted
+            return null;
         var shootMapCoordinates = _transform.ToMapCoordinates(shootCoordinates);
-        if (!IsSameMap(ent, shootMapCoordinates))
+        if (!IsSameMap(gun.Owner, shootMapCoordinates))
             return null;
 
         var targetUid = GetEntity(target);
@@ -56,10 +58,13 @@ public abstract partial class SharedGunPredictionSystem : EntitySystem
         }
 
 #pragma warning disable RA0002
-        gun.ShootCoordinates = shootCoordinates;
-        gun.Target = targetUid;
+        gun.Comp.ShootCoordinates = shootCoordinates;
+        gun.Comp.Target = targetUid;
 #pragma warning restore RA0002
-        return _gun.AttemptShoot(user.Value, ent, gun, projectiles, session);
+        if (rearmSemiAuto && gun.Comp.SelectedMode == Content.Shared.Weapons.Ranged.Components.SelectiveFire.SemiAuto)
+            _gun.ResetShotCounter(gun.Owner, gun.Comp);
+
+        return _gun.AttemptShoot(user.Value, gun, projectiles, session);
     }
 
     protected bool IsSameMap(EntityUid entity, EntityUid other)

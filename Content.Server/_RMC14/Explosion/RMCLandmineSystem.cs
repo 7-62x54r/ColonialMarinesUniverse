@@ -1,8 +1,7 @@
-using Content.Server.Explosion.EntitySystems;
 using Content.Shared._RMC14.Explosion;
-using Content.Shared._RMC14.Xenonids.Projectile;
 using Content.Shared.Mobs.Systems;
 using Content.Shared.StepTrigger.Systems;
+using Content.Shared.Trigger.Systems;
 using Robust.Shared.Physics.Events;
 
 namespace Content.Server._RMC14.Explosion;
@@ -50,7 +49,7 @@ public sealed partial class RMCLandmineSystem : SharedRMCLandmineSystem
 
     private void OnStartCollide(Entity<RMCLandmineComponent> ent, ref StartCollideEvent args)
     {
-        if (!ent.Comp.Armed || !HasComp<XenoProjectileComponent>(args.OtherEntity))
+        if (!ent.Comp.Armed || !CanProjectileTrigger(ent, args.OtherEntity))
             return;
 
         ent.Comp.ShotStacks++;

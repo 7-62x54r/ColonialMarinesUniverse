@@ -1,8 +1,8 @@
 using Content.Shared._RMC14.Item;
-using Content.Shared.AU14;
-using Content.Shared.AU14.Allegiance;
-using Content.Shared.AU14.Threats;
-using Content.Shared.AU14.util;
+using Content.Shared.CMU14;
+using Content.Shared.CMU14.Allegiance;
+using Content.Shared.CMU14.Threats;
+using Content.Shared.CMU14.util;
 using Content.Shared.Paper;
 using Content.Shared.Roles;
 using Robust.Shared.GameStates;
@@ -119,14 +119,11 @@ public sealed partial class RMCPlanetMapPrototypeComponent : Component
     [DataField("lorePrimer")]
     public ProtoId<LorePrimerPrototype>? LorePrimer;
 
-    [DataField("faction")]
-    public string? Faction  = String.Empty;
-
     /// <summary>
     /// The allegiance associated with this colony.
     /// Characters with a matching allegiance will preferentially spawn here.
     /// </summary>
-    [DataField("Allegiance"), AutoNetworkedField]
+    [DataField, AutoNetworkedField]
     public ProtoId<AllegiancePrototype>? Allegiance;
 
     [DataField("govforfighters")]
@@ -144,11 +141,11 @@ public sealed partial class RMCPlanetMapPrototypeComponent : Component
     [DataField("threats")]
     public List<ProtoId<ThreatPrototype>> AllowedThreats = new();
     [DataField("thirdparties")]
-    public List<ProtoId<AuThirdPartyPrototype>> ThirdParties = new();
+    public List<ProtoId<ThirdPartyPrototype>> ThirdParties = new();
 
 
     [DataField("thirdpartyinterval"), AutoNetworkedField]
-    public int? ThirdPartyInterval =18000;
+    public int? ThirdPartyInterval =14000;
 
     /// <summary>
     /// Optional job scaling prototype for human job slots in ForceOnForce mode.
